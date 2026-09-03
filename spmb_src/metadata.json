@@ -1,0 +1,8 @@
+{
+  "name": "SPMB 2027_2028",
+  "description": "Sistem Penerimaan Murid Baru Online SMP Al-Hadiid Cileungsi",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

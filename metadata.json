@@ -1,0 +1,8 @@
+{
+  "name": "Aplikasi SPMB SMP Al-Hadiid Cileungsi",
+  "description": "Sistem Penerimaan Murid Baru Online SMP Al-Hadiid Cileungsi",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
