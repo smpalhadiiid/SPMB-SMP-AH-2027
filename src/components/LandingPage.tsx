@@ -529,7 +529,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 Rincian Biaya Awal Masuk (BAM) TP {schoolInfo.academicYear}
               </h2>
               <p className="text-slate-600 text-sm mt-2">
-                Acuan resmi rincian biaya penerimaan peserta didik baru {schoolInfo.name}.
+                Acuan resmi rincian biaya penerimaan murid baru {schoolInfo.name}.
               </p>
             </div>
 
@@ -551,11 +551,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
                   <div className="bg-emerald-950/80 border border-emerald-500/40 p-4 rounded-xl text-center min-w-[150px]">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">Total Biaya Ikhwan</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.625.000</div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.665.000</div>
                   </div>
                   <div className="bg-emerald-950/80 border border-emerald-500/40 p-4 rounded-xl text-center min-w-[150px]">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300">Total Biaya Akhwat</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.875.000</div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.895.000</div>
                   </div>
                 </div>
               </div>
