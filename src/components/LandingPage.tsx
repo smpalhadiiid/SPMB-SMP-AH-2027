@@ -588,7 +588,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                         { no: 1, name: 'Dana Awal Pendidikan (DAP)', ikhwan: 4250000, akhwat: 4250000, ket: 'Sekali' },
                         { no: 2, name: 'Dana Praktik Komputer', ikhwan: 150000, akhwat: 150000, ket: 'Per Tahun' },
                         { no: 3, name: 'Dana Praktik IPA', ikhwan: 100000, akhwat: 100000, ket: 'Per Tahun' },
-                        { no: 4, name: 'Perlengkapan / Seragam (Paket)*', ikhwan: 660000, akhwat: 900000, ket: 'Sekali', highlight: true },
+                        { no: 4, name: 'Perlengkapan / Seragam (Paket)*', ikhwan: 700000, akhwat: 920000, ket: 'Sekali', highlight: true },
                         { no: 5, name: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', ikhwan: 425000, akhwat: 425000, ket: 'Per Bulan' },
                         { no: 6, name: 'Tabungan Wajib', ikhwan: 25000, akhwat: 25000, ket: 'Per Bulan' },
                         { no: 7, name: 'MPLS / MOS', ikhwan: 100000, akhwat: 100000, ket: 'Sekali' },
@@ -618,10 +618,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                           TOTAL BIAYA AWAL MASUK (BAM):
                         </td>
                         <td className="py-4 px-4 text-right font-mono text-amber-300 text-base">
-                          Rp 6.625.000
+                          Rp 6.665.000
                         </td>
                         <td className="py-4 px-4 text-right font-mono text-amber-300 text-base">
-                          Rp 6.875.000
+                          Rp 6.895.000
                         </td>
                         <td className="py-4 px-4 text-center text-emerald-200 font-normal text-xs">Awal Masuk</td>
                       </tr>
@@ -671,7 +671,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                         <span className="text-emerald-700">Skema Prioritas</span>
                       </div>
                       <div className="text-slate-600 text-[11px]">
-                        Ikhwan: <b>Rp 6.625.000</b> | Akhwat: <b>Rp 6.875.000</b>
+                        Ikhwan: <b>Rp 6.665.000</b> | Akhwat: <b>Rp 6.895.000</b>
                       </div>
                     </div>
 
