@@ -313,6 +313,60 @@ export async function bulkInsertSoalSupabase(soalList: CbtSoal[]): Promise<CbtSo
   return merged;
 }
 
+export async function bulkUpdateSoalStatusSupabase(soalIds: string[], statusAktif: boolean): Promise<boolean> {
+  if (soalIds.length === 0) return true;
+  try {
+    const { error } = await supabase
+      .from('soal')
+      .update({ aktif: statusAktif })
+      .in('id', soalIds);
+    if (error) console.warn('Supabase bulk update status error:', error.message);
+  } catch (err: any) {
+    console.warn('Supabase bulk update status failed:', err?.message);
+  }
+
+  const local = getCbtSoal().map(s => {
+    if (soalIds.includes(s.id)) {
+      return { ...s, statusAktif };
+    }
+    return s;
+  });
+  saveCbtSoal(local);
+  return true;
+}
+
+export async function syncAndSaveSelectedSoalToSupabase(soalList: CbtSoal[]): Promise<boolean> {
+  if (soalList.length === 0) return true;
+  
+  const rows = soalList.map(soal => ({
+    id: soal.id || crypto.randomUUID(),
+    kategori_kode: soal.kategoriKode || soal.category || 'diagnostik',
+    pertanyaan: soal.questionText || (soal as any).question || '',
+    pilihan_a: soal.pilihanA || soal.options?.[0] || '',
+    pilihan_b: soal.pilihanB || soal.options?.[1] || '',
+    pilihan_c: soal.pilihanC || soal.options?.[2] || '',
+    pilihan_d: soal.pilihanD || soal.options?.[3] || '',
+    jawaban_benar: INDEX_TO_LETTER[typeof soal.jawabanBenar === 'number' ? soal.jawabanBenar : soal.correctOptionIndex || 0] || 'A',
+    bobot: soal.bobot || 10,
+    level_kesulitan: soal.levelKesulitan || 'medium',
+    aktif: soal.statusAktif !== false,
+  }));
+
+  try {
+    const { error } = await supabase.from('soal').upsert(rows, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert public.soal error:', error.message);
+    } else {
+      console.log(`Berhasil menyimpan ${rows.length} soal ke tabel public.soal Supabase`);
+    }
+  } catch (err: any) {
+    console.warn('Sync to public.soal failed:', err?.message);
+  }
+
+  saveCbtSoal(soalList);
+  return true;
+}
+
 // ==========================================
 // 3. JADWAL UJIAN SERVICE
 // ==========================================

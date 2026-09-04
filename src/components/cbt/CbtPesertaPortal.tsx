@@ -141,31 +141,53 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
 
     setIsSyncing(true);
     try {
-      // Fetch fresh questions from Supabase
+      // Fetch fresh questions from Supabase / Storage
       const allSoal = await fetchSoalSupabase();
+      // Strictly filter ONLY questions that are marked as selected/active by Panitia
       const activeSoal = allSoal.filter((s) => s.statusAktif !== false);
 
       if (activeSoal.length === 0) {
-        toast.error('Bank soal belum memiliki data soal aktif. Hubungi panitia.');
+        toast.error('Belum ada soal yang dipilih/diaktifkan oleh panitia untuk ujian ini. Hubungi pengawas.');
         setIsSyncing(false);
         return;
       }
 
-      // Filter & Shuffle Questions per Category according to Ujian rules
-      const diagList = shuffleArray(
-        activeSoal.filter((s) => (s.kategoriKode || s.category) === 'diagnostik')
-      ).slice(0, activeUjian.jumlahDiagnostik || 6);
+      // Categorize active selected questions
+      const diagList = activeSoal.filter((s) => (s.kategoriKode || s.category) === 'diagnostik');
+      const tpuList = activeSoal.filter((s) => (s.kategoriKode || s.category) === 'pengetahuan_umum');
+      const diniyyahList = activeSoal.filter((s) => (s.kategoriKode || s.category) === 'diniyyah');
+      const otherList = activeSoal.filter(
+        (s) =>
+          (s.kategoriKode || s.category) !== 'diagnostik' &&
+          (s.kategoriKode || s.category) !== 'pengetahuan_umum' &&
+          (s.kategoriKode || s.category) !== 'diniyyah'
+      );
 
-      const tpuList = shuffleArray(
-        activeSoal.filter((s) => (s.kategoriKode || s.category) === 'pengetahuan_umum')
-      ).slice(0, activeUjian.jumlahTpu || 8);
+      // Select questions according to activeUjian quotas, or include all selected active questions
+      let selectedQuestionsPool: CbtSoal[] = [];
 
-      const diniyyahList = shuffleArray(
-        activeSoal.filter((s) => (s.kategoriKode || s.category) === 'diniyyah')
-      ).slice(0, activeUjian.jumlahDiniyyah || 6);
+      // If activeUjian specifies quotas, draw up to quota or all available active
+      const diagChosen = activeUjian.jumlahDiagnostik && activeUjian.jumlahDiagnostik < diagList.length
+        ? shuffleArray(diagList).slice(0, activeUjian.jumlahDiagnostik)
+        : diagList;
 
-      // ACAK SOAL: Shuffle combined question list
-      const combinedQuestions = shuffleArray([...diagList, ...tpuList, ...diniyyahList]);
+      const tpuChosen = activeUjian.jumlahTpu && activeUjian.jumlahTpu < tpuList.length
+        ? shuffleArray(tpuList).slice(0, activeUjian.jumlahTpu)
+        : tpuList;
+
+      const diniyyahChosen = activeUjian.jumlahDiniyyah && activeUjian.jumlahDiniyyah < diniyyahList.length
+        ? shuffleArray(diniyyahList).slice(0, activeUjian.jumlahDiniyyah)
+        : diniyyahList;
+
+      selectedQuestionsPool = [...diagChosen, ...tpuChosen, ...diniyyahChosen, ...otherList];
+
+      // Fallback: If pool is empty for any reason, use all activeSoal
+      if (selectedQuestionsPool.length === 0) {
+        selectedQuestionsPool = activeSoal;
+      }
+
+      // ACAK SOAL: Shuffle combined question list for candidate fairness
+      const combinedQuestions = shuffleArray(selectedQuestionsPool);
 
       // ACAK PILIHAN: Shuffle options A, B, C, D for each question
       const processedQuestions: QuestionWithShuffledOptions[] = combinedQuestions.map((q) => {

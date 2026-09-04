@@ -16,6 +16,8 @@ import {
   updateSoalSupabase,
   deleteSoalSupabase,
   fetchKategoriSoalSupabase,
+  bulkUpdateSoalStatusSupabase,
+  syncAndSaveSelectedSoalToSupabase,
 } from '../../services/cbtSupabaseService';
 
 const soalSchema = z.object({
@@ -290,20 +292,31 @@ export const CbtBankSoalManager: React.FC = () => {
     if (selectedIds.length === 0) return;
     toast.loading('Memproses pembaruan status massal...', { id: 'bulk-status' });
     try {
-      for (const id of selectedIds) {
-        const item = soalList.find((s) => s.id === id);
-        if (item) {
-          await updateSoalSupabase({ ...item, statusAktif: targetStatus });
-        }
-      }
+      await bulkUpdateSoalStatusSupabase(selectedIds, targetStatus);
       queryClient.invalidateQueries({ queryKey: ['cbt_soal'] });
       setSelectedIds([]);
       toast.success(
-        `Berhasil ${targetStatus ? 'menandai diujikan' : 'menyimpan ke cadangan'} ${selectedIds.length} soal!`,
+        `Berhasil ${targetStatus ? 'menandai & menyimpan untuk diujikan' : 'menyimpan ke cadangan'} (${selectedIds.length} soal)!`,
         { id: 'bulk-status' }
       );
     } catch (e: any) {
       toast.error(`Gagal update massal: ${e?.message || 'Error'}`, { id: 'bulk-status' });
+    }
+  };
+
+  const handleSelectAllSoalStatus = async (targetStatus: boolean) => {
+    const allIds = filteredSoal.map((s) => s.id);
+    if (allIds.length === 0) return;
+    toast.loading(`Memproses ${targetStatus ? 'memilih semua' : 'mengosongkan'} soal...`, { id: 'select-all-status' });
+    try {
+      await bulkUpdateSoalStatusSupabase(allIds, targetStatus);
+      queryClient.invalidateQueries({ queryKey: ['cbt_soal'] });
+      toast.success(
+        `Berhasil ${targetStatus ? 'menandai SEMUA soal untuk diujikan' : 'mengubah SEMUA soal ke cadangan'} (${allIds.length} soal)!`,
+        { id: 'select-all-status' }
+      );
+    } catch (e: any) {
+      toast.error(`Gagal memperbarui: ${e?.message || 'Error'}`, { id: 'select-all-status' });
     }
   };
 
@@ -312,6 +325,24 @@ export const CbtBankSoalManager: React.FC = () => {
   const activeDiag = activeQuestions.filter((s) => (s.kategoriKode || s.category) === 'diagnostik').length;
   const activeTpu = activeQuestions.filter((s) => (s.kategoriKode || s.category) === 'pengetahuan_umum').length;
   const activeDiniyyah = activeQuestions.filter((s) => (s.kategoriKode || s.category) === 'diniyyah').length;
+
+  const handleSaveActiveExamPackage = async () => {
+    if (activeQuestions.length === 0) {
+      toast.error('Belum ada soal yang dipilih sebagai "Diujikan (Aktif)". Pilih/centang minimal 1 soal terlebih dahulu.');
+      return;
+    }
+    toast.loading('Menyimpan seluruh butir soal ke tabel public.soal Supabase...', { id: 'save-pkg' });
+    try {
+      await syncAndSaveSelectedSoalToSupabase(soalList);
+      queryClient.invalidateQueries({ queryKey: ['cbt_soal'] });
+      toast.success(
+        `🎯 Berhasil menyimpan ${activeQuestions.length} soal terpilih ke tabel public.soal Supabase!`,
+        { id: 'save-pkg', duration: 4000 }
+      );
+    } catch (e: any) {
+      toast.error(`Gagal menyimpan ke tabel public.soal: ${e?.message || 'Error'}`, { id: 'save-pkg' });
+    }
+  };
 
   const handleExportExcel = () => {
     if (filteredSoal.length === 0) {
@@ -411,13 +442,21 @@ export const CbtBankSoalManager: React.FC = () => {
             <div className="text-xs text-slate-300 font-bold">Diniyyah</div>
             <div className="text-base font-black text-purple-300">{activeDiniyyah} Soal</div>
           </div>
-          <div className="pl-1">
+          <div className="pl-1 flex flex-col sm:flex-row items-center gap-2">
+            <button
+              onClick={handleSaveActiveExamPackage}
+              className="px-3.5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-xs rounded-lg transition-all shadow-md flex items-center gap-1.5"
+              title="Simpan & Terbitkan Paket Soal Terpilih ke Supabase"
+            >
+              <Check className="w-4 h-4 text-white" />
+              <span>💾 Simpan Pilihan Soal Ujian ({activeQuestions.length})</span>
+            </button>
             <button
               onClick={() => setShowExamSetModal(true)}
-              className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-lg transition-all shadow-sm flex items-center gap-1.5"
+              className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white font-extrabold text-xs rounded-lg transition-all border border-white/20 flex items-center gap-1.5"
             >
               <Eye className="w-3.5 h-3.5" />
-              <span>Pratinjau Paket Soal ({activeQuestions.length})</span>
+              <span>Pratinjau Paket</span>
             </button>
           </div>
         </div>
@@ -482,6 +521,25 @@ export const CbtBankSoalManager: React.FC = () => {
             <option value="active">🎯 Hanya Soal Diujikan (Aktif)</option>
             <option value="inactive">⚪ Hanya Cadangan (Nonaktif)</option>
           </select>
+
+          <div className="flex items-center gap-1.5 border-l border-slate-300 dark:border-slate-700 pl-2">
+            <button
+              type="button"
+              onClick={() => handleSelectAllSoalStatus(true)}
+              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 rounded-lg text-[11px] font-bold transition-all"
+              title="Tandai semua soal yang terlihat sebagai Diujikan (Aktif)"
+            >
+              ✓ Pilih Semua
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectAllSoalStatus(false)}
+              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 rounded-lg text-[11px] font-bold transition-all"
+              title="Ubah semua soal yang terlihat menjadi Cadangan (Nonaktif)"
+            >
+              ⚪ Kosongkan
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1087,13 +1145,28 @@ export const CbtBankSoalManager: React.FC = () => {
               )}
             </div>
 
-            <div className="flex justify-end pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
-              <button
-                onClick={() => setShowExamSetModal(false)}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm"
-              >
-                Selesai Pratinjau
-              </button>
+            <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0 gap-3">
+              <span className="text-xs text-slate-500 font-medium">
+                Total Soal Aktif: <strong className="text-emerald-600 dark:text-emerald-400 font-extrabold">{activeQuestions.length} Soal</strong>
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    await handleSaveActiveExamPackage();
+                    setShowExamSetModal(false);
+                  }}
+                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-sm flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>💾 Simpan & Kunci Paket Ujian</span>
+                </button>
+                <button
+                  onClick={() => setShowExamSetModal(false)}
+                  className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         </div>
