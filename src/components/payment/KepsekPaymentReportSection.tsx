@@ -1,27 +1,94 @@
-import React, { useState } from 'react';
-import { SchoolInfo } from '../../types';
-import { getStoredFormPayments, getStoredBamPayments } from '../../utils/storage';
+import React, { useState, useEffect } from 'react';
+import { SchoolInfo, StudentData, FormPaymentRecord, BamPaymentRecord } from '../../types';
+import { getStoredFormPayments, getStoredBamPayments, getKepalaSekolahName } from '../../utils/storage';
+import { PaymentRepository } from '../../repositories/PaymentRepository';
+import { fetchFormPaymentsFromSupabase, fetchBamPaymentsFromSupabase } from '../../utils/supabaseClient';
 import { exportToExcel } from '../../utils/excelExporter';
 import { generateReportPDF } from '../../utils/pdfGenerator';
+import { getStudentCategory, getTotalBamCost, calculateBamRemaining } from '../../utils/bamPricing';
 import {
   FileText, FileSpreadsheet, ShieldCheck, DollarSign,
-  TrendingUp, Users, CheckCircle2, PieChart, Filter, Database
+  TrendingUp, Users, CheckCircle2, PieChart, Filter, Database, RefreshCw
 } from 'lucide-react';
-import { PaymentSqlModal } from './PaymentSqlModal';
 
 interface KepsekPaymentReportSectionProps {
   schoolInfo: SchoolInfo;
+  students?: StudentData[];
 }
 
 export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProps> = ({
   schoolInfo,
+  students = [],
 }) => {
-  const formPayments = getStoredFormPayments();
-  const bamPayments = getStoredBamPayments();
+  const [formPayments, setFormPayments] = useState<FormPaymentRecord[]>(() => getStoredFormPayments());
+  const [bamPayments, setBamPayments] = useState<BamPaymentRecord[]>(() => getStoredBamPayments());
+  const [isLoadingPayments, setIsLoadingPayments] = useState(false);
 
   const [genderFilter, setGenderFilter] = useState<'all' | 'Laki-laki' | 'Perempuan'>('all');
   const [activeReportTab, setActiveReportTab] = useState<'all' | 'form' | 'bam'>('all');
-  const [showSqlModal, setShowSqlModal] = useState(false);
+
+  // Sync payments directly from Supabase
+  useEffect(() => {
+    setIsLoadingPayments(true);
+    Promise.all([
+      PaymentRepository.list('form'),
+      PaymentRepository.list('bam'),
+    ]).then(([formRes, bamRes]) => {
+      if (formRes.data && formRes.data.length > 0) {
+        setFormPayments(formRes.data.map(p => ({
+          id: p.id,
+          transactionNumber: p.id,
+          paymentDate: p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
+          studentId: p.studentId,
+          studentName: p.studentName || 'Calon Murid',
+          registrationNumber: p.registrationNumber || 'SPMB',
+          gender: p.gender || 'Laki-laki',
+          amount: p.amount || 200000,
+          category: 'Internal',
+          proofUrl: p.proofUrl,
+          status: (p.status as any) || 'verified',
+          notes: p.notes,
+          createdAt: p.createdAt || new Date().toISOString(),
+        })));
+      } else {
+        fetchFormPaymentsFromSupabase().then(cloud => {
+          if (cloud && cloud.length > 0) setFormPayments(cloud);
+        });
+      }
+
+      if (bamRes.data && bamRes.data.length > 0) {
+        setBamPayments(bamRes.data.map(p => {
+          const category = getStudentCategory(p);
+          const totalCost = getTotalBamCost(category);
+          const amountPaid = p.amount || 0;
+          return {
+            id: p.id,
+            transactionNumber: p.id,
+            paymentDate: p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
+            studentId: p.studentId,
+            studentName: p.studentName || 'Calon Murid',
+            registrationNumber: p.registrationNumber || 'SPMB',
+            gender: p.gender || 'Laki-laki',
+            totalBamCost: totalCost,
+            amountPaid,
+            installmentType: amountPaid >= totalCost ? 'Lunas' : 'Cicilan 1',
+            totalPaidToDate: amountPaid,
+            remainingBalance: calculateBamRemaining(totalCost, amountPaid),
+            proofUrl: p.proofUrl,
+            notes: p.notes,
+          };
+        }));
+      } else {
+        fetchBamPaymentsFromSupabase().then(cloud => {
+          if (cloud && cloud.length > 0) setBamPayments(cloud);
+        });
+      }
+    }).catch(err => {
+      console.warn('Kepsek payments load error:', err);
+    }).finally(() => {
+      setIsLoadingPayments(false);
+    });
+  }, [students]);
 
   // Filtered lists
   const filteredForm = formPayments.filter(r => genderFilter === 'all' || r.gender === genderFilter);
@@ -72,7 +139,8 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
     generateReportPDF(
       `Laporan_Keuangan_Kepsek_SPMB_${schoolInfo.academicYear.replace('/', '_')}`,
       reportData,
-      ['Jenis', 'No_TRX', 'No_Reg', 'Nama', 'JK', 'Ket_Cicilan', 'Bayar', 'Sisa_Saldo']
+      ['Jenis', 'No_TRX', 'No_Reg', 'Nama', 'JK', 'Ket_Cicilan', 'Bayar', 'Sisa_Saldo'],
+      schoolInfo
     );
   };
 
@@ -131,13 +199,6 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setShowSqlModal(true)}
-            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold text-xs rounded-xl border border-slate-700 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-          >
-            <Database className="w-4 h-4 text-emerald-400" />
-            <span>Skrip SQL Database</span>
-          </button>
           <button
             onClick={handleExportPDF}
             className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
@@ -489,20 +550,15 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
           <div className="text-center space-y-1">
             <div>Cileungsi, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
             <div className="font-bold text-slate-900 pt-8 border-b border-slate-800">
-              {schoolInfo.headmasterName || 'Herman Jayusman, S.Pd.I.'}
+              {getKepalaSekolahName(schoolInfo)}
             </div>
-            <div className="text-[11px] text-slate-500">Kepala Sekolah SMP Al-Hadiid Cileungsi</div>
+            <div className="text-[11px] text-slate-500">
+              {schoolInfo.headmasterNiy ? `NIY. ${schoolInfo.headmasterNiy}` : 'Kepala Sekolah SMP Al-Hadiid Cileungsi'}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* SQL Script Modal */}
-      <PaymentSqlModal
-        isOpen={showSqlModal}
-        onClose={() => setShowSqlModal(false)}
-        formPayments={formPayments}
-        bamPayments={bamPayments}
-      />
     </div>
   );
 };

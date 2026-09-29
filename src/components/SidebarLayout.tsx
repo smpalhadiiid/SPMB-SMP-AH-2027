@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { SchoolLogo } from './SchoolLogo';
 import { SupabaseBadge } from './SupabaseBadge';
+import { SupabaseSyncButton } from './SupabaseSyncButton';
 
 interface SidebarLayoutProps {
   currentUser: UserAccount | null;
@@ -21,6 +22,7 @@ interface SidebarLayoutProps {
   activeTab?: string;
   onTabChange?: (tab: string) => void;
   studentData?: StudentData;
+  onRefreshAllData?: () => void;
 }
 
 export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
@@ -34,6 +36,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
   activeTab,
   onTabChange,
   studentData,
+  onRefreshAllData,
 }) => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [cbtMenuOpen, setCbtMenuOpen] = useState(true);
@@ -84,13 +87,14 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
             { id: 'cbt_ranking', label: 'Ranking Nilai', icon: Award },
           ],
         },
-        { id: 'announcements', label: 'Pengumuman Kelulusan', icon: CheckCircle2 },
+        { id: 'announcements', label: 'Pengumuman & WA Ortu', icon: MessageSquare },
         { id: 'quotas', label: 'Pengaturan Kuota Gelombang', icon: School },
         { id: 'placement', label: 'Penempatan Kelas AI', icon: Sparkles },
         { id: 'filled_classes', label: 'Data Kelas Terisi', icon: Users },
         { id: 'settings', label: 'Informasi & Media Sekolah', icon: Settings },
         { id: 'website_settings', label: 'Tampilan Website', icon: Palette },
         { id: 'user_management', label: 'Manajemen User & Akun (CRUD)', icon: User },
+        { id: 'supabase_sync', label: 'Sinkronisasi Supabase', icon: Database },
         { id: 'database_management', label: 'Database (Hapus & Backup)', icon: Database },
       ],
     },
@@ -134,12 +138,13 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
             { id: 'cbt_ranking', label: 'Ranking Nilai', icon: Award },
           ],
         },
-        { id: 'announcements', label: 'Pengumuman Kelulusan', icon: CheckCircle2 },
+        { id: 'announcements', label: 'Pengumuman & WA Ortu', icon: MessageSquare },
         { id: 'quotas', label: 'Pengaturan Kuota Gelombang', icon: School },
         { id: 'placement', label: 'Penempatan Kelas AI', icon: Sparkles },
         { id: 'filled_classes', label: 'Data Kelas Terisi', icon: Users },
         { id: 'settings', label: 'Informasi & Media Sekolah', icon: Settings },
         { id: 'website_settings', label: 'Tampilan Website', icon: Palette },
+        { id: 'supabase_sync', label: 'Sinkronisasi Supabase', icon: Database },
         { id: 'database_management', label: 'Database (Hapus & Backup)', icon: Database },
       ],
     },
@@ -332,7 +337,11 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
                       }
                     } else if (item.id === 'download_form') {
                       const isFormSubmitted = studentData.status !== 'draft' && studentData.status !== 'pending_payment';
-                      const isDownloadUnlocked = studentData.isFormVerifiedByAdmin === true || (studentData.formPaymentStatus === 'verified' && isFormSubmitted);
+                      const isDownloadUnlocked =
+                        studentData.formPaymentStatus === 'verified' ||
+                        studentData.isFormVerified === true ||
+                        studentData.isFormVerifiedByAdmin === true ||
+                        (isFormSubmitted && Boolean(studentData.formPaymentProofUrl));
                       if (!isDownloadUnlocked) {
                         studentBadge = <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-0.5 font-bold"><Lock className="w-2.5 h-2.5 text-amber-500" /> TERKUNCI</span>;
                       } else {
@@ -480,7 +489,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            <SupabaseBadge variant="compact" className="hidden md:inline-flex" />
+            <SupabaseSyncButton variant="header" onDataSynced={onRefreshAllData} />
 
             <button
               onClick={onOpenWhatsApp}

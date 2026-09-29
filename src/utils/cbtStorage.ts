@@ -1,5 +1,6 @@
 import { CbtKategori, CbtSoal, CbtUjian, CbtJawabanPeserta, CbtHasilUjian, CbtLogUjian, CbtExamSession } from '../types';
 import { supabase } from './supabaseClient';
+import { safeGetItem, safeSetItem, safeRemoveItem } from './storage';
 
 const CBT_KEYS = {
   KATEGORI: 'spmb_cbt_kategori',
@@ -407,9 +408,9 @@ export const DEFAULT_CBT_UJIAN: CbtUjian[] = [
 // --------------------------------------------------------------------
 
 export function getCbtKategori(): CbtKategori[] {
-  const data = localStorage.getItem(CBT_KEYS.KATEGORI);
+  const data = safeGetItem(CBT_KEYS.KATEGORI);
   if (!data) {
-    localStorage.setItem(CBT_KEYS.KATEGORI, JSON.stringify(DEFAULT_CBT_KATEGORI));
+    safeSetItem(CBT_KEYS.KATEGORI, JSON.stringify(DEFAULT_CBT_KATEGORI));
     return DEFAULT_CBT_KATEGORI;
   }
   try {
@@ -420,13 +421,13 @@ export function getCbtKategori(): CbtKategori[] {
 }
 
 export function saveCbtKategori(kategoriList: CbtKategori[]): void {
-  localStorage.setItem(CBT_KEYS.KATEGORI, JSON.stringify(kategoriList));
+  safeSetItem(CBT_KEYS.KATEGORI, JSON.stringify(kategoriList));
 }
 
 export function getCbtSoal(): CbtSoal[] {
-  const data = localStorage.getItem(CBT_KEYS.SOAL);
+  const data = safeGetItem(CBT_KEYS.SOAL);
   if (!data) {
-    localStorage.setItem(CBT_KEYS.SOAL, JSON.stringify(DEFAULT_CBT_SOAL));
+    safeSetItem(CBT_KEYS.SOAL, JSON.stringify(DEFAULT_CBT_SOAL));
     return DEFAULT_CBT_SOAL;
   }
   try {
@@ -437,13 +438,13 @@ export function getCbtSoal(): CbtSoal[] {
 }
 
 export function saveCbtSoal(soalList: CbtSoal[]): void {
-  localStorage.setItem(CBT_KEYS.SOAL, JSON.stringify(soalList));
+  safeSetItem(CBT_KEYS.SOAL, JSON.stringify(soalList));
 }
 
 export function getCbtUjian(): CbtUjian[] {
-  const data = localStorage.getItem(CBT_KEYS.UJIAN);
+  const data = safeGetItem(CBT_KEYS.UJIAN);
   if (!data) {
-    localStorage.setItem(CBT_KEYS.UJIAN, JSON.stringify(DEFAULT_CBT_UJIAN));
+    safeSetItem(CBT_KEYS.UJIAN, JSON.stringify(DEFAULT_CBT_UJIAN));
     return DEFAULT_CBT_UJIAN;
   }
   try {
@@ -454,11 +455,11 @@ export function getCbtUjian(): CbtUjian[] {
 }
 
 export function saveCbtUjian(ujianList: CbtUjian[]): void {
-  localStorage.setItem(CBT_KEYS.UJIAN, JSON.stringify(ujianList));
+  safeSetItem(CBT_KEYS.UJIAN, JSON.stringify(ujianList));
 }
 
 export function getCbtHasilUjian(): CbtHasilUjian[] {
-  const data = localStorage.getItem(CBT_KEYS.HASIL);
+  const data = safeGetItem(CBT_KEYS.HASIL);
   if (!data) return [];
   try {
     return JSON.parse(data);
@@ -468,7 +469,7 @@ export function getCbtHasilUjian(): CbtHasilUjian[] {
 }
 
 export function saveCbtHasilUjian(hasilList: CbtHasilUjian[]): void {
-  localStorage.setItem(CBT_KEYS.HASIL, JSON.stringify(hasilList));
+  safeSetItem(CBT_KEYS.HASIL, JSON.stringify(hasilList));
   // Try syncing to Supabase if available
   try {
     Promise.resolve(
@@ -489,12 +490,16 @@ export function saveCbtHasilUjian(hasilList: CbtHasilUjian[]): void {
         })),
         { onConflict: 'id' }
       )
-    ).catch(() => {});
-  } catch {}
+    ).catch((err) => {
+      console.warn('[cbtStorage] async bank soal sync warning:', err);
+    });
+  } catch (err: any) {
+    console.warn('[cbtStorage] saveCbtBankSoal error:', err?.message || err);
+  }
 }
 
 export function getCbtLogUjian(): CbtLogUjian[] {
-  const data = localStorage.getItem(CBT_KEYS.LOG);
+  const data = safeGetItem(CBT_KEYS.LOG);
   if (!data) return [];
   try {
     return JSON.parse(data);
@@ -504,7 +509,7 @@ export function getCbtLogUjian(): CbtLogUjian[] {
 }
 
 export function saveCbtLogUjian(logList: CbtLogUjian[]): void {
-  localStorage.setItem(CBT_KEYS.LOG, JSON.stringify(logList));
+  safeSetItem(CBT_KEYS.LOG, JSON.stringify(logList));
 }
 
 export function updateCbtSingleLog(logItem: CbtLogUjian): void {
@@ -524,7 +529,7 @@ export function updateCbtSingleLog(logItem: CbtLogUjian): void {
 
 export function getCbtExamSession(ujianId: string, pesertaId: string): CbtExamSession | null {
   const key = `${CBT_KEYS.SESSION_PREFIX}${ujianId}_${pesertaId}`;
-  const data = localStorage.getItem(key);
+  const data = safeGetItem(key);
   if (!data) return null;
   try {
     return JSON.parse(data);
@@ -535,7 +540,7 @@ export function getCbtExamSession(ujianId: string, pesertaId: string): CbtExamSe
 
 export function saveCbtExamSession(session: CbtExamSession): void {
   const key = `${CBT_KEYS.SESSION_PREFIX}${session.ujianId}_${session.pesertaId}`;
-  localStorage.setItem(key, JSON.stringify(session));
+  safeSetItem(key, JSON.stringify(session));
 
   // Auto-update live monitoring log
   const answeredCount = Object.keys(session.answers).length;
@@ -553,7 +558,7 @@ export function saveCbtExamSession(session: CbtExamSession): void {
 
 export function clearCbtExamSession(ujianId: string, pesertaId: string): void {
   const key = `${CBT_KEYS.SESSION_PREFIX}${ujianId}_${pesertaId}`;
-  localStorage.removeItem(key);
+  safeRemoveItem(key);
 }
 
 // Helper to shuffle array randomly

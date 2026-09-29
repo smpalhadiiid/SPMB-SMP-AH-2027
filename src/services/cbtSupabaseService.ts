@@ -1,5 +1,6 @@
 import { supabase } from '../utils/supabaseClient';
 import { CbtKategori, CbtSoal, CbtUjian, CbtHasilUjian, CbtLogUjian } from '../types';
+import { generateUUID } from '../utils/uuid';
 import {
   getCbtKategori, saveCbtKategori,
   getCbtSoal, saveCbtSoal,
@@ -22,8 +23,8 @@ export async function fetchKategoriSoalSupabase(): Promise<CbtKategori[]> {
       .select('*')
       .order('created_at', { ascending: true });
 
-    if (error || !data || data.length === 0) {
-      console.warn('Supabase fetch kategori_soal fallback to localStorage:', error?.message);
+    if (error || !data) {
+      console.warn('Supabase fetch kategori_soal error:', error?.message);
       return getCbtKategori();
     }
 
@@ -44,7 +45,7 @@ export async function fetchKategoriSoalSupabase(): Promise<CbtKategori[]> {
 }
 
 export async function createKategoriSoalSupabase(kategori: Omit<CbtKategori, 'id'> & { id?: string }): Promise<CbtKategori> {
-  const id = kategori.id || crypto.randomUUID();
+  const id = kategori.id || generateUUID();
   const payload = {
     id,
     nama_kategori: kategori.namaKategori,
@@ -133,20 +134,29 @@ export async function deleteKategoriSoalSupabase(id: string, kodeKategori: strin
 // ==========================================
 // 2. BANK SOAL SERVICE
 // ==========================================
-export async function fetchSoalSupabase(): Promise<CbtSoal[]> {
+export async function fetchSoalSupabase(forStudent: boolean = false): Promise<CbtSoal[]> {
   try {
     const { data, error } = await supabase
       .from('soal')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error || !data || data.length === 0) {
-      console.warn('Supabase fetch soal fallback to localStorage:', error?.message);
-      return getCbtSoal();
+    if (error || !data) {
+      console.warn('Supabase fetch soal error:', error?.message);
+      const local = getCbtSoal();
+      if (forStudent) {
+        return local.map((s) => ({
+          ...s,
+          jawabanBenar: undefined as any,
+          correctOptionIndex: undefined as any,
+        }));
+      }
+      return local;
     }
 
     const result: CbtSoal[] = data.map(item => {
-      const idx = LETTER_TO_INDEX[item.jawaban_benar?.toUpperCase()] ?? 0;
+      // Siswa tidak menerima kunci jawaban pada response soal
+      const idx = forStudent ? undefined : (LETTER_TO_INDEX[item.jawaban_benar?.toUpperCase()] ?? 0);
       return {
         id: item.id,
         category: item.kategori_kode,
@@ -158,8 +168,8 @@ export async function fetchSoalSupabase(): Promise<CbtSoal[]> {
         pilihanB: item.pilihan_b,
         pilihanC: item.pilihan_c,
         pilihanD: item.pilihan_d,
-        jawabanBenar: idx,
-        correctOptionIndex: idx,
+        jawabanBenar: idx as any,
+        correctOptionIndex: idx as any,
         bobot: Number(item.bobot || 10),
         points: Number(item.bobot || 10),
         levelKesulitan: (item.level_kesulitan || 'medium') as 'easy' | 'medium' | 'hard',
@@ -167,7 +177,9 @@ export async function fetchSoalSupabase(): Promise<CbtSoal[]> {
       };
     });
 
-    saveCbtSoal(result);
+    if (!forStudent) {
+      saveCbtSoal(result);
+    }
     return result;
   } catch (err) {
     console.warn('Error fetching soal from Supabase:', err);
@@ -176,7 +188,7 @@ export async function fetchSoalSupabase(): Promise<CbtSoal[]> {
 }
 
 export async function createSoalSupabase(soal: Omit<CbtSoal, 'id'> & { id?: string }): Promise<CbtSoal> {
-  const id = soal.id || crypto.randomUUID();
+  const id = soal.id || generateUUID();
   const letterAnswer = INDEX_TO_LETTER[soal.jawabanBenar] || 'A';
 
   const payload = {
@@ -286,7 +298,7 @@ export async function deleteSoalSupabase(id: string): Promise<boolean> {
 
 export async function bulkInsertSoalSupabase(soalList: CbtSoal[]): Promise<CbtSoal[]> {
   const rows = soalList.map(soal => ({
-    id: soal.id || crypto.randomUUID(),
+    id: soal.id || generateUUID(),
     kategori_kode: soal.kategoriKode || soal.category,
     pertanyaan: soal.questionText || (soal as any).question || '',
     pilihan_a: soal.pilihanA || soal.options?.[0] || '',
@@ -339,7 +351,7 @@ export async function syncAndSaveSelectedSoalToSupabase(soalList: CbtSoal[]): Pr
   if (soalList.length === 0) return true;
   
   const rows = soalList.map(soal => ({
-    id: soal.id || crypto.randomUUID(),
+    id: soal.id || generateUUID(),
     kategori_kode: soal.kategoriKode || soal.category || 'diagnostik',
     pertanyaan: soal.questionText || (soal as any).question || '',
     pilihan_a: soal.pilihanA || soal.options?.[0] || '',
@@ -377,8 +389,8 @@ export async function fetchUjianSupabase(): Promise<CbtUjian[]> {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error || !data || data.length === 0) {
-      console.warn('Supabase fetch ujian fallback to localStorage:', error?.message);
+    if (error || !data) {
+      console.warn('Supabase fetch ujian error:', error?.message);
       return getCbtUjian();
     }
 
@@ -405,7 +417,7 @@ export async function fetchUjianSupabase(): Promise<CbtUjian[]> {
 }
 
 export async function createUjianSupabase(ujian: Omit<CbtUjian, 'id'> & { id?: string }): Promise<CbtUjian> {
-  const id = ujian.id || crypto.randomUUID();
+  const id = ujian.id || generateUUID();
   const payload = {
     id,
     nama_ujian: ujian.namaUjian,
@@ -484,23 +496,80 @@ export async function deleteUjianSupabase(id: string): Promise<boolean> {
 // 4. JAWABAN PESERTA SERVICE (AUTO-SAVE TO SUPABASE)
 // ==========================================
 const INDEX_TO_LETTER_MAP = ['A', 'B', 'C', 'D'];
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+let cachedActiveUjianId: string | null = null;
+export async function getValidDatabaseUjianId(providedId?: string): Promise<string> {
+  if (providedId && UUID_REGEX.test(providedId)) {
+    return providedId;
+  }
+  if (cachedActiveUjianId) {
+    return cachedActiveUjianId;
+  }
+  try {
+    const { data } = await supabase
+      .from('ujian')
+      .select('id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data?.id) {
+      cachedActiveUjianId = data.id;
+      return data.id;
+    }
+  } catch (err) {
+    console.warn('getValidDatabaseUjianId fetch error:', err);
+  }
+  return '145eacad-ef02-4180-ba26-85b34d1649da';
+}
+
+let cachedSoalMap: Record<string, string> | null = null;
+async function getValidDatabaseSoalId(soalId: string): Promise<string | null> {
+  if (UUID_REGEX.test(soalId)) {
+    return soalId;
+  }
+  if (!cachedSoalMap) {
+    try {
+      const { data } = await supabase.from('soal').select('id, kategori_kode, pertanyaan').limit(50);
+      cachedSoalMap = {};
+      data?.forEach((row, idx) => {
+        cachedSoalMap![`soal_${idx}`] = row.id;
+        cachedSoalMap![row.id] = row.id;
+      });
+    } catch {}
+  }
+  if (cachedSoalMap && cachedSoalMap[soalId]) {
+    return cachedSoalMap[soalId];
+  }
+  return null;
+}
 
 export async function saveJawabanPesertaSupabase(params: {
-  ujianId: string;
+  ujianId?: string;
   pesertaId: string;
   soalId: string;
   jawabanIndex?: number;
+  jawabanDipilih?: string;
   isRaguRagu?: boolean;
 }): Promise<boolean> {
-  const { ujianId, pesertaId, soalId, jawabanIndex, isRaguRagu } = params;
-  const letterJawaban = jawabanIndex !== undefined ? INDEX_TO_LETTER_MAP[jawabanIndex] || 'A' : null;
+  const { ujianId, pesertaId, soalId, jawabanIndex, jawabanDipilih, isRaguRagu } = params;
+  const letterJawaban =
+    jawabanDipilih || (jawabanIndex !== undefined ? INDEX_TO_LETTER_MAP[jawabanIndex] || 'A' : null);
+  const validUjianId = await getValidDatabaseUjianId(ujianId);
+
+  let validSoalId = soalId;
+  if (!UUID_REGEX.test(soalId)) {
+    const mapped = await getValidDatabaseSoalId(soalId);
+    if (mapped) validSoalId = mapped;
+    else return false;
+  }
 
   const payload = {
-    ujian_id: ujianId,
+    ujian_id: validUjianId,
     peserta_id: pesertaId,
-    soal_id: soalId,
-    jawaban: letterJawaban,
-    ragu_ragu: Boolean(isRaguRagu),
+    soal_id: validSoalId,
+    jawaban_dipilih: letterJawaban,
+    is_ragu: Boolean(isRaguRagu),
     updated_at: new Date().toISOString(),
   };
 
@@ -510,13 +579,95 @@ export async function saveJawabanPesertaSupabase(params: {
       .upsert(payload, { onConflict: 'ujian_id,peserta_id,soal_id' });
 
     if (error) {
-      // If composite key is different, fallback to standard upsert
-      await supabase.from('jawaban_peserta').upsert(payload);
+      console.warn('saveJawabanPesertaSupabase warning:', error.message);
     }
-    return true;
+    return !error;
   } catch (err: any) {
-    console.warn('saveJawabanPesertaSupabase warning:', err?.message);
+    console.warn('saveJawabanPesertaSupabase error:', err?.message);
     return false;
+  }
+}
+
+/**
+ * Menyimpan seluruh jawaban ujian peserta langsung ke database Supabase tabel jawaban_peserta
+ */
+export async function saveAllJawabanPesertaSupabase(params: {
+  ujianId?: string;
+  pesertaId: string;
+  answers: Record<string, number | string>;
+  questions?: Array<{ id: string; correctOptionIndex?: number; answer?: string | number }>;
+}): Promise<{ count: number; error: Error | null }> {
+  const { ujianId, pesertaId, answers } = params;
+  if (!answers || Object.keys(answers).length === 0) {
+    return { count: 0, error: null };
+  }
+
+  const validUjianId = await getValidDatabaseUjianId(ujianId);
+
+  const rows = [];
+  for (const [soalId, ansVal] of Object.entries(answers)) {
+    let letter: string | null = null;
+    if (typeof ansVal === 'number') {
+      letter = INDEX_TO_LETTER[ansVal] || null;
+    } else if (typeof ansVal === 'string') {
+      letter = ansVal.toUpperCase();
+    }
+
+    let targetSoalId = soalId;
+    if (!UUID_REGEX.test(soalId)) {
+      const mapped = await getValidDatabaseSoalId(soalId);
+      if (mapped) targetSoalId = mapped;
+      else continue;
+    }
+
+    rows.push({
+      ujian_id: validUjianId,
+      peserta_id: pesertaId,
+      soal_id: targetSoalId,
+      jawaban_dipilih: letter,
+      is_ragu: false,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  if (rows.length === 0) {
+    return { count: 0, error: null };
+  }
+
+  try {
+    const { error } = await supabase
+      .from('jawaban_peserta')
+      .upsert(rows, { onConflict: 'ujian_id,peserta_id,soal_id' });
+
+    if (error) {
+      console.warn('saveAllJawabanPesertaSupabase warning:', error.message);
+      return { count: 0, error: new Error(error.message) };
+    }
+    return { count: rows.length, error: null };
+  } catch (err: any) {
+    console.warn('saveAllJawabanPesertaSupabase error:', err);
+    return { count: 0, error: err };
+  }
+}
+
+export async function finishCbtExamServerRpc(ujianId: string): Promise<{
+  success: boolean;
+  final_score?: number;
+  status_kelulusan?: string;
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('rpc_finish_cbt_exam', {
+      p_ujian_id: ujianId,
+    });
+    if (error) {
+      console.warn('rpc_finish_cbt_exam error:', error.message);
+      return { success: false, error: error.message };
+    }
+    return data || { success: true };
+  } catch (err: any) {
+    console.warn('rpc_finish_cbt_exam call failed:', err?.message);
+    return { success: false, error: err?.message };
   }
 }
 
@@ -536,10 +687,10 @@ export async function fetchJawabanPesertaSupabase(
     if (error || !data) return result;
 
     data.forEach((row) => {
-      const idx = LETTER_TO_INDEX[row.jawaban?.toUpperCase()] ?? undefined;
+      const idx = LETTER_TO_INDEX[row.jawaban_dipilih?.toUpperCase() || row.jawaban?.toUpperCase()] ?? undefined;
       result[row.soal_id] = {
         jawabanIndex: idx,
-        isRaguRagu: Boolean(row.ragu_ragu),
+        isRaguRagu: Boolean(row.is_ragu || row.ragu_ragu),
       };
     });
   } catch (err: any) {
@@ -553,28 +704,25 @@ export async function fetchJawabanPesertaSupabase(
 // 5. HASIL UJIAN SERVICE (SUPABASE)
 // ==========================================
 export async function saveHasilUjianSupabase(hasil: CbtHasilUjian): Promise<boolean> {
+  const validUjianId = await getValidDatabaseUjianId(hasil.ujianId);
   const payload = {
-    id: hasil.id || `hasil_${hasil.ujianId}_${hasil.pesertaId}`,
-    ujian_id: hasil.ujianId,
+    ujian_id: validUjianId,
     peserta_id: hasil.pesertaId,
-    no_pendaftaran: hasil.registrationNumber || '',
-    nama_peserta: hasil.namaPeserta,
     nilai_diagnostik: hasil.nilaiDiagnostik,
     nilai_tpu: hasil.nilaiTpu,
     nilai_diniyyah: hasil.nilaiDiniyyah,
-    nilai_total: hasil.nilaiTotal,
+    nilai_akhir: hasil.nilaiTotal,
     status_kelulusan: hasil.statusKelulusan,
-    tanggal_ujian: hasil.tanggalUjian || new Date().toISOString().split('T')[0],
+    waktu_selesai: new Date().toISOString(),
   };
 
   try {
     const { error } = await supabase
       .from('hasil_ujian')
-      .upsert(payload, { onConflict: 'id' });
+      .upsert(payload, { onConflict: 'ujian_id,peserta_id' });
 
     if (error) {
-      console.warn('saveHasilUjianSupabase error, attempting fallback:', error.message);
-      await supabase.from('hasil_ujian').insert(payload);
+      console.warn('saveHasilUjianSupabase notice:', error.message);
     }
   } catch (err: any) {
     console.warn('saveHasilUjianSupabase error:', err?.message);
@@ -587,14 +735,17 @@ export async function saveHasilUjianSupabase(hasil: CbtHasilUjian): Promise<bool
 
   // Sync scores to student table if exists
   try {
-    await supabase.from('students').update({
-      diagnostic_score: hasil.nilaiDiagnostik,
-      general_score: hasil.nilaiTpu,
-      religious_score: hasil.nilaiDiniyyah,
-      final_score: hasil.nilaiTotal,
-      test_submitted: true,
-      status: 'test_completed',
-    }).eq('id', hasil.pesertaId);
+    await supabase
+      .from('students')
+      .update({
+        diagnostic_score: hasil.nilaiDiagnostik,
+        general_score: hasil.nilaiTpu,
+        religious_score: hasil.nilaiDiniyyah,
+        final_score: hasil.nilaiTotal,
+        status: 'test_completed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', hasil.pesertaId);
   } catch (err) {
     // Ignore student table sync failure
   }
@@ -610,7 +761,7 @@ export async function fetchHasilUjianSupabase(pesertaId?: string): Promise<CbtHa
     }
 
     const { data, error } = await query;
-    if (error || !data || data.length === 0) {
+    if (error || !data) {
       const local = getCbtHasilUjian();
       return pesertaId ? local.filter((h) => h.pesertaId === pesertaId) : local;
     }
@@ -624,7 +775,7 @@ export async function fetchHasilUjianSupabase(pesertaId?: string): Promise<CbtHa
       nilaiDiagnostik: Number(item.nilai_diagnostik || 0),
       nilaiTpu: Number(item.nilai_tpu || 0),
       nilaiDiniyyah: Number(item.nilai_diniyyah || 0),
-      nilaiTotal: Number(item.nilai_total || 0),
+      nilaiTotal: Number(item.nilai_akhir ?? item.nilai_total ?? 0),
       statusKelulusan: item.status_kelulusan === 'LULUS' ? 'LULUS' : 'BELUM LULUS',
       tanggalUjian: item.tanggal_ujian || new Date().toISOString().split('T')[0],
     }));

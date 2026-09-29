@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { UserAccount, UserRole, AuditLogEntry } from '../types';
-import { getUsersDb, saveUserToDb, saveUsersDb, deleteUserFromDb } from '../utils/storage';
+import { getUsersDb, saveUserToDb, cacheUsersDbOnly, deleteUserFromDb } from '../utils/storage';
 import {
   updateUserAccountCredentials,
   checkUsernameAvailable,
   fetchAuditLogsFromSupabase,
   recordAuditLog,
   supabase,
-  ensureSupabaseAuthSession
+  ensureSupabaseAuthSession,
+  fetchUsersDbFromSupabase
 } from '../utils/supabaseClient';
+import { UserProfileRepository } from '../repositories/UserProfileRepository';
 import {
   ShieldCheck, ShieldAlert, Key, Edit, Lock, UserCheck, UserX, RefreshCw,
   Search, Shield, CheckCircle2, XCircle, AlertCircle, History as HistoryIcon, User, Check, X, Info, Trash2, GraduationCap
@@ -53,8 +55,26 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
     loadAuditLogs();
   }, []);
 
-  const refreshAccountsList = () => {
-    const allUsers = getUsersDb();
+  const refreshAccountsList = async () => {
+    try {
+      const { data, error } = await UserProfileRepository.listForAdmin();
+      if (!error && data && data.length > 0) {
+        const staff = data.filter(u => u.role !== 'student');
+        setUsers(staff);
+        cacheUsersDbOnly(data);
+        return;
+      }
+      const cloudUsers = await fetchUsersDbFromSupabase();
+      if (cloudUsers && cloudUsers.length > 0) {
+        const staff = cloudUsers.filter(u => u.role !== 'student');
+        setUsers(staff);
+        cacheUsersDbOnly(cloudUsers);
+        return;
+      }
+    } catch (e) {
+      console.warn('refreshAccountsList error:', e);
+    }
+    const allUsers = getUsersDb().filter(u => u.role !== 'student');
     setUsers(allUsers);
   };
 
@@ -139,14 +159,19 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
       return;
     }
 
-    // Local DB Update
+    // Direct React state & read cache update
+    setUsers(prev => prev.map(u =>
+      u.id === selectedUser.id
+        ? { ...u, name: newName.trim(), username: trimmedUsername }
+        : u
+    ));
     const allUsers = getUsersDb();
     const updatedUsers = allUsers.map(u =>
       u.id === selectedUser.id
         ? { ...u, name: newName.trim(), username: trimmedUsername }
         : u
     );
-    saveUsersDb(updatedUsers);
+    cacheUsersDbOnly(updatedUsers);
 
     setShowUsernameModal(false);
     refreshAccountsList();
@@ -240,18 +265,24 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
       return;
     }
 
-    // Local DB Update with new password
+    // Direct React state & read cache update (never store plaintext password)
+    setUsers(prev => prev.map(u =>
+      u.id === selectedUser.id
+        ? { ...u, mustChangePassword: false }
+        : u
+    ));
     const allUsers = getUsersDb();
     const updatedUsers = allUsers.map(u =>
       u.id === selectedUser.id
-        ? { ...u, password: newPassword, mustChangePassword: false }
+        ? { ...u, mustChangePassword: false }
         : u
     );
-    saveUsersDb(updatedUsers);
+    cacheUsersDbOnly(updatedUsers);
 
-    // Update currentUser in localStorage if updating own password
+    // Update currentUser in localStorage if updating own password (without plaintext password)
     if (currentUser && selectedUser.id === currentUser.id) {
-      const updatedSelf = { ...currentUser, password: newPassword, mustChangePassword: false };
+      const updatedSelf = { ...currentUser, mustChangePassword: false };
+      delete (updatedSelf as any).password;
       saveUserToDb(updatedSelf);
     }
 
@@ -310,11 +341,14 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
     });
 
     if (res.ok) {
+      setUsers(prev => prev.map(u =>
+        u.id === targetUser.id ? { ...u, status: nextStatus as 'active' | 'disabled' } : u
+      ));
       const allUsers = getUsersDb();
       const updatedUsers: UserAccount[] = allUsers.map(u =>
         u.id === targetUser.id ? { ...u, status: nextStatus as 'active' | 'disabled' } : u
       );
-      saveUsersDb(updatedUsers);
+      cacheUsersDbOnly(updatedUsers);
       refreshAccountsList();
       loadAuditLogs();
 
@@ -376,7 +410,9 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
 
     if (!result.isConfirmed) return;
 
+    await UserProfileRepository.remove(targetUser.id);
     deleteUserFromDb(targetUser.id);
+    setUsers(prev => prev.filter(u => u.id !== targetUser.id));
     refreshAccountsList();
     loadAuditLogs();
 

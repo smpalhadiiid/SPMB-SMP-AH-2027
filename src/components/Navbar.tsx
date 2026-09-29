@@ -12,6 +12,7 @@ interface NavbarProps {
   onLogout: () => void;
   onNavigateHome: () => void;
   onOpenWhatsApp: () => void;
+  onRefreshAllData?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -22,6 +23,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
   onNavigateHome,
   onOpenWhatsApp,
+  onRefreshAllData,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -36,7 +38,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>🕒 Layanan SPMB: Senin - Sabtu 08.00 - 14.00 WIB</span>
           </div>
           <div className="flex items-center gap-4">
-            <SupabaseBadge variant="compact" />
+            <SupabaseBadge variant="compact" onDataSynced={onRefreshAllData} />
             <button
               onClick={onOpenWhatsApp}
               className="hover:text-white transition-colors flex items-center gap-1 font-medium bg-blue-600/30 text-blue-300 px-2.5 py-0.5 rounded text-[11px] border border-blue-500/30"

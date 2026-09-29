@@ -4,19 +4,22 @@ import toast from 'react-hot-toast';
 import confetti from 'canvas-confetti';
 import {
   Clock, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, HelpCircle,
-  FileCheck2, User, Sparkles, Send, RefreshCw, Award, BookOpen, Layers, Check
+  FileCheck2, User, Sparkles, Send, RefreshCw, Award, BookOpen, Layers, Check, Download
 } from 'lucide-react';
 import { StudentData, CbtSoal, CbtUjian, CbtHasilUjian } from '../../types';
 import {
   fetchUjianSupabase,
   fetchSoalSupabase,
   saveJawabanPesertaSupabase,
+  saveAllJawabanPesertaSupabase,
   fetchJawabanPesertaSupabase,
   saveHasilUjianSupabase,
   fetchHasilUjianSupabase,
   saveLogUjianSupabase,
 } from '../../services/cbtSupabaseService';
 import { shuffleArray, saveCbtExamSession, getCbtExamSession } from '../../utils/cbtStorage';
+import { generateExamResultPDF } from '../../utils/pdfGenerator';
+import { getStoredSchoolInfo } from '../../utils/storage';
 
 interface ShuffledOption {
   originalIndex: number;
@@ -376,7 +379,14 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
       tanggalUjian: new Date().toISOString().split('T')[0],
     };
 
-    // Save to Supabase hasil_ujian table!
+    // 3. Save to Supabase jawaban_peserta table!
+    await saveAllJawabanPesertaSupabase({
+      ujianId: sessionToSubmit.ujianId,
+      pesertaId: student.id,
+      answers: sessionToSubmit.answers,
+    });
+
+    // 4. Save to Supabase hasil_ujian table!
     await saveHasilUjianSupabase(hasilRecord);
 
     // Save final log to log_ujian
@@ -402,7 +412,9 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
         spread: 90,
         origin: { y: 0.6 },
       });
-    } catch {}
+    } catch (confettiErr) {
+      console.warn('[CbtPesertaPortal] Confetti effect warning:', confettiErr);
+    }
 
     setShowFinishedAlert(true);
     refetchHasil();
@@ -486,12 +498,24 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
           </div>
         )}
 
-        <button
-          onClick={() => setShowFinishedAlert(false)}
-          className="px-8 py-3 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all"
-        >
-          Tutup Ringkasan Hasil
-        </button>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => {
+              const school = getStoredSchoolInfo();
+              generateExamResultPDF(student, school);
+            }}
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2 cursor-pointer border border-emerald-400/30"
+          >
+            <Download className="w-4 h-4 text-amber-300" />
+            <span>Download Hasil Ujian (PDF)</span>
+          </button>
+          <button
+            onClick={() => setShowFinishedAlert(false)}
+            className="px-6 py-3 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+          >
+            Tutup Ringkasan Hasil
+          </button>
+        </div>
       </div>
     );
   }

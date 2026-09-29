@@ -6,6 +6,7 @@ export type AdmissionStatus =
   | 'verifying_payment'   // Step 3: Menunggu Verifikasi Pembayaran
   | 'filling_form'        // Step 4: Isi Formulir Data Lengkap
   | 'form_submitted'      // Step 5: Formulir Terkirim, Nomor Pendaftaran Terbit
+  | 'form_verified'       // Step 5: Formulir Telah Diverifikasi Panitia
   | 'scheduled_test'      // Step 7: Menunggu Tes
   | 'test_completed'      // Step 8: Tes Selesai, Menunggu Pengumuman
   | 'passed'              // Step 9: Dinyatakan Lulus
@@ -21,11 +22,11 @@ export interface UserAccount {
   name: string;
   email: string;
   username?: string;
+  password?: string;
   phone: string;
   role: UserRole;
   registrationNumber?: string;
   createdAt: string;
-  password?: string;
   status?: 'active' | 'disabled';
   mustChangePassword?: boolean;
   lastLogin?: string;
@@ -48,9 +49,14 @@ export interface StudentData {
   status: AdmissionStatus;
   userEmail: string;
   createdAt: string;
+  updatedAt?: string;
+  version?: number;
 
   // Verification flag by Admin
   isFormVerified?: boolean; // Set to true when Admin verifies form & payment
+  isFormVerifiedByAdmin?: boolean; // Alias compatibility
+  entryPath?: string; // Jalur Masuk
+  selectedProgram?: string; // Program Pilihan
 
   // Step 2: Registrasi
   fullName: string;
@@ -81,6 +87,7 @@ export interface StudentData {
 
   // Data Sekolah Asal
   previousSchoolName: string;
+  previousSchool?: string; // Alias compatibility
   previousSchoolNpsn?: string;
   previousSchoolAddress?: string;
 
@@ -124,6 +131,15 @@ export interface StudentData {
   religiousScore?: number;   // Tes Diniyyah (Bobot 30%)
   finalScore?: number;       // Weighted average score
   testNotes?: string;
+  retestCount?: number;      // Jumlah remedial / ujian ulang yang diambil
+  previousScores?: Array<{
+    date: string;
+    diagnosticScore: number;
+    generalScore: number;
+    religiousScore: number;
+    finalScore: number;
+    status: string;
+  }>;
 
   // Step 10: Pembayaran Daftar Ulang (Awal Masuk)
   initialPaymentProofUrl?: string;
@@ -264,6 +280,9 @@ export interface CostBreakdown {
   id: string;
   title: string;
   amount: number;
+  amountIkhwan?: number;
+  amountAkhwat?: number;
+  period?: string;
   description: string;
   isMandatory: boolean;
 }
@@ -297,6 +316,7 @@ export interface SchoolInfo {
   bamBrochureFileSize?: string;
   videoProfileUrl?: string;
   headmasterName?: string;
+  headmasterNiy?: string;
   npsn?: string;
   accreditation?: string;
   principalGreeting?: string;
@@ -341,11 +361,13 @@ export interface FormPaymentRecord {
   paymentDate: string; // YYYY-MM-DD
   amount: number;
   category: 'Internal' | 'Eksternal' | 'Bazaar';
+  proofUrl?: string;
+  status?: 'verified' | 'pending' | 'rejected';
   notes?: string;
   createdAt: string;
 }
 
-export type BamInstallmentType = 'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3' | 'Cicilan 4' | 'Cicilan 5' | 'Cicilan 6' | 'Cicilan 7' | 'Cicilan 8' | 'Cicilan 9' | 'Cicilan 10';
+export type BamInstallmentType = 'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3' | 'Cicilan 4' | 'Cicilan 5' | 'Cicilan 6' | 'Cicilan 7' | 'Cicilan 8' | 'Cicilan 9' | 'Cicilan 10' | 'Belum Bayar';
 
 export interface BamPaymentRecord {
   id: string;

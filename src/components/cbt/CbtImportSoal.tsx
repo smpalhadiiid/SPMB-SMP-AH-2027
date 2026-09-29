@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw, Download } from 'lucide-react';
 import { CbtSoal } from '../../types';
 import { bulkInsertSoalSupabase } from '../../services/cbtSupabaseService';
+import { generateUUID } from '../../utils/uuid';
 
 export const CbtImportSoal: React.FC = () => {
   const queryClient = useQueryClient();
@@ -129,7 +130,7 @@ export const CbtImportSoal: React.FC = () => {
             : 'medium';
 
           validQuestions.push({
-            id: crypto.randomUUID(),
+            id: generateUUID(),
             category: katKode as any,
 
             kategoriKode: katKode,

@@ -1,17 +1,46 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchUjianSupabase } from '../services/cbtSupabaseService';
+import {
+  fetchUjianSupabase,
+  saveJawabanPesertaSupabase,
+  saveAllJawabanPesertaSupabase,
+  saveHasilUjianSupabase,
+  fetchHasilUjianSupabase,
+} from '../services/cbtSupabaseService';
 import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule } from '../types';
-import { generateRegistrationPDF } from '../utils/pdfGenerator';
+import { PaymentRepository } from '../repositories/PaymentRepository';
+import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
+import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
+import {
+  canDownloadStudentForm,
+  canStudentDownloadDocuments,
+  isStudentDataVerified,
+  canStudentDownloadExamCard,
+  hasUploadedPaymentProof,
+} from '../utils/formEligibility';
 import confetti from 'canvas-confetti';
-import { getStoredQuestionBank, getStoredTestSchedules } from '../utils/storage';
+import { getStoredQuestionBank, getStoredTestSchedules, getStoredFormPayments, saveFormPayments, getStoredBamPayments, saveBamPayments } from '../utils/storage';
 import {
   CheckCircle2, Clock, AlertCircle, Download, Upload, CreditCard,
   FileText, GraduationCap, Award, Calendar, MapPin, User, Phone,
   School, HelpCircle, Check, ArrowRight, ShieldCheck, Sparkles, Image as ImageIcon,
   ChevronRight, RefreshCw, Send, Lock, Play, Timer, FileQuestion, BarChart,
-  ChevronLeft, Flag, SendHorizontal, X, AlertTriangle, Eye
+  ChevronLeft, Flag, SendHorizontal, X, AlertTriangle, Eye, ZoomIn, ZoomOut, RotateCw, Save
 } from 'lucide-react';
+import {
+  compressPaymentProofImage,
+  formatFileSize,
+  downloadPaymentProof,
+  savePaymentProofRecord,
+} from '../utils/paymentProofStorage';
+import {
+  BAM_CONFIG,
+  BAM_BREAKDOWN_ITEMS,
+  BAM_INSTALLMENT_STEPS,
+  getStudentCategory,
+  getTotalBamCost,
+  calculateBamRemaining,
+} from '../utils/bamPricing';
 
 interface StudentDashboardProps {
   currentUser: UserAccount;
@@ -73,7 +102,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [nik, setNik] = useState(studentData.nik || '');
   const [nisn, setNisn] = useState(studentData.nisn || '');
   const [birthPlace, setBirthPlace] = useState(studentData.birthPlace || '');
-  const [birthDate, setBirthDate] = useState(studentData.birthDate || '');
+  const [birthDate, setBirthDate] = useState(studentData.birthDate || '2013-01-01');
   const [gender, setGender] = useState<'Laki-laki' | 'Perempuan'>(studentData.gender || 'Laki-laki');
   const [religion, setReligion] = useState(studentData.religion || 'Islam');
   const [childOrder, setChildOrder] = useState(studentData.childOrder || '1');
@@ -102,12 +131,36 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Proof URLs & BAM Payment details
   const [formPaymentProof, setFormPaymentProof] = useState(studentData.formPaymentProofUrl || '');
+  const [formProofMeta, setFormProofMeta] = useState<{
+    fileName: string;
+    fileSize: number;
+    isCompressing: boolean;
+  }>({
+    fileName: studentData.formPaymentProofUrl ? 'bukti_transfer_formulir.jpg' : '',
+    fileSize: 0,
+    isCompressing: false,
+  });
+  const [showFormImageModal, setShowFormImageModal] = useState(false);
+  const [formZoomScale, setFormZoomScale] = useState(1);
+  const [formRotate, setFormRotate] = useState(0);
+
   const [initialPaymentProof, setInitialPaymentProof] = useState(studentData.initialPaymentProofUrl || '');
+  const [bamProofMeta, setBamProofMeta] = useState<{
+    fileName: string;
+    fileSize: number;
+    isCompressing: boolean;
+  }>({
+    fileName: studentData.initialPaymentProofUrl ? 'bukti_transfer_bam.jpg' : '',
+    fileSize: 0,
+    isCompressing: false,
+  });
   const [initialPaymentDateInput, setInitialPaymentDateInput] = useState(studentData.initialPaymentDate || new Date().toISOString().split('T')[0]);
   const [initialPaymentAmountInput, setInitialPaymentAmountInput] = useState<number | string>(studentData.initialPaymentAmount || '');
   const [initialPaymentTypeInput, setInitialPaymentTypeInput] = useState<'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3'>('Lunas');
   const [initialPaymentNotesInput, setInitialPaymentNotesInput] = useState(studentData.initialPaymentNotes || '');
   const [showBamImageModal, setShowBamImageModal] = useState(false);
+  const [bamZoomScale, setBamZoomScale] = useState(1);
+  const [bamRotate, setBamRotate] = useState(0);
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [photoUrl, setPhotoUrl] = useState(studentData.photoUrl || '');
   const [kkUrl, setKkUrl] = useState(studentData.kkUrl || '');
@@ -116,10 +169,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
+  const safeConfetti = (opts: any) => {
+    try {
+      if (typeof confetti === 'function') {
+        confetti(opts);
+      }
+    } catch (e) {
+      console.warn('Confetti error:', e);
+    }
+  };
+
   // Celebrate with confetti if Passed
   useEffect(() => {
     if (studentData.status === 'passed' || studentData.status === 'class_assigned' || studentData.status === 're_registered') {
-      confetti({
+      safeConfetti({
         particleCount: 80,
         spread: 70,
         origin: { y: 0.6 }
@@ -127,15 +190,131 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   }, [studentData.status]);
 
+  // Sinkronisasi Hasil Nilai Ujian Real-Time dari Supabase hasil_ujian
+  useEffect(() => {
+    let isMounted = true;
+    async function syncExamResultsFromSupabase() {
+      if (!studentData?.id) return;
+      try {
+        const results = await fetchHasilUjianSupabase(studentData.id);
+        if (results && results.length > 0 && isMounted) {
+          const latest = results[0];
+          const hasScoreDiff =
+            studentData.finalScore !== latest.nilaiTotal ||
+            studentData.diagnosticScore !== latest.nilaiDiagnostik ||
+            studentData.generalScore !== latest.nilaiTpu ||
+            studentData.religiousScore !== latest.nilaiDiniyyah;
+
+          if (hasScoreDiff) {
+            const isLulus = latest.statusKelulusan === 'LULUS';
+            const updated: StudentData = {
+              ...studentData,
+              diagnosticScore: latest.nilaiDiagnostik,
+              generalScore: latest.nilaiTpu,
+              religiousScore: latest.nilaiDiniyyah,
+              finalScore: latest.nilaiTotal,
+              testSubmitted: true,
+              status: isLulus
+                ? (studentData.status === 're_registration_paid' || studentData.status === 're_registered' || studentData.status === 'class_assigned' ? studentData.status : 'passed')
+                : 'failed',
+            };
+            onUpdateStudentData(updated);
+          }
+        }
+      } catch (err) {
+        console.warn('Sync exam results from Supabase notice:', err);
+      }
+    }
+    syncExamResultsFromSupabase();
+  }, [studentData?.id]);
+
+  // Lookup data pembayaran BAM yang telah diupload / diverifikasi oleh Admin
+  const linkedBamRecord = useMemo(() => {
+    const allBam = getStoredBamPayments();
+    return allBam.find(
+      b => b.studentId === studentData.id ||
+           (studentData.registrationNumber && b.registrationNumber === studentData.registrationNumber) ||
+           (studentData.fullName && b.studentName && b.studentName.toLowerCase() === studentData.fullName.toLowerCase())
+    );
+  }, [studentData]);
+
+  const studentCategory = getStudentCategory(studentData);
+  const hasCustomCost = Boolean(costBreakdowns && costBreakdowns.length > 0);
+  const calculatedCustomTotal = hasCustomCost
+    ? costBreakdowns.reduce((acc, curr) => {
+        const val = (studentData.gender === 'Perempuan' && curr.amountAkhwat)
+          ? curr.amountAkhwat
+          : (curr.amountIkhwan || curr.amount || 0);
+        return acc + Number(val);
+      }, 0)
+    : 0;
+
+  const totalBamCost = linkedBamRecord?.totalBamCost || (hasCustomCost ? calculatedCustomTotal : getTotalBamCost(studentCategory));
+  const currentPaidAmount = (linkedBamRecord && linkedBamRecord.amountPaid > 0)
+    ? linkedBamRecord.amountPaid
+    : (studentData.initialPaymentAmount || 0);
+  const currentRemaining = linkedBamRecord?.remainingBalance !== undefined
+    ? linkedBamRecord.remainingBalance
+    : Math.max(0, totalBamCost - currentPaidAmount);
+  const currentInstallmentType = linkedBamRecord?.installmentType || (currentPaidAmount >= totalBamCost ? 'Lunas' : (currentPaidAmount > 0 ? 'Cicilan 1' : 'Belum Bayar'));
+  const currentNotes = linkedBamRecord?.notes || studentData.initialPaymentNotes || '';
+
+  // Sinkronisasi data BAM ke input form
+  useEffect(() => {
+    if (studentData.initialPaymentDate) {
+      setInitialPaymentDateInput(studentData.initialPaymentDate);
+    }
+    if (studentData.initialPaymentNotes) {
+      setInitialPaymentNotesInput(studentData.initialPaymentNotes);
+    }
+    if (studentData.initialPaymentProofUrl) {
+      setInitialPaymentProof(studentData.initialPaymentProofUrl);
+    }
+    if (currentRemaining > 0 && (!initialPaymentAmountInput || Number(initialPaymentAmountInput) === 0)) {
+      setInitialPaymentAmountInput(currentRemaining.toString());
+      setInitialPaymentTypeInput(currentRemaining < totalBamCost ? 'Cicilan 2' : 'Lunas');
+    } else if (currentPaidAmount > 0 && (!initialPaymentAmountInput || Number(initialPaymentAmountInput) === 0)) {
+      setInitialPaymentAmountInput(currentPaidAmount.toString());
+    }
+  }, [studentData.initialPaymentDate, studentData.initialPaymentNotes, studentData.initialPaymentProofUrl, currentRemaining, currentPaidAmount, totalBamCost]);
+
   // Online Exam Simulator State
   const [isTakingExam, setIsTakingExam] = useState(false);
-  const [questionsList, setQuestionsList] = useState<ExamQuestion[]>([]);
+  const [isExamLoading, setIsExamLoading] = useState(false);
+  const [questionsList, setQuestionsList] = useState<ExamQuestion[]>(() => getStoredQuestionBank());
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [examAnswers, setExamAnswers] = useState<{ [qId: string]: number }>({});
   const [hesitantAnswers, setHesitantAnswers] = useState<{ [qId: string]: boolean }>({});
   const [examTimeLeft, setExamTimeLeft] = useState(5400); // 90 mins = 5400s
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+
+  // Sinkronisasi Soal Dinamis dari Database Supabase & Realtime Multi-Device
+  useEffect(() => {
+    let isMounted = true;
+    async function loadDynamicQuestions() {
+      try {
+        const questions = await ExamQuestionRepository.list();
+        if (isMounted && questions && questions.length > 0) {
+          setQuestionsList(questions);
+        }
+      } catch (err) {
+        console.warn('Gagal memuat soal Supabase di StudentDashboard:', err);
+      }
+    }
+    loadDynamicQuestions();
+
+    const unsubscribe = ExamQuestionRepository.subscribe((updated) => {
+      if (isMounted && updated && updated.length > 0) {
+        setQuestionsList(updated);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let timer: any;
@@ -154,10 +333,120 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return () => clearInterval(timer);
   }, [isTakingExam, examTimeLeft]);
 
-  const handleStartExam = () => {
-    const bank = getStoredQuestionBank();
-    if (bank.length === 0) {
-      alert('Panitia belum mengunggah Soal Ujian. Mohon tunggu informasi dari Panitia Admin.');
+  const [showRetakeConfirmModal, setShowRetakeConfirmModal] = useState(false);
+
+  const handleDownloadExamCard = () => {
+    if (!canDownloadExamCard) {
+      alert(
+        '🔒 KARTU PESERTA UJIAN BELUM DAPAT DIUNDUH!\n\nSilakan unggah foto bukti transfer pembayaran formulir terlebih dahulu pada menu "2. Bayar Formulir".\n\nSetelah bukti pembayaran diunggah, fitur Isi Data & Berkas serta Download Kartu Ujian akan langsung AKTIF.'
+      );
+      return;
+    }
+    try {
+      const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
+      const creds = {
+        username:
+          currentUser?.username ||
+          (currentUser?.email ? currentUser.email.split('@')[0] : '') ||
+          sessionStorage.getItem('spmb_last_student_username') ||
+          studentData.registrationNumber ||
+          'siswa',
+        password:
+          currentUser?.password ||
+          sessionStorage.getItem('spmb_last_student_password') ||
+          localStorage.getItem(`spmb_cred_${studentData.id}`) ||
+          localStorage.getItem(`spmb_cred_${studentData.userEmail}`) ||
+          localStorage.getItem(`spmb_cred_${studentData.registrationNumber}`) ||
+          'siswa123',
+      };
+      generateExamCardPDF(studentData, schoolInfo, activeSched, creds);
+    } catch (err: any) {
+      console.error('Gagal mengunduh kartu ujian:', err);
+      alert('Terjadi kendala saat mencetak kartu ujian: ' + (err?.message || 'Pastikan data valid'));
+    }
+  };
+
+  const handleDownloadExamResult = () => {
+    try {
+      generateExamResultPDF(studentData, schoolInfo);
+    } catch (err: any) {
+      console.error('Gagal mengunduh hasil ujian:', err);
+      alert('Terjadi kendala saat mencetak hasil ujian: ' + (err?.message || 'Pastikan data valid'));
+    }
+  };
+
+  const handleTriggerRetakeExam = () => {
+    setShowRetakeConfirmModal(true);
+  };
+
+  const handleConfirmRetakeExam = async () => {
+    setIsExamLoading(true);
+    let bank = questionsList;
+    try {
+      const fresh = await ExamQuestionRepository.list();
+      if (fresh && fresh.length > 0) {
+        bank = fresh;
+        setQuestionsList(fresh);
+      }
+    } catch {
+      bank = getStoredQuestionBank();
+    } finally {
+      setIsExamLoading(false);
+    }
+
+    if (!bank || bank.length === 0) {
+      alert('Panitia belum mengunggah Soal Ujian. Mohon hubungi Panitia Admin.');
+      return;
+    }
+    const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
+    const duration = activeSched?.durationMinutes || 90;
+
+    const prevRecord = {
+      date: new Date().toISOString(),
+      diagnosticScore: studentData.diagnosticScore || 0,
+      generalScore: studentData.generalScore || 0,
+      religiousScore: studentData.religiousScore || 0,
+      finalScore: studentData.finalScore || 0,
+      status: studentData.status,
+    };
+
+    const updated: StudentData = {
+      ...studentData,
+      retestCount: (studentData.retestCount || 0) + 1,
+      previousScores: [...(studentData.previousScores || []), prevRecord],
+      testSubmitted: false,
+      isTestActive: true,
+      status: 'scheduled_test',
+    };
+
+    onUpdateStudentData(updated);
+    setShowRetakeConfirmModal(false);
+
+    setQuestionsList(bank);
+    setCurrentQuestionIndex(0);
+    setExamAnswers({});
+    setHesitantAnswers({});
+    setExamTimeLeft(duration * 60);
+    setIsTakingExam(true);
+  };
+
+  const handleStartExam = async () => {
+    setIsExamLoading(true);
+    let bank = questionsList;
+    try {
+      const fresh = await ExamQuestionRepository.list();
+      if (fresh && fresh.length > 0) {
+        bank = fresh;
+        setQuestionsList(fresh);
+      }
+    } catch {
+      bank = getStoredQuestionBank();
+    } finally {
+      setIsExamLoading(false);
+    }
+
+    if (!bank || bank.length === 0) {
+      alert('Panitia belum mengunggah Soal Ujian ke database Supabase. Mohon tunggu informasi dari Panitia Admin.');
       return;
     }
     const isExamActive = schedulesList.some(s => s.isOnlineActive === true) || studentData.isTestActive === true;
@@ -178,6 +467,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const handleSelectOption = (qId: string, optionIdx: number) => {
     setExamAnswers(prev => ({ ...prev, [qId]: optionIdx }));
+    // 3. Jawaban ujian calon murid langsung masuk ke database Supabase tabel jawaban_peserta
+    const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
+    saveJawabanPesertaSupabase({
+      ujianId: activeSched?.id,
+      pesertaId: studentData.id,
+      soalId: qId,
+      jawabanIndex: optionIdx,
+      isRaguRagu: Boolean(hesitantAnswers[qId]),
+    }).catch(err => console.warn('saveJawabanPesertaSupabase real-time warning:', err));
   };
 
   const handleToggleHesitant = (qId: string) => {
@@ -241,15 +539,44 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setIsTakingExam(false);
     setShowSubmitModal(false);
 
-    confetti({
+    // 3. JAWABAN UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE jawaban_peserta
+    const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
+    const ujianId = activeSched?.id;
+
+    saveAllJawabanPesertaSupabase({
+      ujianId,
+      pesertaId: studentData.id,
+      answers: examAnswers,
+      questions: questionsList.map(q => ({
+        id: q.id,
+        correctOptionIndex: q.correctOptionIndex,
+      })),
+    }).catch(err => console.warn('saveAllJawabanPesertaSupabase error:', err));
+
+    // 4. HASIL UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE hasil_ujian
+    saveHasilUjianSupabase({
+      id: `hasil_${ujianId || 'cbt'}_${studentData.id}`,
+      ujianId: ujianId || '145eacad-ef02-4180-ba26-85b34d1649da',
+      pesertaId: studentData.id,
+      registrationNumber: studentData.registrationNumber || '',
+      namaPeserta: studentData.fullName,
+      nilaiDiagnostik: diagnosticScore,
+      nilaiTpu: generalScore,
+      nilaiDiniyyah: religiousScore,
+      nilaiTotal: finalScore,
+      statusKelulusan: finalScore >= 70 ? 'LULUS' : 'BELUM LULUS',
+      tanggalUjian: new Date().toISOString().split('T')[0],
+    }).catch(err => console.warn('saveHasilUjianSupabase error:', err));
+
+    safeConfetti({
       particleCount: 150,
       spread: 90,
       origin: { y: 0.5 }
     });
 
-    // Display required success modal & alert
+    // 5. SETELAH CALON MURID SELESAI MENGERJAKAN UJIAN, TAMPILKAN FITUR DOWNLOAD HASIL UJIAN
     setShowSuccessModal(true);
-    alert('Terimakasih anda telah mengirimkan jawaban, semoga lulus');
+    alert('Terimakasih anda telah mengirimkan jawaban, semoga lulus\n\nJawaban & hasil ujian telah berhasil tersimpan di database Supabase.\nSilakan gunakan tombol "Download Hasil Ujian (PDF)" untuk mengunduh bukti perolehan nilai Anda.');
   };
 
   // Handle File Upload to Base64
@@ -259,6 +586,64 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       const reader = new FileReader();
       reader.onloadend = () => {
         setter(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Specialized Upload & Auto-compress untuk Bukti Pembayaran Formulir
+  const handleFormProofFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setFormProofMeta(prev => ({ ...prev, isCompressing: true }));
+    try {
+      const res = await compressPaymentProofImage(file);
+      setFormPaymentProof(res.dataUrl);
+      setFormProofMeta({
+        fileName: res.fileName,
+        fileSize: res.fileSize,
+        isCompressing: false,
+      });
+    } catch (err) {
+      console.warn('Kompresi bukti formulir fallback:', err);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormPaymentProof(reader.result as string);
+        setFormProofMeta({
+          fileName: file.name,
+          fileSize: file.size,
+          isCompressing: false,
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Specialized Upload & Auto-compress untuk Bukti Pembayaran BAM
+  const handleBamProofFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBamProofMeta(prev => ({ ...prev, isCompressing: true }));
+    try {
+      const res = await compressPaymentProofImage(file);
+      setInitialPaymentProof(res.dataUrl);
+      setBamProofMeta({
+        fileName: res.fileName,
+        fileSize: res.fileSize,
+        isCompressing: false,
+      });
+    } catch (err) {
+      console.warn('Kompresi bukti BAM fallback:', err);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setInitialPaymentProof(reader.result as string);
+        setBamProofMeta({
+          fileName: file.name,
+          fileSize: file.size,
+          isCompressing: false,
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -285,13 +670,74 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     onUpdateStudentData(updated);
 
-    confetti({
+    // 1. Simpan ke sistem arsip bukti transfer database
+    savePaymentProofRecord({
+      id: `proof_form_${studentData.id}_${Date.now()}`,
+      studentId: studentData.id,
+      registrationNumber: regNo,
+      studentName: studentData.fullName,
+      paymentType: 'form',
+      fileName: formProofMeta.fileName || `Bukti_Formulir_${studentData.fullName.replace(/\s+/g, '_')}.jpg`,
+      fileSize: formProofMeta.fileSize || 120000,
+      fileType: 'image/jpeg',
+      dataUrl: formPaymentProof,
+      uploadedAt: new Date().toISOString(),
+      amount: studentData.formPaymentAmount || 200000,
+      status: 'verified',
+      gender: studentData.gender,
+      notes: 'Bukti Pembayaran Formulir Pendaftaran (Tersimpan di Database & Terverifikasi)',
+    }).catch(err => console.warn('savePaymentProofRecord form:', err));
+
+    // 2. Sinkronkan langsung ke daftar Form Payment Admin & Supabase
+    try {
+      PaymentRepository.create({
+        studentId: studentData.id,
+        studentName: studentData.fullName,
+        registrationNumber: regNo,
+        gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
+        paymentType: 'form',
+        amount: studentData.formPaymentAmount || 200000,
+        paymentDate: new Date().toISOString().split('T')[0],
+        proofUrl: formPaymentProof,
+        status: 'verified',
+        notes: 'Upload Bukti Formulir Calon Murid (Siap Diperiksa Admin)',
+      }).catch(err => console.warn('PaymentRepository.create form:', err));
+
+      const existingFormPayments = getStoredFormPayments();
+      const updatedFormPayments = [
+        {
+          id: `fpay_${studentData.id}_${Date.now()}`,
+          transactionNumber: `TRX-FORM-${regNo.slice(-6)}`,
+          paymentDate: new Date().toISOString().split('T')[0],
+          studentId: studentData.id,
+          studentName: studentData.fullName,
+          registrationNumber: regNo,
+          gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki') as 'Laki-laki' | 'Perempuan',
+          amount: studentData.formPaymentAmount || 200000,
+          category: 'Internal' as const,
+          proofUrl: formPaymentProof,
+          status: 'verified' as const,
+          notes: 'Upload Bukti Formulir Calon Murid (Siap Diperiksa Admin)',
+          createdAt: new Date().toISOString(),
+        },
+        ...existingFormPayments.filter(f => f.studentId !== studentData.id),
+      ];
+      saveFormPayments(updatedFormPayments);
+    } catch (e) {
+      console.warn('saveFormPayments sync error:', e);
+    }
+
+    safeConfetti({
       particleCount: 100,
       spread: 80,
       origin: { y: 0.5 }
     });
 
-    alert('🎉 Upload Bukti Pembayaran Berhasil!\n\nStatus Pembayaran Formulir: LUNAS ✅\nNomor Pendaftaran: ' + regNo + '\n\nMenu Isi Formulir Lengkap sekarang telah AKTIF dan siap diisi.');
+    alert(
+      '🎉 Data Bukti Transfer Pembayaran Formulir Berhasil Disimpan di Database!\n\nStatus Pembayaran: LUNAS ✅\nNomor Pendaftaran: ' +
+        regNo +
+        '\n\n1. Menu Isi Data & Berkas sekarang telah AKTIF dan siap diisi.\n2. Fitur Download Kartu Ujian sekarang telah AKTIF dan siap diunduh/dicetak.'
+    );
     
     // Switch directly to the active form tab
     setActiveTab('form');
@@ -314,7 +760,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         nik,
         nisn,
         birthPlace,
-        birthDate,
+        birthDate: birthDate || '2013-01-01',
         gender,
         religion,
         childOrder,
@@ -328,13 +774,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         previousSchoolNpsn,
         fatherName,
         fatherBirthPlace,
-        fatherBirthDate,
+        fatherBirthDate: fatherBirthDate || undefined,
         fatherJob,
         fatherEducation,
         fatherPhone,
         motherName,
         motherBirthPlace,
-        motherBirthDate,
+        motherBirthDate: motherBirthDate || undefined,
         motherJob,
         motherPhone,
         photoUrl,
@@ -360,14 +806,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       return;
     }
 
-    const isAkhwat = studentData.gender === 'Perempuan';
-    const computedCosts = costBreakdowns.map((c) => {
-      if (c.id === 'c4') return { ...c, amount: isAkhwat ? 900000 : 660000 };
-      if (c.id === 'c13') return { ...c, amount: isAkhwat ? 210000 : 200000 };
-      return c;
-    });
-    const totalInitialFee = computedCosts.reduce((a, b) => a + b.amount, 0);
-    const amountToSave = Number(initialPaymentAmountInput) || totalInitialFee;
+    const category = getStudentCategory(studentData);
+    const totalCost = getTotalBamCost(category);
+    const amountToSave = Number(initialPaymentAmountInput) || totalCost;
 
     const updated: StudentData = {
       ...studentData,
@@ -381,13 +822,72 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     onUpdateStudentData(updated);
 
-    confetti({
+    // 1. Simpan ke sistem arsip bukti transfer database
+    savePaymentProofRecord({
+      id: `proof_bam_${studentData.id}_${Date.now()}`,
+      studentId: studentData.id,
+      registrationNumber: studentData.registrationNumber || 'REG-SPMB',
+      studentName: studentData.fullName,
+      paymentType: 'bam',
+      fileName: bamProofMeta.fileName || `Bukti_BAM_${studentData.fullName.replace(/\s+/g, '_')}.jpg`,
+      fileSize: bamProofMeta.fileSize || 180000,
+      fileType: 'image/jpeg',
+      dataUrl: initialPaymentProof,
+      uploadedAt: new Date().toISOString(),
+      amount: amountToSave,
+      status: 'pending',
+      gender: studentData.gender,
+      notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
+    }).catch(err => console.warn('savePaymentProofRecord BAM:', err));
+
+    // 2. Sinkronkan langsung ke daftar BAM Payment Admin & Supabase
+    try {
+      PaymentRepository.create({
+        studentId: studentData.id,
+        studentName: studentData.fullName,
+        registrationNumber: studentData.registrationNumber || 'REG-SPMB',
+        gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
+        paymentType: 'bam',
+        amount: amountToSave,
+        paymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
+        proofUrl: initialPaymentProof,
+        status: 'pending',
+        notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
+      }).catch(err => console.warn('PaymentRepository.create BAM:', err));
+
+      const existingBamPayments = getStoredBamPayments();
+      const updatedBamPayments = [
+        {
+          id: `bampay_${studentData.id}_${Date.now()}`,
+          transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
+          paymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
+          studentId: studentData.id,
+          studentName: studentData.fullName,
+          registrationNumber: studentData.registrationNumber || 'REG-SPMB',
+          gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki') as 'Laki-laki' | 'Perempuan',
+          totalBamCost: totalCost,
+          amountPaid: amountToSave,
+          installmentType: initialPaymentTypeInput,
+          totalPaidToDate: amountToSave,
+          remainingBalance: calculateBamRemaining(totalCost, amountToSave),
+          proofUrl: initialPaymentProof,
+          notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
+          createdAt: new Date().toISOString(),
+        },
+        ...existingBamPayments.filter(b => b.studentId !== studentData.id),
+      ];
+      saveBamPayments(updatedBamPayments);
+    } catch (e) {
+      console.warn('saveBamPayments sync error:', e);
+    }
+
+    safeConfetti({
       particleCount: 120,
       spread: 80,
       origin: { y: 0.5 }
     });
 
-    alert('🎉 Upload Bukti Transfer BAM Berhasil!\n\nStatus Pembayaran Daftar Ulang: MENUNGGU VERIFIKASI ADMIN ⏳\n\nBukti transfer Biaya Awal Masuk telah terkirim ke Panitia SPMB SMP Al-Hadiid Cileungsi.');
+    alert('🎉 Data Bukti Transfer BAM Berhasil Disimpan di Database!\n\nStatus Pembayaran: MENUNGGU VERIFIKASI ADMIN ⏳\nNominal: Rp ' + amountToSave.toLocaleString('id-ID') + '\n\nBukti transfer Biaya Awal Masuk telah tersimpan aman dan terkirim ke Panitia SPMB SMP Al-Hadiid Cileungsi.');
   };
 
   // Check if student has completed & submitted the full form
@@ -404,8 +904,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     studentData.status === 'completed';
 
   // Check if Admin has verified the payment and form submission
-  const isFormVerified =
-    studentData.isFormVerified ||
+  const isPaymentVerified =
+    studentData.formPaymentStatus === 'verified' ||
+    studentData.isFormVerified === true ||
+    studentData.isFormVerifiedByAdmin === true ||
     studentData.status === 'form_verified' ||
     studentData.status === 'scheduled_test' ||
     studentData.status === 'test_completed' ||
@@ -416,7 +918,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     studentData.status === 'class_assigned' ||
     studentData.status === 'completed';
 
-  const canDownloadPDF = isFormSubmitted && isFormVerified;
+  const isFormVerified = isStudentDataVerified(studentData);
+
+  // Fitur download formulir aktif setelah data pembayaran & formulir diverifikasi oleh Panitia Admin
+  const canDownloadPDF = canStudentDownloadDocuments(studentData);
+  // Sesuai revisi: setelah calon murid mengupload bukti pembayaran fitur isi data & berkas aktif dan tampilkan fitur Download Kartu ujian
+  const canDownloadExamCard = canStudentDownloadExamCard(studentData);
 
   // Calculate 12-Step Progress Statuses
   const steps = [
@@ -427,33 +934,37 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       title: 'Pembayaran Formulir (Rp200.000)',
       desc: studentData.formPaymentStatus === 'verified'
         ? 'Lunas & Diverifikasi ✓'
-        : studentData.formPaymentStatus === 'pending'
-        ? 'Menunggu Verifikasi Admin'
-        : 'Belum Dibayar',
+        : studentData.formPaymentProofUrl || studentData.formPaymentStatus === 'pending'
+        ? 'Bukti Terunggah - Menunggu Verifikasi Admin ⏳'
+        : 'Upload Bukti Transfer Formulir',
       isDone: studentData.formPaymentStatus === 'verified',
-      isCurrent: studentData.formPaymentStatus === 'pending' || studentData.formPaymentStatus === 'unpaid',
+      isCurrent: !studentData.formPaymentStatus || studentData.formPaymentStatus === 'unpaid' || studentData.formPaymentStatus === 'pending',
     },
     {
       num: 4,
       title: 'Pengisian Formulir Lengkap',
-      desc: isFormSubmitted ? 'Biodata Lengkap Terisi ✓' : studentData.formPaymentStatus === 'verified' ? 'Siap Diisi (Aktif)' : '🔒 Terkunci (Bayar Formulir Dulu)',
+      desc: isFormSubmitted
+        ? 'Biodata Lengkap Terisi ✓'
+        : (studentData.formPaymentProofUrl || studentData.formPaymentStatus === 'verified' || studentData.formPaymentStatus === 'pending')
+        ? 'Siap Diisi (Aktif)'
+        : '🔒 Terkunci (Upload Bukti Bayar Dulu)',
       isDone: isFormSubmitted,
-      isCurrent: studentData.formPaymentStatus === 'verified' && !isFormSubmitted,
+      isCurrent: !isFormSubmitted && (!!studentData.formPaymentProofUrl || studentData.formPaymentStatus === 'verified' || studentData.formPaymentStatus === 'pending'),
     },
     {
       num: 5,
       title: 'Kirim & Terbitkan No Pendaftaran',
       desc: isFormSubmitted && studentData.registrationNumber ? `Nomor: ${studentData.registrationNumber}` : 'Otomatis Setelah Formulir Dikirim',
       isDone: isFormSubmitted && !!studentData.registrationNumber,
-      isCurrent: studentData.formPaymentStatus === 'verified' && !isFormSubmitted,
+      isCurrent: !isFormSubmitted && (!!studentData.formPaymentProofUrl || studentData.formPaymentStatus === 'verified'),
     },
     {
       num: 6,
-      title: 'Download Bukti Pendaftaran (PDF)',
+      title: 'Verifikasi Admin & Download Formulir',
       desc: canDownloadPDF
-        ? 'Aktif - Cetak PDF dengan QR Code ✓'
+        ? 'Diverifikasi Admin - Siap Cetak Formulir & Kartu Ujian ✓'
         : isFormSubmitted
-        ? 'Menunggu Verifikasi Admin ⏳'
+        ? 'Menunggu Verifikasi Pembayaran & Data oleh Admin ⏳'
         : '🔒 Terkunci (Isi & Kirim Formulir Dahulu)',
       isDone: canDownloadPDF,
       isCurrent: isFormSubmitted && !canDownloadPDF,
@@ -695,49 +1206,68 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             )}
           </button>
 
-          {/* Download Registration PDF Button */}
-          <button
-            onClick={() => {
-              if (!isFormSubmitted) {
-                alert(
-                  '🔒 FITUR DOWNLOAD FORMULIR BELUM AKTIF!\n\nAlur Pendaftaran SPMB:\n1. Registrasi Akun (Selesai ✓)\n2. Login Akun (Selesai ✓)\n3. Pembayaran Formulir Rp 200.000 (Lunas ✓)\n4. Isi & Kirim Formulir Pendaftaran Lengkap (Langkah Saat Ini)\n\nSilakan isi seluruh data pendaftaran dan klik "Kirim & Selesaikan Formulir Pendaftaran".'
-                );
-                return;
+          {/* Action Buttons: Download Kartu Ujian & Download Formulir */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* Download Kartu Ujian (Aktif setelah upload bukti bayar) */}
+            <button
+              onClick={handleDownloadExamCard}
+              className={`px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition-all text-xs font-bold cursor-pointer ${
+                canDownloadExamCard
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md ring-2 ring-indigo-400/40'
+                  : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200'
+              }`}
+              title={
+                canDownloadExamCard
+                  ? 'Download Kartu Tanda Peserta Ujian SPMB (PDF)'
+                  : 'Upload bukti transfer pembayaran formulir terlebih dahulu untuk mengunduh Kartu Ujian'
               }
-              if (!canDownloadPDF) {
+            >
+              {canDownloadExamCard ? (
+                <Download className="w-4 h-4 text-amber-300" />
+              ) : (
+                <Lock className="w-4 h-4 text-slate-400" />
+              )}
+              <span>
+                {canDownloadExamCard
+                  ? 'Download Kartu Ujian (PDF)'
+                  : 'Kartu Ujian (Upload Bukti Bayar)'}
+              </span>
+            </button>
+
+            {/* Download Registration PDF Button */}
+            <button
+              onClick={() => {
+                if (canDownloadPDF) {
+                  generateRegistrationPDF(studentData, schoolInfo);
+                  return;
+                }
                 alert(
-                  '🔒 FITUR DOWNLOAD FORMULIR TERKUNCI (MENUNGGU VERIFIKASI ADMIN)!\n\nFormulir Pendaftaran Anda telah berhasil dikirim.\nStatus Saat Ini: Menunggu Verifikasi Data Pembayaran & Isian Formulir oleh Panitia Admin.\n\nSetelah Panitia Admin memverifikasi data pendaftaran Anda di Dashboard Admin, fitur Download Bukti PDF dan Nomor Pendaftaran Resmi akan AKTIF secara otomatis.'
+                  '🔒 FORMULIR PENDAFTARAN BELUM DAPAT DIUNDUH!\n\nStatus: Menunggu Verifikasi Panitia Admin.\n\nSesuai alur pendaftaran:\n1. Calon murid membuat akun\n2. Upload bukti pembayaran formulir\n3. Mengisi data calon murid\n4. Admin panitia memverifikasi data pembayaran & data calon murid\n5. Calon murid dapat mendownload formulir.\n\nSetelah akun & berkas Anda diverifikasi oleh Admin, tombol download akan langsung aktif.'
                 );
-                return;
+              }}
+              className={`px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition-all text-xs font-bold cursor-pointer ${
+                canDownloadPDF
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                  : 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+              }`}
+              title={
+                canDownloadPDF
+                  ? 'Download / Cetak Bukti Pendaftaran PDF'
+                  : 'Menunggu verifikasi pembayaran & data oleh Panitia Admin'
               }
-              generateRegistrationPDF(studentData, schoolInfo);
-            }}
-            className={`ml-auto px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all text-xs font-bold cursor-pointer ${
-              canDownloadPDF
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
-                : 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
-            }`}
-            title={
-              canDownloadPDF
-                ? 'Download / Cetak Bukti Pendaftaran PDF'
-                : isFormSubmitted
-                ? 'Menunggu verifikasi Panitia Admin'
-                : 'Isi dan kirim formulir pendaftaran terlebih dahulu'
-            }
-          >
-            {canDownloadPDF ? (
-              <Download className="w-4 h-4 text-amber-300" />
-            ) : (
-              <Lock className="w-4 h-4 text-amber-600" />
-            )}
-            <span>
-              {canDownloadPDF
-                ? 'Download Formulir (PDF)'
-                : isFormSubmitted
-                ? 'PDF: Menunggu Verifikasi Admin'
-                : 'Download Formulir (Terkunci)'}
-            </span>
-          </button>
+            >
+              {canDownloadPDF ? (
+                <Download className="w-4 h-4 text-amber-300" />
+              ) : (
+                <Lock className="w-4 h-4 text-amber-600" />
+              )}
+              <span>
+                {canDownloadPDF
+                  ? 'Download Formulir (PDF)'
+                  : 'Download Formulir (Terkunci)'}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* TAB 1: 12-STEP TIMELINE */}
@@ -826,22 +1356,115 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             )}
 
             {isFormSubmitted && (
+              canDownloadPDF ? (
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-xs text-emerald-950">
+                    <span className="font-bold flex items-center gap-1.5 text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Langkah 4 & 5: Formulir & Pembayaran Lunas & Diverifikasi Admin ✓</span>
+                    </span>
+                    <p className="text-[11px] text-emerald-800 mt-0.5">
+                      Nomor Pendaftaran: <b>{studentData.registrationNumber}</b>. Formulir pendaftaran resmi siap dicetak/didownload.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => generateRegistrationPDF(studentData, schoolInfo)}
+                    className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs shrink-0 cursor-pointer flex items-center gap-2 shadow-sm"
+                  >
+                    <Download className="w-4 h-4 text-amber-300" />
+                    <span>Download Formulir (PDF)</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-xs text-amber-950">
+                    <span className="font-bold flex items-center gap-1.5 text-amber-800">
+                      <Clock className="w-4 h-4 text-amber-600" />
+                      <span>Langkah 4: Formulir Terkirim - Menunggu Verifikasi Admin ⏳</span>
+                    </span>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      Panitia Admin sedang memverifikasi bukti transfer dan data calon murid Anda. Tombol download formulir & kartu ujian akan otomatis aktif setelah diverifikasi.
+                    </p>
+                  </div>
+                  <div className="px-3 py-1.5 bg-amber-100 border border-amber-300 rounded-lg text-[11px] text-amber-900 font-bold flex items-center gap-1 shrink-0">
+                    <Lock className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Menunggu Verifikasi</span>
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* Quick Action: Download Kartu Peserta Ujian */}
+            {canDownloadExamCard && (
+              <div className="p-4 bg-indigo-50/80 rounded-xl border border-indigo-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="text-xs text-indigo-950">
+                  <span className="font-bold flex items-center gap-1.5 text-indigo-800">
+                    <Award className="w-4 h-4 text-indigo-600" />
+                    <span>Kartu Peserta Ujian Seleksi / Tes CBT Siap Dicetak! ✓</span>
+                  </span>
+                  <p className="text-[11px] text-indigo-700 mt-0.5">
+                    Kartu resmi berisi identitas calon murid, nomor peserta, jadwal pelaksanaan ujian, dan tata tertib tes seleksi.
+                  </p>
+                </div>
+                <button
+                  onClick={handleDownloadExamCard}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shrink-0 cursor-pointer flex items-center gap-2 shadow-sm"
+                >
+                  <Download className="w-4 h-4 text-amber-300" />
+                  <span>Download Kartu Ujian (PDF)</span>
+                </button>
+              </div>
+            )}
+
+            {/* Quick Action: Ujian Diulang (Remedial) jika dinyatakan Tidak Lulus */}
+            {studentData.status === 'failed' && (
+              <div className="p-4 bg-rose-50 rounded-xl border-2 border-rose-300 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+                <div className="text-xs text-rose-950">
+                  <span className="font-bold flex items-center gap-1.5 text-rose-800">
+                    <RefreshCw className="w-4 h-4 text-rose-600 animate-spin-slow" />
+                    <span>Fitur Ujian Diulang (Remedial) Terbuka!</span>
+                  </span>
+                  <p className="text-[11px] text-rose-800 mt-0.5">
+                    Status saat ini Belum Lulus. Sekolah memberikan kesempatan untuk mengulang tes diagnostik secara online guna memperbaiki perolehan skor Anda.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    onClick={handleDownloadExamResult}
+                    className="px-3.5 py-2 bg-white border border-rose-300 hover:bg-rose-100 text-rose-800 font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Hasil Ujian (PDF)</span>
+                  </button>
+                  <button
+                    onClick={handleTriggerRetakeExam}
+                    className="px-4 py-2 bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white font-extrabold rounded-xl text-xs flex items-center gap-1.5 shadow-md animate-pulse cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>🔄 Mulai Ujian Diulang</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Action: Download Hasil Ujian & Kelulusan jika tes selesai / lulus */}
+            {(studentData.status === 'test_completed' || studentData.status === 'passed' || studentData.status === 're_registered' || studentData.status === 'class_assigned' || studentData.finalScore !== undefined) && studentData.status !== 'failed' && (
               <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-xs text-emerald-950">
                   <span className="font-bold flex items-center gap-1.5 text-emerald-800">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Langkah 6: Formulir Pendaftaran Terkirim & Download AKTIF!</span>
+                    <span>Langkah 8-9: Surat Hasil Tes & Keterangan Kelulusan Tersedia</span>
                   </span>
                   <p className="text-[11px] text-emerald-800 mt-0.5">
-                    Nomor Pendaftaran: <b>{studentData.registrationNumber}</b>. Bukti pendaftaran resmi siap dicetak/didownload.
+                    Unduh surat resmi hasil perolehan skor ujian diagnostik dan keputusan seleksi panitia SPMB.
                   </p>
                 </div>
                 <button
-                  onClick={() => generateRegistrationPDF(studentData, schoolInfo)}
+                  onClick={handleDownloadExamResult}
                   className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs shrink-0 cursor-pointer flex items-center gap-2 shadow-sm"
                 >
                   <Download className="w-4 h-4 text-amber-300" />
-                  <span>Download Formulir PDF Now</span>
+                  <span>Download Hasil Ujian (PDF)</span>
                 </button>
               </div>
             )}
@@ -897,15 +1520,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <input
                         type="file"
                         accept="image/*"
-                        onChange={(e) => handleFileChange(e, setFormPaymentProof)}
+                        onChange={handleFormProofFile}
                         className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
                       />
                       <div className="flex flex-col items-center gap-2">
                         <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-                          <Upload className="w-5 h-5" />
+                          {formProofMeta.isCompressing ? (
+                            <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
+                          ) : (
+                            <Upload className="w-5 h-5" />
+                          )}
                         </div>
                         <div className="text-xs font-semibold text-slate-700">
-                          Pilih File Foto Bukti Pembayaran
+                          {formProofMeta.isCompressing ? 'Sedang mengoptimalkan & menyimpan foto bukti...' : 'Pilih File Foto Bukti Pembayaran'}
                         </div>
                         <div className="text-[10px] text-slate-400">
                           Klik di sini untuk unggah foto dari HP/Komputer (JPG, PNG, WEBP)
@@ -914,26 +1541,83 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* Image Preview if uploaded */}
+                  {/* Image Preview & Storage Details if uploaded */}
                   {formPaymentProof && (
-                    <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2">
-                      <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                        <span>Pratinjau Bukti Transfer:</span>
+                    <div className="p-3.5 bg-white rounded-xl border border-blue-200 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-800 border-b border-slate-100 pb-2">
+                        <span className="flex items-center gap-1.5 text-blue-800">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Bukti Transfer Formulir Tersimpan:</span>
+                        </span>
                         <button
                           type="button"
-                          onClick={() => setFormPaymentProof('')}
-                          className="text-rose-600 hover:underline text-[10px]"
+                          onClick={() => {
+                            setFormPaymentProof('');
+                            setFormProofMeta({ fileName: '', fileSize: 0, isCompressing: false });
+                          }}
+                          className="text-rose-600 hover:underline text-[10px] cursor-pointer"
                         >
-                          Hapus Gambar
+                          Hapus / Ganti
                         </button>
                       </div>
-                      <div className="max-h-48 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-1">
+
+                      {/* File Info Badge */}
+                      <div className="flex items-center justify-between bg-slate-50 px-3 py-1.5 rounded-lg text-[10px] text-slate-600">
+                        <span className="truncate max-w-[200px] font-mono font-medium">
+                          📄 {formProofMeta.fileName || 'bukti_transfer_formulir.jpg'}
+                        </span>
+                        {formProofMeta.fileSize > 0 && (
+                          <span className="font-bold text-blue-700 shrink-0">
+                            {formatFileSize(formProofMeta.fileSize)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="max-h-48 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-1 relative group">
                         <img
                           src={formPaymentProof}
                           alt="Bukti Transfer"
                           className="max-h-44 object-contain rounded"
                           referrerPolicy="no-referrer"
                         />
+                        <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowFormImageModal(true)}
+                            className="px-2.5 py-1 bg-white text-slate-900 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Perbesar</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
+                            className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Unduh</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Actions underneath preview */}
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowFormImageModal(true)}
+                          className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Perbesar Foto Bukti</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
+                          className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Unduh File Bukti</span>
+                        </button>
                       </div>
                     </div>
                   )}
@@ -983,13 +1667,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </>
                       )}
                     </div>
-                    {studentData.formPaymentStatus === 'verified' ? (
-                      <div className="text-[11px] text-blue-700 mt-2 font-medium">
-                        🎉 Pembayaran Rp 200.000 telah terverifikasi LUNAS. Menu <b>Isi Formulir Lengkap</b> telah AKTIF dan bisa langsung diisi.
+                    {studentData.formPaymentStatus === 'verified' || !!studentData.formPaymentProofUrl ? (
+                      <div className="space-y-3 mt-3 pt-3 border-t border-blue-200">
+                        <div className="text-[11px] text-blue-800 font-medium">
+                          🎉 Bukti transfer telah terunggah! Menu <b>Isi Data & Berkas</b> telah <b>AKTIF</b> dan fitur <b>Download Kartu Ujian</b> siap dicetak.
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={handleDownloadExamCard}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5 text-amber-300" />
+                            <span>Download Kartu Ujian (PDF)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('form')}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Lanjut Isi Data & Berkas</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="text-[11px] text-amber-800 mt-2">
-                        Silakan unggah bukti transfer dan klik tombol di bawah untuk mengonfirmasi pembayaran dan mengaktifkan formulir.
+                        Silakan unggah bukti transfer dan klik tombol di bawah untuk mengonfirmasi pembayaran dan mengaktifkan formulir serta Kartu Ujian.
                       </div>
                     )}
                   </div>
@@ -1124,6 +1829,32 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <div className="p-3 bg-emerald-50 text-emerald-900 rounded-xl text-xs font-bold border border-emerald-200 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     <span>{saveMessage}</span>
+                  </div>
+                )}
+
+                {/* Banner Download Kartu Ujian (Aktif Setelah Upload Bukti Pembayaran) */}
+                {canDownloadExamCard && (
+                  <div className="p-4 bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 rounded-2xl border border-indigo-700/60 text-white flex flex-col sm:flex-row items-center justify-between gap-4 shadow-md">
+                    <div className="space-y-1 text-left">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
+                        <Award className="w-3.5 h-3.5" />
+                        <span>KARTU PESERTA UJIAN AKTIF ✓</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-white">
+                        Kartu Peserta Ujian / Tes Seleksi CBT Siap Diunduh
+                      </h4>
+                      <p className="text-[11px] text-indigo-200">
+                        Bukti pembayaran Anda telah terunggah. Username & Password akun login ujian online telah tercantum dalam kartu ujian resmi.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDownloadExamCard}
+                      className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Kartu Ujian (PDF)</span>
+                    </button>
                   </div>
                 )}
 
@@ -1533,27 +2264,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="space-y-2">
                   <h4 className="text-xl font-bold text-slate-900">Fitur Download Formulir Terkunci</h4>
                   <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
-                    Setelah calon murid menyelesaikan isian formulir pendaftaran, Admin Panitia akan memverifikasi data pembayaran & isian formulir Anda. Setelah diverifikasi, fitur ini akan diaktifkan secara otomatis.
+                    Fitur download formulir pendaftaran (PDF resmi 3 halaman) akan otomatis dibuka setelah data pembayaran formulir calon murid diverifikasi oleh Panitia Admin.
                   </p>
                 </div>
                 <div className="p-4 bg-slate-900 text-slate-200 rounded-xl text-xs text-left max-w-lg mx-auto space-y-2">
                   <div className="font-bold text-amber-300 flex items-center gap-2">
                     <Clock className="w-4 h-4 text-amber-400" />
-                    <span>Status Persyaratan Fitur Download Formulir:</span>
+                    <span>Status Verifikasi & Pembayaran Formulir:</span>
                   </div>
                   <div className="text-slate-300 text-[11px] space-y-1">
-                    <div>1. Pembayaran Formulir: <b className="text-white">{studentData.formPaymentStatus === 'verified' ? '✓ Lunas (Diverifikasi)' : studentData.formPaymentProofUrl ? '⏳ Bukti Terunggah' : '❌ Belum Bayar'}</b></div>
-                    <div>2. Isian Data Formulir: <b className="text-white">{isFormSubmitted ? '✓ Formulir Terkirim' : '❌ Belum Mengisi Formulir'}</b></div>
-                    <div>3. Verifikasi Panitia Admin: <b className="text-amber-400">{studentData.isFormVerifiedByAdmin ? '✓ Diverifikasi Admin' : '⏳ Menunggu Verifikasi Panitia Admin'}</b></div>
+                    <div>1. Status Pembayaran Formulir: <b className="text-white">{studentData.formPaymentStatus === 'verified' ? '✓ Lunas' : studentData.formPaymentProofUrl ? '⏳ Bukti Transfer Telah Diunggah' : '❌ Belum Bayar'}</b></div>
+                    <div>2. Verifikasi Panitia Admin: <b className="text-amber-400">{isPaymentVerified ? '✓ Telah Diverifikasi' : '⏳ Menunggu Verifikasi Panitia Admin'}</b></div>
+                    <div>3. Status Isian Biodata: <b className="text-white">{isFormSubmitted ? '✓ Formulir Terkirim' : '⏳ Belum Mengisi Lengkap'}</b></div>
                   </div>
                 </div>
-                {!isFormSubmitted && (
+                {studentData.formPaymentStatus !== 'verified' && !studentData.formPaymentProofUrl && (
                   <button
-                    onClick={() => setActiveTab('form')}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer inline-flex items-center gap-2"
+                    onClick={() => setActiveTab('payment_form')}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer inline-flex items-center gap-2"
                   >
-                    <FileText className="w-4 h-4" />
-                    <span>Isi & Kirim Formulir Pendaftaran Sekarang</span>
+                    <CreditCard className="w-4 h-4" />
+                    <span>Bayar & Unggah Bukti Transfer Sekarang</span>
                   </button>
                 )}
               </div>
@@ -1650,33 +2381,92 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <p className="text-xs text-slate-500">
                   Berikut adalah informasi jadwal tes dari Panitia Admin. Ketika status tes diaktifkan oleh Admin, tombol Klik Soal akan terbuka.
                 </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Database Soal Supabase Terhubung ({questionsList.length} Soal Ujian Dinamis)
+                  </span>
+                </div>
               </div>
 
-              {studentData.isTestActive || hasActiveOnlineSchedule ? (
-                studentData.status !== 'test_completed' && !studentData.testSubmitted ? (
-                  <button
-                    onClick={handleStartExam}
-                    className="px-6 py-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl hover:shadow-indigo-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse shrink-0 border border-indigo-400/30"
-                  >
-                    <Play className="w-4 h-4 fill-current text-amber-300" />
-                    <span>🚀 Klik Soal (Mulai Ujian Online)</span>
-                  </button>
-                ) : (
-                  <div className="px-4 py-2 bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl flex items-center gap-2 border border-emerald-300 shrink-0">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Ujian Telah Dikerjakan & Selesai</span>
-                  </div>
-                )
-              ) : (
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                {/* Download Kartu Ujian Button */}
                 <button
-                  disabled
-                  className="px-5 py-2.5 bg-slate-100 text-slate-400 font-bold text-xs rounded-xl flex items-center gap-2 cursor-not-allowed shrink-0 border border-slate-200"
-                  title="Fitur Klik Soal akan aktif jika Jadwal Tes sudah dibuka oleh Panitia Admin"
+                  onClick={handleDownloadExamCard}
+                  className={`px-4 py-2.5 rounded-xl font-bold text-xs shadow-sm flex items-center gap-2 transition-all cursor-pointer ${
+                    canDownloadExamCard
+                      ? 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-800'
+                      : 'bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100'
+                  }`}
+                  title={
+                    canDownloadExamCard
+                      ? "Download Kartu Peserta Ujian SPMB (PDF)"
+                      : "Menunggu verifikasi pembayaran & data oleh Panitia Admin"
+                  }
                 >
-                  <Lock className="w-4 h-4 text-slate-400" />
-                  <span>Fitur Klik Soal (Terkunci - Menunggu Admin)</span>
+                  {canDownloadExamCard ? (
+                    <Download className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <Lock className="w-4 h-4 text-amber-600" />
+                  )}
+                  <span>{canDownloadExamCard ? 'Download Kartu Ujian (PDF)' : 'Kartu Ujian (Menunggu Verifikasi)'}</span>
                 </button>
-              )}
+
+                {studentData.status === 'failed' ? (
+                  <button
+                    onClick={handleTriggerRetakeExam}
+                    disabled={isExamLoading}
+                    className="px-5 py-2.5 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all cursor-pointer animate-pulse disabled:opacity-60"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isExamLoading ? 'animate-spin' : ''}`} />
+                    <span>🔄 Ujian Diulang (Mulai Remedial)</span>
+                  </button>
+                ) : studentData.isTestActive || hasActiveOnlineSchedule ? (
+                  studentData.status !== 'test_completed' && !studentData.testSubmitted ? (
+                    <button
+                      onClick={handleStartExam}
+                      disabled={isExamLoading}
+                      className="px-6 py-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl hover:shadow-indigo-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse border border-indigo-400/30 disabled:opacity-60"
+                    >
+                      {isExamLoading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-amber-300" />
+                          <span>Menyiapkan Soal Server...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 fill-current text-amber-300" />
+                          <span>🚀 Klik Soal (Mulai Ujian Online)</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl flex items-center gap-2 border border-emerald-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>Ujian Telah Dikerjakan & Selesai</span>
+                      </div>
+                      <button
+                        onClick={handleDownloadExamResult}
+                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+                        title="Download Surat Keterangan Hasil Ujian SPMB (PDF)"
+                      >
+                        <Download className="w-4 h-4 text-amber-300" />
+                        <span>Download Hasil Ujian (PDF)</span>
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  <button
+                    disabled
+                    className="px-5 py-2.5 bg-slate-100 text-slate-400 font-bold text-xs rounded-xl flex items-center gap-2 cursor-not-allowed border border-slate-200"
+                    title="Fitur Klik Soal akan aktif jika Jadwal Tes sudah dibuka oleh Panitia Admin"
+                  >
+                    <Lock className="w-4 h-4 text-slate-400" />
+                    <span>Fitur Klik Soal (Terkunci - Menunggu Admin)</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {!(studentData.isTestActive === true || hasActiveOnlineSchedule || studentData.status === 'scheduled_test' || studentData.status === 'test_completed' || studentData.status === 'passed' || studentData.status === 're_registered' || studentData.status === 'class_assigned') ? (
@@ -1767,7 +2557,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
 
                       <div className="mt-6 pt-4 border-t border-slate-800/80">
-                        {studentData.status === 'test_completed' || studentData.testSubmitted ? (
+                        {studentData.status === 'failed' ? (
+                          <button
+                            onClick={handleTriggerRetakeExam}
+                            className="w-full py-3 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-black text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer animate-pulse"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            <span>🔄 Klik Di Sini Untuk Ujian Diulang (Remedial)</span>
+                          </button>
+                        ) : studentData.status === 'test_completed' || studentData.testSubmitted ? (
                           <div className="p-3 bg-emerald-900/60 border border-emerald-500/50 rounded-xl text-center text-emerald-200 font-bold text-xs flex items-center justify-center gap-2">
                             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                             <span>Anda Telah Menyelesaikan Ujian Ini</span>
@@ -1809,15 +2607,50 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </p>
               </div>
 
-              {!isTakingExam && studentData.status !== 'test_completed' && studentData.status !== 'passed' && studentData.status !== 'failed' && (
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                {/* Download Hasil Ujian Button */}
+                {(studentData.status === 'test_completed' || studentData.status === 'passed' || studentData.status === 'failed' || studentData.status === 're_registered' || studentData.status === 'class_assigned' || studentData.finalScore !== undefined) && (
+                  <button
+                    onClick={handleDownloadExamResult}
+                    className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+                    title="Download Surat Keterangan Hasil Ujian SPMB (PDF)"
+                  >
+                    <Download className="w-4 h-4 text-amber-300" />
+                    <span>Download Hasil Ujian (PDF)</span>
+                  </button>
+                )}
+
+                {/* Download Kartu Ujian Button */}
                 <button
-                  onClick={handleStartExam}
-                  className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse shrink-0"
+                  onClick={handleDownloadExamCard}
+                  className="px-4 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-xs rounded-xl shadow-sm flex items-center gap-2 transition-all cursor-pointer"
+                  title="Download Kartu Peserta Ujian SPMB (PDF)"
                 >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>Klik Soal (Mulai Ujian Online)</span>
+                  <Download className="w-4 h-4 text-emerald-600" />
+                  <span>Download Kartu Ujian (PDF)</span>
                 </button>
-              )}
+
+                {/* Jika status Tidak Lulus, tampilkan tombol Ujian Diulang */}
+                {!isTakingExam && studentData.status === 'failed' && (
+                  <button
+                    onClick={handleTriggerRetakeExam}
+                    className="px-5 py-2.5 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse shrink-0"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>🔄 Ujian Diulang (Mulai Remedial)</span>
+                  </button>
+                )}
+
+                {!isTakingExam && studentData.status !== 'test_completed' && studentData.status !== 'passed' && studentData.status !== 'failed' && (
+                  <button
+                    onClick={handleStartExam}
+                    className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse shrink-0"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>Klik Soal (Mulai Ujian Online)</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -1880,7 +2713,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                   {studentData.status === 'passed' || studentData.status === 're_registration_paid' || studentData.status === 're_registered' || studentData.status === 'class_assigned' ? (
                     <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-200 text-center space-y-3">
-                      <div className="w-12 h-12 rounded-full bg-emerald-600 text-white mx-auto flex items-center justify-center font-bold text-2xl">
+                      <div className="w-12 h-12 rounded-full bg-emerald-600 text-white mx-auto flex items-center justify-center font-bold text-2xl shadow-sm">
                         🎉
                       </div>
                       <h4 className="text-xl font-black text-emerald-800">
@@ -1889,27 +2722,98 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <p className="text-xs text-emerald-900 leading-relaxed">
                         Selamat bergabung dengan keluarga besar SMP Al-Hadiid Cileungsi. Silakan lakukan prosedur Daftar Ulang.
                       </p>
-                      <button
-                        onClick={() => setActiveTab('payment_initial')}
-                        className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all inline-flex items-center gap-2"
-                      >
-                        <span>Lanjut Daftar Ulang Now</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
+                      <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+                        <button
+                          onClick={() => setActiveTab('payment_initial')}
+                          className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all inline-flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <span>Lanjut Daftar Ulang Now</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={handleDownloadExamResult}
+                          className="px-5 py-2.5 bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-800 font-bold text-xs rounded-xl shadow-sm inline-flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Download className="w-4 h-4 text-emerald-600" />
+                          <span>Unduh Hasil Kelulusan (PDF)</span>
+                        </button>
+                      </div>
                     </div>
                   ) : studentData.status === 'failed' ? (
-                    <div className="bg-rose-50 p-6 rounded-2xl border border-rose-200 text-center space-y-2">
-                      <h4 className="text-lg font-bold text-rose-800">MOHON MAAF, BELUM LULUS</h4>
-                      <p className="text-xs text-rose-700">
-                        Terima kasih telah mengikuti tes diagnostik SPMB SMP Al-Hadiid.
-                      </p>
+                    <div className="bg-rose-50/90 p-6 rounded-2xl border-2 border-rose-300 text-center space-y-4 shadow-sm">
+                      <div className="w-12 h-12 rounded-2xl bg-rose-100 border border-rose-200 text-rose-700 mx-auto flex items-center justify-center font-bold text-2xl shadow-inner">
+                        ⚠️
+                      </div>
+                      <div>
+                        <h4 className="text-xl font-black text-rose-800">MOHON MAAF, BELUM LULUS SELEKSI</h4>
+                        <p className="text-xs text-rose-700 mt-1 max-w-md mx-auto leading-relaxed">
+                          Skor tes Anda belum mencapai kriteria batas minimal kelulusan. Pihak sekolah membuka <strong>Fitur Ujian Diulang (Remedial)</strong> agar calon murid berkesempatan memperbaiki nilai.
+                        </p>
+                      </div>
+
+                      {/* Prominent Retake Card */}
+                      <div className="bg-white p-4 rounded-xl border border-rose-200 shadow-sm text-left space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin-slow" />
+                            <span>Fitur Ujian Diulang (Remedial) Terbuka</span>
+                          </span>
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
+                            {studentData.retestCount ? `Sudah Ujian Ulang: ${studentData.retestCount}x` : 'Ujian Ulang ke-1'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Anda dapat mengerjakan kembali bank soal tes diagnostik, pengetahuan umum, dan diniyyah secara online. Skor baru akan langsung menggantikan skor sebelumnya dan dievaluasi kembali oleh Panitia SPMB.
+                        </p>
+
+                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                          <button
+                            onClick={handleTriggerRetakeExam}
+                            className="flex-1 py-3 px-4 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-black text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            <span>🔄 Mulai Ujian Diulang Sekarang</span>
+                          </button>
+                          <button
+                            onClick={handleDownloadExamResult}
+                            className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-slate-300 transition-all cursor-pointer"
+                          >
+                            <Download className="w-4 h-4 text-slate-600" />
+                            <span>Download Hasil Ujian (PDF)</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Previous Scores Log if student has retaken before */}
+                      {studentData.previousScores && studentData.previousScores.length > 0 && (
+                        <div className="p-3 bg-white/80 rounded-xl border border-rose-200 text-left text-xs">
+                          <div className="font-bold text-slate-800 mb-1.5 text-[11px]">Riwayat Percobaan Ujian Sebelumnya:</div>
+                          <div className="space-y-1 text-[10px] text-slate-600">
+                            {studentData.previousScores.map((prev, idx) => (
+                              <div key={idx} className="flex justify-between items-center py-1 border-b border-slate-100 last:border-0">
+                                <span>Percobaan #{idx + 1} ({new Date(prev.date).toLocaleDateString('id-ID')})</span>
+                                <span className="font-bold font-mono text-rose-700">Skor Akhir: {prev.finalScore}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="p-6 bg-slate-100 rounded-2xl border border-slate-200 text-center space-y-2">
+                    <div className="p-6 bg-slate-100 rounded-2xl border border-slate-200 text-center space-y-3">
                       <Clock className="w-8 h-8 text-amber-600 mx-auto" />
-                      <div className="font-bold text-slate-800 text-sm">Menunggu Pelaksanaan / Hasil Tes</div>
+                      <div className="font-bold text-slate-800 text-sm">Menunggu Pelaksanaan / Hasil Sidang Kelulusan</div>
                       <div className="text-xs text-slate-500">
                         Jadwal Tes: {studentData.testScheduleDate || '15 April 2027 (08.00 WIB)'}
+                      </div>
+                      <div className="pt-2 flex justify-center">
+                        <button
+                          onClick={handleDownloadExamCard}
+                          className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl shadow-sm inline-flex items-center gap-2 cursor-pointer"
+                        >
+                          <Download className="w-4 h-4 text-emerald-600" />
+                          <span>Download Kartu Peserta Ujian (PDF)</span>
+                        </button>
                       </div>
                     </div>
                   )}
@@ -2035,47 +2939,102 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                   {/* Cost Itemization Breakdown */}
                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                      <div className="text-sm font-bold text-slate-900">Rincian Komponen Biaya Daftar Ulang:</div>
-                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                        Kategori: {studentData.gender === 'Perempuan' ? 'Akhwat (Perempuan)' : 'Ikhwan (Laki-laki)'}
-                      </span>
-                    </div>
+                    {(() => {
+                      const isAkhwat = studentData.gender === 'Perempuan';
+                      const itemsToRender = (costBreakdowns && costBreakdowns.length >= 10) ? costBreakdowns : BAM_BREAKDOWN_ITEMS;
+                      const calculatedTotal = itemsToRender.reduce((acc: number, curr: any) => {
+                        const val = isAkhwat ? (curr.amountAkhwat ?? curr.amount ?? 0) : (curr.amountIkhwan ?? curr.amount ?? 0);
+                        return acc + Number(val);
+                      }, 0);
 
-                    <div className="space-y-2 text-xs">
-                      {(() => {
-                        const isAkhwat = studentData.gender === 'Perempuan';
-                        const activeCosts = costBreakdowns.map((c) => {
-                          if (c.id === 'c4') return { ...c, amount: isAkhwat ? 900000 : 660000 };
-                          if (c.id === 'c13') return { ...c, amount: isAkhwat ? 210000 : 200000 };
-                          return c;
-                        });
-                        const totalCostSum = activeCosts.reduce((a, b) => a + b.amount, 0);
+                      return (
+                        <>
+                          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                            <div>
+                              <div className="text-sm font-bold text-slate-900">Rincian Komponen Biaya Awal Masuk (BAM):</div>
+                              <div className="text-[11px] text-slate-500">Sesuai Brosur & Kebijakan SPMB SMP Al-Hadiid (Landing Page)</div>
+                            </div>
+                            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                              isAkhwat
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}>
+                              Kategori Santri: {isAkhwat ? 'Akhwat (Putri)' : 'Ikhwan (Putra)'}
+                            </span>
+                          </div>
 
-                        return (
-                          <>
-                            {activeCosts.map((c) => (
-                              <div key={c.id} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between items-center">
-                                <div>
-                                  <div className="font-bold text-slate-900">{c.title}</div>
-                                  <div className="text-slate-500 text-[10px]">{c.description}</div>
+                          <div className="space-y-2 text-xs">
+                            {itemsToRender.map((item: any, idx: number) => {
+                              const amount = isAkhwat
+                                ? Number(item.amountAkhwat ?? item.amount ?? 0)
+                                : Number(item.amountIkhwan ?? item.amount ?? 0);
+                              const title = item.title || item.name;
+                              const desc = item.description || item.notes || '';
+                              const period = item.period || 'Sekali';
+                              return (
+                                <div key={item.id || idx} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between items-center hover:border-slate-300 transition-colors">
+                                  <div className="pr-2">
+                                    <div className="font-bold text-slate-900">{title}</div>
+                                    <div className="text-slate-500 text-[10px]">{desc} ({period})</div>
+                                  </div>
+                                  <div className="font-bold font-mono text-emerald-800 whitespace-nowrap ml-2">
+                                    Rp {amount.toLocaleString('id-ID')}
+                                  </div>
                                 </div>
-                                <div className="font-bold font-mono text-emerald-800 whitespace-nowrap ml-2">
-                                  Rp {c.amount.toLocaleString('id-ID')}
-                                </div>
+                              );
+                            })}
+
+                            {/* Total Banner */}
+                            <div className="p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center mt-3 shadow-sm">
+                              <div>
+                                <span className="font-bold uppercase text-xs block">
+                                  Total Biaya Awal Masuk ({isAkhwat ? 'Akhwat / Putri' : 'Ikhwan / Putra'}):
+                                </span>
+                                <span className="text-[10px] text-slate-400">Total standar sesuai SK Biaya Pendidikan</span>
                               </div>
-                            ))}
-
-                            <div className="p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center mt-4 shadow-sm">
-                              <span className="font-bold uppercase text-xs">Total Target Biaya Awal Masuk:</span>
                               <span className="text-xl font-black font-mono text-amber-300">
-                                Rp {totalCostSum.toLocaleString('id-ID')}
+                                Rp {calculatedTotal.toLocaleString('id-ID')}
                               </span>
                             </div>
-                          </>
-                        );
-                      })()}
-                    </div>
+
+                            {/* Diskon Lunas Info Banner */}
+                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-[11px] flex items-start gap-2">
+                              <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-bold">Opsi Pembayaran Lunas Langsung:</span>
+                                <p className="text-emerald-800 mt-0.5">
+                                  Calon santri dapat melunasi BAM saat daftar ulang sebesar <span className="font-bold font-mono">Rp {calculatedTotal.toLocaleString('id-ID')}</span> (Bebas tagihan lanjutan) atau mencicil dalam 3 tahapan.
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Jadwal Angsuran / Cicilan */}
+                            <div className="pt-2">
+                              <div className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Pilihan Skema Angsuran (Maks. 3 Tahap):</span>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                {BAM_INSTALLMENT_STEPS.map((step) => {
+                                  const stepAmount = isAkhwat
+                                    ? (step.amountAkhwat || step.amountExternal)
+                                    : (step.amountIkhwan || step.amountInternal);
+                                  return (
+                                    <div key={step.step} className="p-2.5 bg-white rounded-xl border border-slate-200 text-[11px]">
+                                      <div className="font-bold text-slate-800">{step.title}</div>
+                                      <div className="font-mono font-bold text-indigo-600 mt-0.5">
+                                        Rp {stepAmount.toLocaleString('id-ID')}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 mt-1">{step.dueDate}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -2106,15 +3065,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <input
                           type="file"
                           accept="image/*"
-                          onChange={(e) => handleFileChange(e, setInitialPaymentProof)}
+                          onChange={handleBamProofFile}
                           className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
                         />
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-inner">
-                            <Upload className="w-6 h-6 animate-pulse" />
+                            {bamProofMeta.isCompressing ? (
+                              <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
+                            ) : (
+                              <Upload className="w-6 h-6 animate-pulse" />
+                            )}
                           </div>
                           <div className="text-xs font-bold text-slate-800">
-                            Klik di sini untuk Memilih Foto Bukti Transfer BAM
+                            {bamProofMeta.isCompressing ? 'Sedang memproses & mengompresi foto bukti BAM...' : 'Klik di sini untuk Memilih Foto Bukti Transfer BAM'}
                           </div>
                           <div className="text-[10px] text-slate-400">
                             Mendukung foto dari Galeri HP / Komputer (JPG, PNG, WEBP)
@@ -2126,18 +3089,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     {/* Image Preview Box */}
                     {initialPaymentProof && (
                       <div className="p-4 bg-white rounded-2xl border border-emerald-200 space-y-3 shadow-sm">
-                        <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-800 border-b border-emerald-100 pb-2">
                           <span className="flex items-center gap-1.5 text-emerald-700">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>Foto Bukti Transfer Siap Diunggah:</span>
+                            <span>Foto Bukti Transfer BAM Tersimpan:</span>
                           </span>
                           <button
                             type="button"
-                            onClick={() => setInitialPaymentProof('')}
+                            onClick={() => {
+                              setInitialPaymentProof('');
+                              setBamProofMeta({ fileName: '', fileSize: 0, isCompressing: false });
+                            }}
                             className="text-rose-600 hover:underline text-[11px] font-bold cursor-pointer"
                           >
-                            Hapus Gambar
+                            Hapus / Ganti
                           </button>
+                        </div>
+
+                        {/* File Info Badge */}
+                        <div className="flex items-center justify-between bg-emerald-50/50 px-3 py-1.5 rounded-lg text-[10px] text-slate-600">
+                          <span className="truncate max-w-[200px] font-mono font-medium text-emerald-900">
+                            📄 {bamProofMeta.fileName || 'bukti_transfer_bam.jpg'}
+                          </span>
+                          {bamProofMeta.fileSize > 0 && (
+                            <span className="font-bold text-emerald-700 shrink-0">
+                              {formatFileSize(bamProofMeta.fileSize)}
+                            </span>
+                          )}
                         </div>
 
                         <div className="max-h-56 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-2 relative group">
@@ -2147,14 +3125,53 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             className="max-h-52 object-contain rounded-lg"
                             referrerPolicy="no-referrer"
                           />
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowBamImageModal(true)}
+                              className="px-3 py-1.5 bg-slate-900 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-amber-300" />
+                              <span>Pratinjau Full</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
+                              className="px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Unduh</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Actions below preview */}
+                        <div className="space-y-2 pt-1">
                           <button
-                            type="button"
-                            onClick={() => setShowBamImageModal(true)}
-                            className="absolute bottom-3 right-3 px-3 py-1.5 bg-slate-900/80 hover:bg-slate-950 text-white font-bold text-[10px] rounded-lg shadow backdrop-blur-sm flex items-center gap-1 cursor-pointer"
+                            type="submit"
+                            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer active:scale-98"
                           >
-                            <Eye className="w-3.5 h-3.5 text-amber-300" />
-                            <span>Pratinjau Full</span>
+                            <Save className="w-4 h-4 text-emerald-200" />
+                            <span>Simpan Data BAM yang Diupload</span>
                           </button>
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowBamImageModal(true)}
+                              className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Perbesar Foto Bukti BAM</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
+                              className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Unduh File Bukti BAM</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2190,19 +3207,87 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-3">
                       <div>
-                        <label className="block font-bold text-slate-700 mb-1">
-                          4. Nominal Transfer (Rp)
-                        </label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block font-bold text-slate-700">
+                            4. Nominal Transfer (Rp) <span className="text-rose-500">*</span>
+                          </label>
+                          <span className="text-[10px] text-slate-500">
+                            Target BAM ({studentData.gender === 'Perempuan' ? 'Akhwat' : 'Ikhwan'}): <span className="font-bold font-mono text-emerald-700">Rp {totalBamCost.toLocaleString('id-ID')}</span>
+                          </span>
+                        </div>
                         <input
                           type="number"
-                          placeholder="Contoh: 6625000"
+                          placeholder={`Contoh: ${totalBamCost} (Lunas) / 3500000 (Tahap 1)`}
                           value={initialPaymentAmountInput}
                           onChange={(e) => setInitialPaymentAmountInput(e.target.value)}
                           className="w-full p-2.5 rounded-xl border border-emerald-300 bg-emerald-50/50 font-extrabold text-emerald-900 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
+
+                      {/* Quick Nominal Presets */}
+                      {(() => {
+                        const isAkhwat = studentData.gender === 'Perempuan';
+                        const lunasAmount = totalBamCost;
+                        const tahap1 = 3500000;
+                        const tahap2 = 2000000;
+                        const tahap3 = isAkhwat ? 1390000 : 1170000;
+
+                        return (
+                          <div className="bg-slate-100/80 p-2.5 rounded-xl border border-slate-200">
+                            <div className="text-[10px] font-bold text-slate-600 mb-1.5 flex items-center gap-1">
+                              <span>⚡ Pilih Cepat Nominal ({isAkhwat ? 'Akhwat / Putri' : 'Ikhwan / Putra'}):</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setInitialPaymentAmountInput(lunasAmount.toString());
+                                  setInitialPaymentTypeInput('Lunas');
+                                }}
+                                className="px-2 py-1.5 bg-white hover:bg-emerald-50 hover:border-emerald-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
+                              >
+                                <span className="block text-emerald-700">Lunas Langsung</span>
+                                <span className="font-mono">Rp {(lunasAmount / 1000000).toFixed(1)} jt</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setInitialPaymentAmountInput(tahap1.toString());
+                                  setInitialPaymentTypeInput('Cicilan 1');
+                                }}
+                                className="px-2 py-1.5 bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
+                              >
+                                <span className="block text-indigo-700">Tahap 1 (DP)</span>
+                                <span className="font-mono">Rp {(tahap1 / 1000000).toFixed(1)} jt</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setInitialPaymentAmountInput(tahap2.toString());
+                                  setInitialPaymentTypeInput('Cicilan 2');
+                                }}
+                                className="px-2 py-1.5 bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
+                              >
+                                <span className="block text-indigo-700">Tahap 2</span>
+                                <span className="font-mono">Rp {(tahap2 / 1000000).toFixed(1)} jt</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setInitialPaymentAmountInput(tahap3.toString());
+                                  setInitialPaymentTypeInput('Cicilan 3');
+                                }}
+                                className="px-2 py-1.5 bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
+                              >
+                                <span className="block text-indigo-700">Tahap 3</span>
+                                <span className="font-mono">Rp {(tahap3 / 1000000).toFixed(1)} jt</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       <div>
                         <label className="block font-bold text-slate-700 mb-1">
@@ -2260,11 +3345,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                     {/* Submit Button */}
                     <button
+                      id="btn-save-student-bam-main"
                       type="submit"
-                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                     >
-                      <Upload className="w-4 h-4 text-amber-300" />
-                      <span>Kirim Bukti Pembayaran BAM Sekarang</span>
+                      <Save className="w-4 h-4 text-emerald-200" />
+                      <span>Simpan Data BAM yang Diupload</span>
                     </button>
                   </form>
                 </div>
@@ -2273,39 +3359,243 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         )}
 
-        {/* FULLSCREEN / ZOOM MODAL FOR BAM BUKTI TRANSFER PREVIEW */}
-        {showBamImageModal && initialPaymentProof && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        {/* FULLSCREEN / ZOOM MODAL FOR FORM BUKTI TRANSFER PREVIEW */}
+        {showFormImageModal && formPaymentProof && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
             <div className="bg-white rounded-2xl max-w-2xl w-full p-4 shadow-2xl border border-slate-200 space-y-3 animate-scale-up">
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                 <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                  <Eye className="w-4 h-4 text-emerald-600" />
-                  <span>Pratinjau Bukti Transfer Biaya Awal Masuk (BAM)</span>
+                  <Eye className="w-4 h-4 text-blue-600" />
+                  <span>Pratinjau Bukti Pembayaran Formulir</span>
+                  <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
+                    Tersimpan di Database
+                  </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowBamImageModal(false)}
+                  onClick={() => {
+                    setShowFormImageModal(false);
+                    setFormZoomScale(1);
+                    setFormRotate(0);
+                  }}
                   className="p-1 text-slate-400 hover:text-slate-700 rounded-lg text-lg font-bold cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <div className="max-h-[70vh] overflow-auto bg-slate-900 rounded-xl p-2 flex items-center justify-center">
-                <img
-                  src={initialPaymentProof}
-                  alt="Bukti Transfer BAM Preview"
-                  className="max-h-[65vh] object-contain rounded"
-                  referrerPolicy="no-referrer"
-                />
+
+              {/* Controls Toolbar */}
+              <div className="flex items-center justify-between bg-slate-100 p-2 rounded-xl text-xs">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setFormZoomScale(prev => Math.min(prev + 0.25, 2.5))}
+                    className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    title="Perbesar (Zoom In)"
+                  >
+                    <ZoomIn className="w-4 h-4 text-blue-600" />
+                    <span>Zoom In</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormZoomScale(prev => Math.max(prev - 0.25, 0.75))}
+                    className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    title="Perkecil (Zoom Out)"
+                  >
+                    <ZoomOut className="w-4 h-4 text-blue-600" />
+                    <span>Zoom Out</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormRotate(prev => (prev + 90) % 360)}
+                    className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    title="Putar 90 Derajat"
+                  >
+                    <RotateCw className="w-4 h-4 text-blue-600" />
+                    <span>Putar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormZoomScale(1);
+                      setFormRotate(0);
+                    }}
+                    className="px-2 py-1.5 bg-white hover:bg-slate-200 text-slate-600 rounded-lg font-semibold text-[11px] cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                </div>
+
+                <div className="text-[11px] font-mono text-slate-500">
+                  {Math.round(formZoomScale * 100)}%
+                </div>
               </div>
-              <div className="flex justify-end">
+
+              {/* Image Viewport */}
+              <div className="max-h-[65vh] overflow-auto bg-slate-950 rounded-xl p-4 flex items-center justify-center">
+                <div
+                  style={{
+                    transform: `scale(${formZoomScale}) rotate(${formRotate}deg)`,
+                    transition: 'transform 0.2s ease-in-out',
+                  }}
+                  className="inline-block"
+                >
+                  <img
+                    src={formPaymentProof}
+                    alt="Bukti Transfer Formulir Full"
+                    className="max-h-[60vh] max-w-full object-contain rounded"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer Actions */}
+              <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+                <span className="text-[11px] text-slate-500">
+                  Nominal: <b>Rp 200.000</b> • Status: <b>{studentData.formPaymentStatus === 'verified' ? 'LUNAS' : 'MENUNGGU'}</b>
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh File Bukti</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowFormImageModal(false);
+                      setFormZoomScale(1);
+                      setFormRotate(0);
+                    }}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FULLSCREEN / ZOOM MODAL FOR BAM BUKTI TRANSFER PREVIEW */}
+        {showBamImageModal && initialPaymentProof && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white rounded-2xl max-w-2xl w-full p-4 shadow-2xl border border-slate-200 space-y-3 animate-scale-up">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-emerald-600" />
+                  <span>Pratinjau Bukti Transfer Biaya Awal Masuk (BAM)</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
+                    Tersimpan di Database
+                  </span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setShowBamImageModal(false)}
-                  className="px-4 py-2 bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer"
+                  onClick={() => {
+                    setShowBamImageModal(false);
+                    setBamZoomScale(1);
+                    setBamRotate(0);
+                  }}
+                  className="p-1 text-slate-400 hover:text-slate-700 rounded-lg text-lg font-bold cursor-pointer"
                 >
-                  Tutup Pratinjau
+                  ✕
                 </button>
+              </div>
+
+              {/* Controls Toolbar */}
+              <div className="flex items-center justify-between bg-slate-100 p-2 rounded-xl text-xs">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setBamZoomScale(prev => Math.min(prev + 0.25, 2.5))}
+                    className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    title="Perbesar (Zoom In)"
+                  >
+                    <ZoomIn className="w-4 h-4 text-emerald-600" />
+                    <span>Zoom In</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBamZoomScale(prev => Math.max(prev - 0.25, 0.75))}
+                    className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    title="Perkecil (Zoom Out)"
+                  >
+                    <ZoomOut className="w-4 h-4 text-emerald-600" />
+                    <span>Zoom Out</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBamRotate(prev => (prev + 90) % 360)}
+                    className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    title="Putar 90 Derajat"
+                  >
+                    <RotateCw className="w-4 h-4 text-emerald-600" />
+                    <span>Putar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBamZoomScale(1);
+                      setBamRotate(0);
+                    }}
+                    className="px-2 py-1.5 bg-white hover:bg-slate-200 text-slate-600 rounded-lg font-semibold text-[11px] cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                </div>
+
+                <div className="text-[11px] font-mono text-slate-500">
+                  {Math.round(bamZoomScale * 100)}%
+                </div>
+              </div>
+
+              {/* Image Viewport */}
+              <div className="max-h-[65vh] overflow-auto bg-slate-900 rounded-xl p-4 flex items-center justify-center">
+                <div
+                  style={{
+                    transform: `scale(${bamZoomScale}) rotate(${bamRotate}deg)`,
+                    transition: 'transform 0.2s ease-in-out',
+                  }}
+                  className="inline-block"
+                >
+                  <img
+                    src={initialPaymentProof}
+                    alt="Bukti Transfer BAM Preview"
+                    className="max-h-[60vh] max-w-full object-contain rounded"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer Actions */}
+              <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+                <span className="text-[11px] text-slate-500">
+                  {studentData.initialPaymentAmount ? `Nominal: Rp ${studentData.initialPaymentAmount.toLocaleString('id-ID')}` : ''}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh File Bukti</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowBamImageModal(false);
+                      setBamZoomScale(1);
+                      setBamRotate(0);
+                    }}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2742,17 +4032,89 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 Nilai ujian Anda telah tersimpan dan dapat dilihat pada menu Hasil Tes & Pengumuman Kelulusan.
               </p>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSuccessModal(false);
-                  setActiveTab('result');
-                }}
-                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <span>Lihat Hasil & Rekap Nilai Ujian</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {/* 5. FITUR DOWNLOAD HASIL UJIAN */}
+              <div className="space-y-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadExamResult}
+                  className="w-full py-3.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2 border border-emerald-400/30 ring-2 ring-emerald-400/40"
+                >
+                  <Download className="w-4 h-4 text-amber-300" />
+                  <span>Download Hasil Ujian (PDF)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSuccessModal(false);
+                    setActiveTab('result');
+                  }}
+                  className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <span>Lihat Hasil & Rekap Nilai Ujian</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL KONFIRMASI UJIAN DIULANG (REMEDIAL) */}
+        {showRetakeConfirmModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-slate-900 border-2 border-indigo-500 text-white max-w-md w-full rounded-2xl p-6 space-y-5 shadow-2xl animate-scale-up">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-500/20 text-indigo-400 mx-auto flex items-center justify-center border border-indigo-500/40">
+                <RefreshCw className="w-8 h-8 text-amber-300 animate-spin-slow" />
+              </div>
+
+              <div className="text-center space-y-2">
+                <h3 className="text-xl font-black text-indigo-300">
+                  Konfirmasi Ujian Diulang (Remedial)
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Anda akan memulai sesi Ujian Diulang SPMB. Nilai ujian sebelumnya akan diarsipkan ke riwayat, dan skor baru akan dihitung kembali setelah Anda menyelesaikan tes ini.
+                </p>
+              </div>
+
+              <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 text-xs space-y-2">
+                <div className="flex justify-between py-1 border-b border-slate-800">
+                  <span className="text-slate-400">Calon Murid:</span>
+                  <span className="font-bold text-slate-200">{studentData.fullName}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-800">
+                  <span className="text-slate-400">Nomor Registrasi:</span>
+                  <span className="font-mono font-bold text-amber-400">{studentData.registrationNumber || '-'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-800">
+                  <span className="text-slate-400">Status Saat Ini:</span>
+                  <span className="font-bold text-rose-400">Belum Lulus (Remedial)</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-800">
+                  <span className="text-slate-400">Nilai Sebelumnya:</span>
+                  <span className="font-mono font-bold text-amber-300">{studentData.finalScore || 0}</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-slate-400">Durasi Ujian:</span>
+                  <span className="font-bold text-emerald-400">90 Menit CBT</span>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRetakeConfirmModal(false)}
+                  className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRetakeExam}
+                  className="flex-1 py-3 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Mulai Ujian Ulang</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

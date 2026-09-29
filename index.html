@@ -4,11 +4,58 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/src/assets/logo.svg" />
-    <title>SPMB Online - SMP AL-HADIID CILEUNGSI</title>
+    <title>SPMB SMPS Al-Hadiid Cileungsi</title>
+    <meta name="description" content="Sistem Penerimaan Murid Baru Online SMP Al-Hadiid Cileungsi" />
+    <meta property="og:title" content="SPMB SMPS Al-Hadiid Cileungsi" />
+    <meta property="og:description" content="Sistem Penerimaan Murid Baru Online SMP Al-Hadiid Cileungsi" />
+    <script>
+      // Prevent unhandled promise rejections and script errors from bubbling to outer iframe
+      window.addEventListener('unhandledrejection', function(event) {
+        console.warn('[Global Unhandled Rejection Caught]:', event.reason);
+        if (event.preventDefault) event.preventDefault();
+      });
+      window.addEventListener('error', function(event) {
+        console.warn('[Global Error Caught]:', event.message || event);
+      });
+
+      // Sandbox safety for alert, confirm, prompt, open in iframe
+      try {
+        var origAlert = window.alert;
+        window.alert = function(msg) {
+          try {
+            if (origAlert) origAlert.call(window, msg);
+          } catch (e) {
+            console.warn('[Iframe Sandbox] alert suppressed:', msg);
+          }
+        };
+        var origConfirm = window.confirm;
+        window.confirm = function(msg) {
+          try {
+            if (origConfirm) return origConfirm.call(window, msg);
+          } catch (e) {
+            console.warn('[Iframe Sandbox] confirm suppressed:', msg);
+            return true;
+          }
+          return true;
+        };
+        var origOpen = window.open;
+        window.open = function(url, target, features) {
+          try {
+            if (origOpen) return origOpen.call(window, url, target, features);
+          } catch (e) {
+            console.warn('[Iframe Sandbox] window.open suppressed:', url);
+            return null;
+          }
+          return null;
+        };
+      } catch (e) {
+        // ignore
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" crossorigin src="/src/main.tsx"></script>
   </body>
 </html>
 

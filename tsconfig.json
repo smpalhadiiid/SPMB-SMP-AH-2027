@@ -23,5 +23,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["supabase", "node_modules", "dist", "spmb_src"]
+  "include": ["src"],
+  "exclude": ["supabase", "spmb_src", "node_modules", "dist"]
 }

@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
-import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion } from '../types';
+import React, { useState, useEffect } from 'react';
+import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion, BamPaymentRecord, BamInstallmentType } from '../types';
 import { exportToExcel } from '../utils/excelExporter';
-import { generateReportPDF } from '../utils/pdfGenerator';
+import { generateReportPDF, generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
+import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
+import {
+  canDownloadStudentForm,
+  isStudentFormFilled,
+  hasUploadedPaymentProof,
+  getStudentFormStatus
+} from '../utils/formEligibility';
 import {
   exportAllDataAsBackup, importBackupData, purgeApplicantData, resetAllDataToDefault, getStoredWebsiteConfig,
-  getStoredQuestionBank, saveQuestionBank, saveTestSchedules
+  getStoredQuestionBank, saveQuestionBank, saveTestSchedules,
+  getStoredBamPayments, saveBamPayments
 } from '../utils/storage';
 import logoSvg from '../assets/logo.svg';
 import {
@@ -15,9 +23,20 @@ import {
   Mail, Building, Save, ExternalLink, Share2, Play, Sparkles,
   Palette, HardDrive, RotateCcw, AlertTriangle, Layers, EyeOff,
   CheckSquare, Square, RefreshCcw, FileCode, Archive, ShieldCheck,
-  HelpCircle, FileJson, Calendar, BookOpen, PlusCircle, CheckSquare2, LayoutDashboard, Image as ImageIcon, Lock
+  HelpCircle, FileJson, Calendar, BookOpen, PlusCircle, CheckSquare2, LayoutDashboard, Image as ImageIcon, Lock, GraduationCap,
+  MessageCircle
 } from 'lucide-react';
 import { SupabaseBadge } from './SupabaseBadge';
+import { SupabaseSyncButton } from './SupabaseSyncButton';
+import { SupabaseSyncTab } from './SupabaseSyncTab';
+import { WhatsAppAnnouncementModal } from './WhatsAppAnnouncementModal';
+import {
+  getPrimaryParentContact,
+  cleanWhatsAppNumber,
+  getWhatsAppSentHistory,
+  WhatsAppTemplateKey,
+  WhatsAppSentRecord
+} from '../utils/whatsappAnnouncement';
 import { CbtDashboardAdmin } from './cbt/CbtDashboardAdmin';
 import { CbtKategoriManager } from './cbt/CbtKategoriManager';
 import { CbtBankSoalManager } from './cbt/CbtBankSoalManager';
@@ -31,6 +50,12 @@ import { AdminPaymentHistorySection } from './payment/AdminPaymentHistorySection
 import { UserManagementSection } from './UserManagementSection';
 import { AccountSettingsSection } from './AccountSettingsSection';
 import { FilledClassesSection } from './FilledClassesSection';
+import { PaymentRepository } from '../repositories/PaymentRepository';
+import { StudentRepository } from '../repositories/StudentRepository';
+import { ClassQuotaRepository } from '../repositories/ClassQuotaRepository';
+import { getStudentCategory, getTotalBamCost } from '../utils/bamPricing';
+import { saveHasilUjianSupabase } from '../services/cbtSupabaseService';
+import Swal from 'sweetalert2';
 
 
 interface AdminDashboardProps {
@@ -46,6 +71,7 @@ interface AdminDashboardProps {
   onUpdateQuotas: (updated: ClassQuota[]) => void;
   onUpdateSchoolInfo: (updated: SchoolInfo) => void;
   onUpdateGasConfig: (updated: GasConfig) => void;
+  onUpdateCostBreakdowns?: (updated: CostBreakdown[]) => void;
   onUpdateWebsiteConfig?: (updated: WebsiteConfig) => void;
   onUpdateSchedules?: (updated: TestSchedule[]) => void;
   onRefreshAllData?: () => void;
@@ -66,6 +92,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onUpdateQuotas,
   onUpdateSchoolInfo,
   onUpdateGasConfig,
+  onUpdateCostBreakdowns,
   onUpdateWebsiteConfig,
   onUpdateSchedules,
   onRefreshAllData,
@@ -96,6 +123,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // State: Bank Soal
   const [questionBank, setQuestionBank] = useState<ExamQuestion[]>(() => getStoredQuestionBank());
   const [questionCategoryFilter, setQuestionCategoryFilter] = useState<'all' | 'diagnostik' | 'pengetahuan_umum' | 'diniyyah'>('all');
+  const [isQuestionsLoading, setIsQuestionsLoading] = useState(false);
+  const [lastQuestionsSync, setLastQuestionsSync] = useState<Date | null>(null);
+
+  const fetchQuestionsFromSupabase = async () => {
+    setIsQuestionsLoading(true);
+    try {
+      const data = await ExamQuestionRepository.list();
+      if (data && data.length > 0) {
+        setQuestionBank(data);
+        setLastQuestionsSync(new Date());
+      }
+    } catch (err) {
+      console.warn('Error fetching questions in AdminDashboard:', err);
+    } finally {
+      setIsQuestionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchQuestionsFromSupabase();
+
+    const unsubscribe = ExamQuestionRepository.subscribe((updated) => {
+      if (updated && updated.length > 0) {
+        setQuestionBank(updated);
+        setLastQuestionsSync(new Date());
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
   
   // Modal & Form State: Tambah / Edit Soal
   const [showQuestionModal, setShowQuestionModal] = useState(false);
@@ -135,6 +194,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
 
+  // State: WhatsApp Announcement Modal & Sent Records
+  const [waModalStudent, setWaModalStudent] = useState<StudentData | null>(null);
+  const [waDefaultTemplate, setWaDefaultTemplate] = useState<WhatsAppTemplateKey | undefined>(undefined);
+  const [waSentHistory, setWaSentHistory] = useState<Record<string, WhatsAppSentRecord>>(() => getWhatsAppSentHistory());
+  const [announcementFilter, setAnnouncementFilter] = useState<'all' | 'passed' | 'passed_reserved' | 'failed' | 'wa_sent' | 'wa_not_sent'>('all');
+  const [announcementSearch, setAnnouncementSearch] = useState<string>('');
+
+  // BAM Verification form state (Tahap 8 Alur SPMB: Verifikasi Bukti & Input Nominal ke Tabel Pembayaran)
+  const [bamVerifyNominal, setBamVerifyNominal] = useState<number>(6670000);
+  const [bamVerifyDate, setBamVerifyDate] = useState<string>('');
+  const [bamVerifyType, setBamVerifyType] = useState<BamInstallmentType>('Lunas');
+  const [bamVerifyNotes, setBamVerifyNotes] = useState<string>('');
+
+  React.useEffect(() => {
+    if (selectedStudent) {
+      const defaultNominal = selectedStudent.initialPaymentAmount || getTotalBamCost(selectedStudent);
+      setBamVerifyNominal(defaultNominal);
+      setBamVerifyDate(selectedStudent.initialPaymentDate || new Date().toISOString().split('T')[0]);
+      setBamVerifyType('Lunas');
+      setBamVerifyNotes(selectedStudent.initialPaymentNotes || `Pembayaran BAM ${selectedStudent.fullName}`);
+    }
+  }, [selectedStudent]);
+
   // Score editing modal state
   const [editingScoreStudent, setEditingScoreStudent] = useState<StudentData | null>(null);
   const [diagScore, setDiagScore] = useState<number>(80);
@@ -145,6 +227,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newClassName, setNewClassName] = useState('');
   const [newCapacity, setNewCapacity] = useState<number>(32);
   const [newHomeroom, setNewHomeroom] = useState('');
+  const [editingQuota, setEditingQuota] = useState<ClassQuota | null>(null);
+  const [editClassName, setEditClassName] = useState('');
+  const [editCapacity, setEditCapacity] = useState<number>(32);
+  const [editHomeroom, setEditHomeroom] = useState('');
+  const [editAcademicYear, setEditAcademicYear] = useState('2027/2028');
+  const [isSyncingQuota, setIsSyncingQuota] = useState(false);
+  const [showQuotaSqlModal, setShowQuotaSqlModal] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+  const [quotaTableStatus, setQuotaTableStatus] = useState<{
+    tableExists: boolean;
+    rowCount: number;
+    source: 'table' | 'state' | 'initial';
+    error: string | null;
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (activeTab === 'quotas') {
+      ClassQuotaRepository.getTableStatus().then(setQuotaTableStatus).catch(() => {});
+    }
+  }, [activeTab]);
 
   // School Info Form state
   const [schoolForm, setSchoolForm] = useState<SchoolInfo>(schoolInfo);
@@ -309,6 +411,76 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setTimeout(() => setDbSuccessMsg(''), 6000);
   };
 
+  // State & Handler for Form PDF Download
+  const [downloadSuccessMsg, setDownloadSuccessMsg] = useState<string>('');
+
+  const handleDownloadStudentForm = (student: StudentData) => {
+    try {
+      generateRegistrationPDF(student, schoolInfo);
+      setDownloadSuccessMsg(`✓ Berhasil mengunduh formulir SPMB: ${student.fullName} (${student.registrationNumber || 'No-Reg'})`);
+      setTimeout(() => setDownloadSuccessMsg(''), 5000);
+    } catch (err: any) {
+      console.error('Gagal mengunduh formulir:', err);
+      alert('Terjadi kendala saat mengunduh formulir: ' + (err?.message || 'Pastikan data murid valid'));
+    }
+  };
+
+  const handleDownloadExamCard = (student: StudentData) => {
+    try {
+      const activeSched = testSchedules?.find(s => s.isOnlineActive === true) || testSchedules?.[0];
+      const creds = {
+        username:
+          (student as any).username ||
+          (student as any).examUsername ||
+          localStorage.getItem(`spmb_user_${student.id}`) ||
+          (student.userEmail ? student.userEmail.split('@')[0] : '') ||
+          student.registrationNumber ||
+          'siswa',
+        password:
+          (student as any).password ||
+          (student as any).examPassword ||
+          localStorage.getItem(`spmb_cred_${student.id}`) ||
+          localStorage.getItem(`spmb_cred_${student.userEmail}`) ||
+          localStorage.getItem(`spmb_cred_${student.registrationNumber}`) ||
+          'siswa123',
+      };
+      generateExamCardPDF(student, schoolInfo, activeSched, creds);
+      setDownloadSuccessMsg(`✓ Berhasil mengunduh Kartu Ujian: ${student.fullName} (${student.registrationNumber || 'No-Reg'})`);
+      setTimeout(() => setDownloadSuccessMsg(''), 5000);
+    } catch (err: any) {
+      console.error('Gagal mengunduh kartu ujian:', err);
+      alert('Terjadi kendala saat mengunduh kartu ujian: ' + (err?.message || 'Pastikan data murid valid'));
+    }
+  };
+
+  const handleDownloadExamResult = (student: StudentData) => {
+    try {
+      generateExamResultPDF(student, schoolInfo);
+      setDownloadSuccessMsg(`✓ Berhasil mengunduh Hasil Ujian: ${student.fullName} (${student.registrationNumber || 'No-Reg'})`);
+      setTimeout(() => setDownloadSuccessMsg(''), 5000);
+    } catch (err: any) {
+      console.error('Gagal mengunduh hasil ujian:', err);
+      alert('Terjadi kendala saat mengunduh hasil ujian: ' + (err?.message || 'Pastikan data murid valid'));
+    }
+  };
+
+  const handleAllowRetest = (studentId: string) => {
+    const updated = students.map(s => {
+      if (s.id === studentId) {
+        return {
+          ...s,
+          isTestActive: true,
+          testSubmitted: false,
+          status: 'scheduled_test' as const,
+        };
+      }
+      return s;
+    });
+    onUpdateStudents(updated);
+    setDownloadSuccessMsg('✓ Fitur Ujian Diulang (Remedial) berhasil diaktifkan untuk calon murid!');
+    setTimeout(() => setDownloadSuccessMsg(''), 5000);
+  };
+
   // Filtered Students
   const filteredStudents = students.filter(s => {
     const matchSearch =
@@ -316,43 +488,130 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       s.registrationNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.phone.includes(searchQuery) ||
       s.userEmail.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchStatus = statusFilter === 'all' || s.status === statusFilter;
+    
+    let matchStatus = false;
+    if (statusFilter === 'all') {
+      matchStatus = true;
+    } else if (statusFilter === 'ready_download') {
+      matchStatus = canDownloadStudentForm(s);
+    } else {
+      matchStatus = s.status === statusFilter;
+    }
+
     return matchSearch && matchStatus;
   });
 
-  // Action: Verify Form Payment (Tahap 3)
+  // Action: Verify Form Payment (Tahap 3) & Unlock Form Download
   const handleVerifyFormPayment = (studentId: string, status: 'verified' | 'rejected') => {
+    const targetStudent = students.find(s => s.id === studentId);
+    if (!targetStudent) return;
+    const isVerified = status === 'verified';
+
     const updated = students.map(s => {
       if (s.id === studentId) {
         return {
           ...s,
           formPaymentStatus: status,
-          status: status === 'verified' ? ('filling_form' as const) : ('pending_payment' as const),
+          isFormVerified: isVerified,
+          isFormVerifiedByAdmin: isVerified,
+          status: isVerified
+            ? (s.status === 'draft' || s.status === 'pending_payment' || s.status === 'verifying_payment' ? ('filling_form' as const) : s.status)
+            : ('pending_payment' as const),
         };
       }
       return s;
     });
     onUpdateStudents(updated);
+
+    // Sync to Supabase payments table
+    PaymentRepository.create({
+      studentId: targetStudent.id,
+      registrationNumber: targetStudent.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`,
+      studentName: targetStudent.fullName,
+      paymentType: 'form',
+      amount: targetStudent.formPaymentAmount || 200000,
+      status: status,
+      paymentMethod: 'Transfer Bank',
+      bankName: 'BSI',
+      paymentDate: targetStudent.formPaymentDate || new Date().toISOString().split('T')[0],
+      proofUrl: targetStudent.formPaymentProofUrl,
+      notes: isVerified ? 'Verifikasi Pembayaran Formulir oleh Panitia Admin' : 'Pembayaran Formulir Ditolak',
+    }).catch(err => console.warn('PaymentRepository form verify sync error:', err));
+
+    // Update student row in Supabase
+    StudentRepository.update(targetStudent.id, {
+      formPaymentStatus: status,
+    }).catch(err => console.warn('StudentRepository update error:', err));
+
+    // Also update selectedStudent modal state if currently open
+    if (selectedStudent && selectedStudent.id === studentId) {
+      setSelectedStudent(prev => prev ? {
+        ...prev,
+        formPaymentStatus: status,
+      } : null);
+    }
+
+    alert(
+      isVerified
+        ? `✓ Pembayaran Formulir untuk ${targetStudent.fullName} Berhasil Diverifikasi Lunas!`
+        : `Status pembayaran formulir untuk ${targetStudent.fullName} diubah menjadi Ditolak.`
+    );
   };
 
-  // Action: Verify Payment + Form Data (Activates PDF Download & Verification)
+  // Action: Verify Payment + Form Data (Activates PDF Download & Verification for Student & Admin)
   const handleVerifyFormAndData = (studentId: string, isVerified: boolean) => {
+    const targetStudent = students.find(s => s.id === studentId);
+    if (!targetStudent) return;
+
     const updated = students.map(s => {
       if (s.id === studentId) {
         return {
           ...s,
+          formPaymentStatus: isVerified ? ('verified' as const) : ('rejected' as const),
           isFormVerified: isVerified,
-          formPaymentStatus: isVerified ? ('verified' as const) : ('pending' as const),
-          status: isVerified ? ('form_verified' as const) : ('form_submitted' as const),
+          isFormVerifiedByAdmin: isVerified,
+          status: isVerified
+            ? ('form_verified' as const)
+            : (s.status === 'form_verified' ? ('form_submitted' as const) : s.status),
         };
       }
       return s;
     });
     onUpdateStudents(updated);
+
+    // Sync to Supabase payments table
+    PaymentRepository.create({
+      studentId: targetStudent.id,
+      registrationNumber: targetStudent.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`,
+      studentName: targetStudent.fullName,
+      paymentType: 'form',
+      amount: targetStudent.formPaymentAmount || 200000,
+      status: isVerified ? 'verified' : 'rejected',
+      paymentMethod: 'Transfer Bank',
+      bankName: 'BSI',
+      paymentDate: targetStudent.formPaymentDate || new Date().toISOString().split('T')[0],
+      proofUrl: targetStudent.formPaymentProofUrl,
+      notes: isVerified ? 'Verifikasi Pembayaran & Data Calon Murid oleh Panitia Admin' : 'Verifikasi Ditolak',
+    }).catch(err => console.warn('PaymentRepository form verify sync error:', err));
+
+    StudentRepository.update(targetStudent.id, {
+      formPaymentStatus: isVerified ? 'verified' : targetStudent.formPaymentStatus,
+    }).catch(err => console.warn('StudentRepository update error:', err));
+
+    if (selectedStudent && selectedStudent.id === studentId) {
+      setSelectedStudent(prev => prev ? {
+        ...prev,
+        formPaymentStatus: isVerified ? ('verified' as const) : ('rejected' as const),
+        isFormVerified: isVerified,
+        isFormVerifiedByAdmin: isVerified,
+        status: isVerified ? ('form_verified' as const) : (prev.status === 'form_verified' ? ('form_submitted' as const) : prev.status),
+      } : null);
+    }
+
     alert(
       isVerified
-        ? '✓ Berhasil Memverifikasi Data Pembayaran & Isian Formulir!\n\nFitur Download Formulir PDF pada dashboard calon murid telah DIAKTIFKAN.'
-        : 'Status verifikasi dibatalkan.'
+        ? `✓ Verifikasi Berhasil!\n\nPembayaran & Data Calon Murid atas nama ${targetStudent.fullName} telah DIVERIFIKASI RESMI oleh Panitia Admin.\n\n1. Panitia Admin dapat langsung mendownload Formulir Pendaftaran calon murid.\n2. Calon murid kini dapat mendownload Formulir Pendaftaran dan Kartu Ujian di dashboard mereka.`
+        : `Status verifikasi pendaftaran untuk ${targetStudent.fullName} dibatalkan.`
     );
   };
 
@@ -410,7 +669,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleEditQuestion = (q: ExamQuestion) => {
     setEditingQuestionId(q.id);
-    setQCategory(q.category);
+    setQCategory(q.category as any);
     setQText(q.questionText);
     setQOptA(q.options[0] || '');
     setQOptB(q.options[1] || '');
@@ -657,6 +916,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
 
     onUpdateStudents(updated);
+
+    // Sync to Supabase hasil_ujian directly to prevent discrepancies
+    saveHasilUjianSupabase({
+      id: `hasil_cbt_${editingScoreStudent.id}`,
+      ujianId: '145eacad-ef02-4180-ba26-85b34d1649da',
+      pesertaId: editingScoreStudent.id,
+      registrationNumber: editingScoreStudent.registrationNumber || '',
+      namaPeserta: editingScoreStudent.fullName,
+      nilaiDiagnostik: diagScore,
+      nilaiTpu: generalScore,
+      nilaiDiniyyah: relScore,
+      nilaiTotal: weighted,
+      statusKelulusan: weighted >= 70 ? 'LULUS' : 'BELUM LULUS',
+      tanggalUjian: new Date().toISOString().split('T')[0],
+    }).catch(err => console.warn('saveHasilUjianSupabase in handleSaveGrades notice:', err));
+
     setEditingScoreStudent(null);
   };
 
@@ -672,6 +947,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return s;
     });
     onUpdateStudents(updated);
+
+    const targetStudent = students.find(s => s.id === studentId);
+    if (targetStudent) {
+      const label = decision === 'passed' ? 'LULUS' : decision === 'passed_reserved' ? 'CADANGAN' : 'TIDAK LULUS';
+      const templateKey: WhatsAppTemplateKey = decision === 'passed' ? 'passed' : decision === 'passed_reserved' ? 'passed_reserved' : 'failed';
+      Swal.fire({
+        icon: 'success',
+        title: `Status: ${label}`,
+        text: `Keputusan untuk ${targetStudent.fullName} berhasil disimpan. Kirim pesan pengumuman resmi ke nomor WhatsApp orang tua sekarang?`,
+        showCancelButton: true,
+        confirmButtonText: 'Kirim WA Sekarang',
+        cancelButtonText: 'Nanti',
+        confirmButtonColor: '#059669',
+      }).then((res) => {
+        if (res.isConfirmed) {
+          setWaModalStudent({ ...targetStudent, status: decision });
+          setWaDefaultTemplate(templateKey);
+        }
+      });
+    }
   };
 
   // Action: Verify Initial Payment (Tahap 10 & 11)
@@ -687,6 +982,97 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return s;
     });
     onUpdateStudents(updated);
+  };
+
+  // Action: Verify BAM Transfer Proof with Nominal Input & Record into Payments Table (Tahap 8 Alur SPMB)
+  const handleVerifyAndRecordBamPayment = async (
+    student: StudentData,
+    nominal: number,
+    paymentDate: string,
+    installmentType: BamInstallmentType,
+    notes: string
+  ) => {
+    try {
+      const category = getStudentCategory(student);
+      const totalCost = getTotalBamCost(category);
+      const effectiveNominal = Number(nominal) > 0 ? Number(nominal) : totalCost;
+      const isLunas = effectiveNominal >= totalCost || installmentType === 'Lunas';
+      const formattedDate = paymentDate || new Date().toISOString().split('T')[0];
+
+      // 1. Update students state
+      const updated = students.map(s => {
+        if (s.id === student.id) {
+          return {
+            ...s,
+            initialPaymentStatus: 'verified' as const,
+            initialPaymentAmount: effectiveNominal,
+            initialPaymentDate: formattedDate,
+            initialPaymentNotes: notes || `Verifikasi Pembayaran BAM (${installmentType})`,
+            status: isLunas ? ('re_registered' as const) : s.status,
+          };
+        }
+        return s;
+      });
+      onUpdateStudents(updated);
+
+      // 2. Add to BAM payment records
+      const existingBamRecords = getStoredBamPayments();
+      const newRecord: BamPaymentRecord = {
+        id: `bam_${Date.now()}`,
+        transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
+        paymentDate: formattedDate,
+        studentId: student.id,
+        studentName: student.fullName,
+        registrationNumber: student.registrationNumber || `SPMB${Date.now().toString().slice(-6)}`,
+        gender: (student.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
+        totalBamCost: totalCost,
+        amountPaid: effectiveNominal,
+        installmentType: installmentType,
+        totalPaidToDate: effectiveNominal,
+        remainingBalance: Math.max(0, totalCost - effectiveNominal),
+        proofUrl: student.initialPaymentProofUrl,
+        notes: notes || `Verifikasi Pembayaran BAM Panitia SPMB (${installmentType})`,
+        createdAt: new Date().toISOString(),
+      };
+      const updatedBamRecords = [newRecord, ...existingBamRecords.filter(r => r.studentId !== student.id)];
+      saveBamPayments(updatedBamRecords);
+
+      // 3. Sync to Supabase payments table
+      try {
+        await PaymentRepository.create({
+          studentId: student.id,
+          registrationNumber: student.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`,
+          studentName: student.fullName,
+          paymentType: 'bam',
+          amount: effectiveNominal,
+          status: 'verified',
+          paymentMethod: 'Transfer Bank',
+          bankName: 'BSI',
+          paymentDate: formattedDate,
+          proofUrl: student.initialPaymentProofUrl,
+          notes: notes || `Verifikasi Pembayaran BAM Panitia SPMB (${installmentType})`,
+        });
+      } catch (err) {
+        console.warn('PaymentRepository BAM sync warning:', err);
+      }
+
+      // Update student in modal
+      setSelectedStudent(prev => prev ? {
+        ...prev,
+        initialPaymentStatus: 'verified',
+        initialPaymentAmount: effectiveNominal,
+        initialPaymentDate: formattedDate,
+        initialPaymentNotes: notes,
+        status: isLunas ? 're_registered' : prev.status,
+      } : null);
+
+      setDownloadSuccessMsg(`✓ Berhasil verifikasi pembayaran BAM: ${student.fullName} (Rp ${effectiveNominal.toLocaleString('id-ID')}) tercatat di tabel pembayaran.`);
+      setTimeout(() => setDownloadSuccessMsg(''), 5000);
+      alert(`✓ Berhasil memverifikasi pembayaran BAM atas nama ${student.fullName} senilai Rp ${effectiveNominal.toLocaleString('id-ID')}. Data pembayaran telah masuk ke tabel pembayaran!`);
+    } catch (err: any) {
+      console.error('Gagal verifikasi BAM:', err);
+      alert('Gagal memverifikasi pembayaran BAM: ' + (err?.message || 'Terjadi kesalahan'));
+    }
   };
 
   // Action: Assign Class (Tahap 11 & 12)
@@ -706,7 +1092,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           assignedClassId: targetQuota.id,
           assignedClassName: targetQuota.className,
           assignedHomeroomTeacher: targetQuota.homeroomTeacher,
-          firstDayDate: '12 Juli 2027',
+          firstDayDate: '2027-07-12',
           mplsInfo: 'Hadir Pukul 07:00 WIB memakai seragam SD asal.',
           status: 'class_assigned' as const,
         };
@@ -718,7 +1104,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   // Action: Add New Class Quota
-  const handleAddClassQuota = (e: React.FormEvent) => {
+  const handleAddClassQuota = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName) return;
 
@@ -732,10 +1118,141 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       homeroomTeacher: newHomeroom || 'Pengajar Al-Hadiid',
     };
 
-    onUpdateQuotas([...classQuotas, newQuota]);
+    const nextQuotas = [...classQuotas, newQuota];
+    onUpdateQuotas(nextQuotas);
+    try {
+      await ClassQuotaRepository.create(newQuota);
+      ClassQuotaRepository.getTableStatus().then(setQuotaTableStatus).catch(() => {});
+    } catch (err) {
+      console.warn('Class quota create notice:', err);
+    }
+
     setNewClassName('');
     setNewCapacity(32);
     setNewHomeroom('');
+    Swal.fire({
+      icon: 'success',
+      title: 'Kelas Berhasil Ditambahkan!',
+      text: `Rombel ${newQuota.className} dengan kuota ${newQuota.capacity} murid berhasil didaftarkan dan disinkronkan ke database.`,
+      timer: 1800,
+      showConfirmButton: false,
+    });
+  };
+
+  const handleStartEditQuota = (quota: ClassQuota) => {
+    setEditingQuota(quota);
+    setEditClassName(quota.className);
+    setEditCapacity(quota.capacity);
+    setEditHomeroom(quota.homeroomTeacher || '');
+    setEditAcademicYear(quota.academicYear || schoolInfo.academicYear);
+  };
+
+  const handleSaveEditQuota = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingQuota || !editClassName.trim()) return;
+
+    const targetId = editingQuota.id;
+    const updates = {
+      className: editClassName.trim(),
+      capacity: Number(editCapacity) || 32,
+      homeroomTeacher: editHomeroom.trim() || 'Pengajar Al-Hadiid',
+      academicYear: editAcademicYear.trim() || schoolInfo.academicYear,
+    };
+
+    const updatedQuotas = classQuotas.map(q => {
+      if (q.id === targetId) {
+        return { ...q, ...updates };
+      }
+      return q;
+    });
+
+    onUpdateQuotas(updatedQuotas);
+    try {
+      await ClassQuotaRepository.update(targetId, updates);
+      ClassQuotaRepository.getTableStatus().then(setQuotaTableStatus).catch(() => {});
+    } catch (err) {
+      console.warn('Class quota update notice:', err);
+    }
+
+    setEditingQuota(null);
+    Swal.fire({
+      icon: 'success',
+      title: 'Kuota Kelas Diperbarui!',
+      text: `Data rombel ${editClassName} berhasil diperbarui di database.`,
+      timer: 1800,
+      showConfirmButton: false,
+    });
+  };
+
+  const handleDeleteClassQuota = (id: string, className: string) => {
+    const assignedCount = students.filter(
+      s => s.assignedClassId === id || s.assignedClassName?.toLowerCase() === className.toLowerCase()
+    ).length;
+
+    Swal.fire({
+      title: `Hapus Kelas ${className}?`,
+      html: assignedCount > 0
+        ? `<div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.5;">
+            <p style="color: #e11d48; font-weight: bold; margin-bottom: 6px;">
+              ⚠️ Peringatan: Terdapat ${assignedCount} calon murid yang telah ditempatkan pada rombel ini!
+            </p>
+            <p style="color: #64748b; font-size: 12px;">
+              Menghapus rombel ini akan mengosongkan status kelas murid terkait pada database.
+            </p>
+           </div>`
+        : `<p style="color: #334155; font-size: 13px;">Apakah Anda yakin ingin menghapus kelas ${className} dari database?</p>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Ya, Hapus Rombel',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#e11d48',
+      cancelButtonColor: '#64748b',
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        const filtered = classQuotas.filter(q => q.id !== id);
+        onUpdateQuotas(filtered);
+        try {
+          await ClassQuotaRepository.remove(id);
+          ClassQuotaRepository.getTableStatus().then(setQuotaTableStatus).catch(() => {});
+        } catch (e) {
+          console.warn('Remove class quota notice:', e);
+        }
+        Swal.fire({
+          icon: 'success',
+          title: 'Kelas Berhasil Dihapus',
+          text: `Kelas ${className} telah dihapus dari sistem.`,
+          timer: 1800,
+          showConfirmButton: false,
+        });
+      }
+    });
+  };
+
+  const handleRecalculateAndSyncQuotas = async () => {
+    setIsSyncingQuota(true);
+    try {
+      const recalculated = await ClassQuotaRepository.recalculateFilledCounts(classQuotas, students);
+      onUpdateQuotas(recalculated);
+      await ClassQuotaRepository.syncAll(recalculated);
+      const newStatus = await ClassQuotaRepository.getTableStatus();
+      setQuotaTableStatus(newStatus);
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Sinkronisasi Selesai!',
+        text: `Statistik kuota terisi berhasil dihitung ulang dari ${students.length} data murid dan disinkronkan ke Supabase.`,
+        timer: 2000,
+        showConfirmButton: false,
+      });
+    } catch (err: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Gagal Sinkronisasi',
+        text: err?.message || 'Terjadi kesalahan saat sinkronisasi kuota kelas.',
+      });
+    } finally {
+      setIsSyncingQuota(false);
+    }
   };
 
   // Export handlers
@@ -776,6 +1293,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
+            <SupabaseSyncButton variant="header" onDataSynced={onRefreshAllData} />
+
             <button
               onClick={handleExportApplicantsExcel}
               className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center gap-1.5"
@@ -851,12 +1370,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           <button
             onClick={() => setActiveTab('announcements')}
-            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === 'announcements' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'announcements' ? 'bg-emerald-600 text-white shadow-sm font-bold' : 'text-slate-600 hover:bg-slate-100 font-medium'
             }`}
           >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Pengumuman Kelulusan</span>
+            <MessageCircle className="w-4 h-4 text-emerald-300" />
+            <span>Pengumuman & WA Ortu</span>
           </button>
 
           <button
@@ -927,6 +1446,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <User className="w-4 h-4 text-amber-400" />
             <span>Manajemen User & Akun (CRUD)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('supabase_sync')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+              activeTab === 'supabase_sync' ? 'bg-blue-600 text-white shadow-sm font-bold ring-2 ring-blue-500/30' : 'text-slate-600 hover:bg-slate-100 font-semibold'
+            }`}
+          >
+            <Database className="w-4 h-4 text-blue-500" />
+            <span>Sinkron Supabase</span>
           </button>
 
           <button
@@ -1024,9 +1553,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* TAB 1: OVERVIEW METRICS */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            <SupabaseBadge variant="full" />
+            <SupabaseSyncButton variant="card" onDataSynced={onRefreshAllData} />
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Download Success Alert Toast */}
+            {downloadSuccessMsg && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between shadow-sm animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{downloadSuccessMsg}</span>
+                </div>
+                <button
+                  onClick={() => setDownloadSuccessMsg('')}
+                  className="text-emerald-700 hover:text-emerald-900 text-sm font-bold cursor-pointer ml-4"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="text-xs text-slate-500 font-semibold">Total Pendaftar</div>
                 <div className="text-3xl font-extrabold text-slate-900 mt-1">{students.length}</div>
@@ -1056,11 +1601,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
                 <div className="text-[10px] text-amber-600 font-bold mt-1">Sudah Masuk Kelas</div>
               </div>
+
+              <div 
+                onClick={() => {
+                  setStatusFilter('ready_download');
+                  setActiveTab('applicants');
+                }}
+                className="bg-gradient-to-br from-emerald-50 to-teal-50 p-5 rounded-2xl border border-emerald-200 shadow-sm col-span-2 lg:col-span-1 cursor-pointer hover:border-emerald-400 transition-all group"
+              >
+                <div className="text-xs text-emerald-900 font-semibold flex items-center justify-between">
+                  <span>Siap Unduh Formulir</span>
+                  <Download className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
+                </div>
+                <div className="text-3xl font-extrabold text-emerald-700 mt-1">
+                  {students.filter(s => canDownloadStudentForm(s)).length}
+                </div>
+                <div className="text-[10px] text-emerald-700 font-bold mt-1 flex items-center gap-1">
+                  <span>Form Terisi + Bukti Diunggah</span>
+                </div>
+              </div>
             </div>
 
             {/* Recent Applicants Quick List */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-900 mb-4">Pendaftar Terbaru</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-900">Pendaftar Terbaru</h3>
+                <button
+                  onClick={() => setActiveTab('applicants')}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                >
+                  Lihat Semua Siswa →
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
@@ -1070,22 +1642,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <th className="p-3">Sekolah Asal</th>
                       <th className="p-3">Status</th>
                       <th className="p-3">Tanggal</th>
+                      <th className="p-3 text-center">Aksi & Formulir</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {students.slice(0, 5).map(s => (
-                      <tr key={s.id} className="hover:bg-slate-50">
-                        <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
-                        <td className="p-3 font-semibold">{s.fullName}</td>
-                        <td className="p-3 text-slate-600">{s.previousSchoolName}</td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[10px] font-bold uppercase">
-                            {s.status.replace(/_/g, ' ')}
-                          </span>
-                        </td>
-                        <td className="p-3 text-slate-500">{s.createdAt.split('T')[0]}</td>
-                      </tr>
-                    ))}
+                    {students.slice(0, 5).map(s => {
+                      const isEligible = canDownloadStudentForm(s);
+                      return (
+                        <tr key={s.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
+                          <td className="p-3 font-semibold">{s.fullName}</td>
+                          <td className="p-3 text-slate-600">{s.previousSchoolName || '-'}</td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[10px] font-bold uppercase">
+                              {s.status.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-500">{s.createdAt.split('T')[0]}</td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                              {isEligible ? (
+                                <button
+                                  onClick={() => handleDownloadStudentForm(s)}
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                                  title="Calon murid telah mengisi formulir & upload bukti transfer. Download PDF Formulir!"
+                                >
+                                  <Download className="w-3 h-3 text-emerald-100" />
+                                  <span>Download</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 italic">
+                                  {!isStudentFormFilled(s) ? 'Form Belum Isi' : 'Bukti Belum Ada'}
+                                </span>
+                              )}
+                              <button
+                                onClick={() => setSelectedStudent(s)}
+                                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                                title="Lihat Detail"
+                              >
+                                Detail
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1103,7 +1704,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               {/* Search & Filter Controls */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
@@ -1121,6 +1722,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   className="p-2 border rounded-xl text-xs bg-white font-medium"
                 >
                   <option value="all">Semua Status</option>
+                  <option value="ready_download">📄 Siap Unduh Formulir (Form Terisi + Bukti Transfer)</option>
                   <option value="draft">Draft</option>
                   <option value="verifying_payment">Verifikasi Pembayaran</option>
                   <option value="filling_form">Pengisian Formulir</option>
@@ -1129,6 +1731,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <option value="passed">Lulus</option>
                   <option value="class_assigned">Penempatan Kelas</option>
                 </select>
+
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(statusFilter === 'ready_download' ? 'all' : 'ready_download')}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                    statusFilter === 'ready_download'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                      : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                  title="Filter hanya calon murid yang sudah mengisi formulir dan mengunggah bukti transfer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Siap Unduh Formulir ({students.filter(s => canDownloadStudentForm(s)).length})</span>
+                </button>
               </div>
             </div>
 
@@ -1142,7 +1758,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <th className="p-3">JK</th>
                     <th className="p-3">Sekolah Asal</th>
                     <th className="p-3">No. HP Ortu</th>
-                    <th className="p-3">Formulir</th>
+                    <th className="p-3">Status Form & Bayar</th>
                     <th className="p-3">Nilai</th>
                     <th className="p-3">Kelas</th>
                     <th className="p-3 text-center">Aksi</th>
@@ -1157,25 +1773,100 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="p-3 text-slate-600">{s.previousSchoolName || '-'}</td>
                       <td className="p-3 font-mono">{s.phone}</td>
                       <td className="p-3">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            s.formPaymentStatus === 'verified'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {s.formPaymentStatus}
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold w-fit ${
+                              s.formPaymentStatus === 'verified'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : s.formPaymentProofUrl
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {s.formPaymentStatus === 'verified' ? '✓ Bayar Lunas' : s.formPaymentProofUrl ? '⏳ Bukti Terunggah' : 'Belum Bayar'}
+                          </span>
+                          <span className={`text-[10px] font-medium flex items-center gap-1 ${isStudentFormFilled(s) ? 'text-emerald-700 font-bold' : 'text-slate-400 italic'}`}>
+                            {isStudentFormFilled(s) ? '✓ Form Terisi' : '⏳ Form Belum Terisi'}
+                          </span>
+                          {s.isFormVerified || s.status === 'form_verified' ? (
+                            <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5">
+                              ✓ Data Terverifikasi
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-amber-700 font-medium flex items-center gap-0.5">
+                              ⏳ Data Belum Diverifikasi
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 font-bold font-mono text-slate-900">{s.finalScore || '-'}</td>
                       <td className="p-3 font-semibold text-blue-700">{s.assignedClassName || '-'}</td>
                       <td className="p-3 text-center">
-                        <button
-                          onClick={() => setSelectedStudent(s)}
-                          className="px-2.5 py-1 bg-slate-800 text-white rounded text-[10px] font-bold hover:bg-slate-700"
-                        >
-                          Detail Modal
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                          {!(s.isFormVerified || s.status === 'form_verified') ? (
+                            <button
+                              type="button"
+                              onClick={() => handleVerifyFormAndData(s.id, true)}
+                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                              title="Verifikasi Pembayaran & Data Calon Murid (Buka Akses Download Formulir & Kartu Ujian Murid)"
+                            >
+                              <ShieldCheck className="w-3 h-3 text-emerald-100" />
+                              <span>Verifikasi Data & Bayar</span>
+                            </button>
+                          ) : (
+                            <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Terverifikasi</span>
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadStudentForm(s)}
+                            className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 text-white rounded-lg text-[10px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer animate-in fade-in"
+                            title="Download Formulir Pendaftaran Lengkap Calon Murid (PDF 3 Halaman)"
+                          >
+                            <Download className="w-3 h-3 text-teal-100" />
+                            <span>Download Formulir</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadExamCard(s)}
+                            className="px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg text-[10px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer animate-in fade-in"
+                            title="Download Kartu Peserta Ujian Seleksi Calon Murid (PDF)"
+                          >
+                            <Award className="w-3 h-3 text-indigo-100" />
+                            <span>Download Kartu Ujian</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedStudent(s)}
+                            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Buka Modal Detail Calon Murid"
+                          >
+                            <Eye className="w-3 h-3 text-slate-300" />
+                            <span>Detail</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWaModalStudent(s);
+                              setWaDefaultTemplate(
+                                s.status === 'passed' ? 'passed' :
+                                s.status === 'passed_reserved' ? 'passed_reserved' :
+                                s.status === 'failed' ? 'failed' :
+                                s.status === 'scheduled_test' ? 'test_schedule' :
+                                s.status === 'class_assigned' ? 'class_placement' : 'custom'
+                              );
+                            }}
+                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer shadow-sm"
+                            title="Kirim Pesan Pengumuman WhatsApp ke Orang Tua Murid"
+                          >
+                            <MessageCircle className="w-3 h-3 text-emerald-100" />
+                            <span>Kirim WA</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1190,6 +1881,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <AdminFormPaymentSection
             students={students}
             onUpdateStudents={onUpdateStudents}
+            schoolInfo={schoolInfo}
           />
         )}
 
@@ -1201,12 +1893,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             schoolInfo={schoolInfo}
             onUpdateSchoolInfo={onUpdateSchoolInfo}
             costBreakdowns={costBreakdowns}
+            onUpdateCostBreakdowns={onUpdateCostBreakdowns}
           />
         )}
 
         {/* TAB 3C: RIWAYAT PEMBAYARAN TERPISAH (LAKI-LAKI & PEREMPUAN) */}
         {activeTab === 'payment_history' && (
-          <AdminPaymentHistorySection />
+          <AdminPaymentHistorySection
+            students={students}
+            onUpdateStudents={onUpdateStudents}
+          />
         )}
 
 
@@ -1260,122 +1956,819 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
-        {/* TAB 5: PENGUMUMAN KELULUSAN */}
-        {activeTab === 'announcements' && (
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <h3 className="text-lg font-bold text-slate-900 border-b border-slate-200 pb-3">
-              Penetapan Status Kelulusan (Lulus / Cadangan / Tidak Lulus)
-            </h3>
+        {/* TAB 5: PENGUMUMAN KELULUSAN & PESAN WHATSAPP ORANG TUA */}
+        {activeTab === 'announcements' && (() => {
+          const totalCount = students.length;
+          const passedCount = students.filter(s => s.status === 'passed').length;
+          const reservedCount = students.filter(s => s.status === 'passed_reserved').length;
+          const failedCount = students.filter(s => s.status === 'failed').length;
+          const sentWaCount = students.filter(s => !!waSentHistory[s.id]).length;
+          const unsentWaCount = totalCount - sentWaCount;
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 border-b font-bold text-slate-700">
-                    <th className="p-3">No. Reg</th>
-                    <th className="p-3">Nama Siswa</th>
-                    <th className="p-3">Nilai Akhir</th>
-                    <th className="p-3">Status Saat Ini</th>
-                    <th className="p-3 text-center">Tentukan Keputusan</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {students.map(s => (
-                    <tr key={s.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
-                      <td className="p-3 font-semibold">{s.fullName}</td>
-                      <td className="p-3 font-bold font-mono text-slate-900">{s.finalScore ?? '-'}</td>
-                      <td className="p-3 font-bold uppercase">{s.status.replace(/_/g, ' ')}</td>
-                      <td className="p-3 text-center flex justify-center gap-1.5">
-                        <button
-                          onClick={() => handleSetDecision(s.id, 'passed')}
-                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-[10px]"
-                        >
-                          LULUS
-                        </button>
-                        <button
-                          onClick={() => handleSetDecision(s.id, 'passed_reserved')}
-                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded text-[10px]"
-                        >
-                          CADANGAN
-                        </button>
-                        <button
-                          onClick={() => handleSetDecision(s.id, 'failed')}
-                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-[10px]"
-                        >
-                          TIDAK LULUS
-                        </button>
-                      </td>
-                    </tr>
+          const filteredAnnouncementStudents = students.filter(s => {
+            if (announcementSearch.trim()) {
+              const q = announcementSearch.toLowerCase();
+              const primary = getPrimaryParentContact(s);
+              const matchName = s.fullName?.toLowerCase().includes(q);
+              const matchReg = s.registrationNumber?.toLowerCase().includes(q);
+              const matchParent = (s.fatherName?.toLowerCase().includes(q) || s.motherName?.toLowerCase().includes(q) || primary.name?.toLowerCase().includes(q));
+              const matchPhone = (s.phone?.includes(q) || s.fatherPhone?.includes(q) || s.motherPhone?.includes(q) || primary.phone?.includes(q));
+              if (!matchName && !matchReg && !matchParent && !matchPhone) {
+                return false;
+              }
+            }
+
+            if (announcementFilter === 'passed') return s.status === 'passed';
+            if (announcementFilter === 'passed_reserved') return s.status === 'passed_reserved';
+            if (announcementFilter === 'failed') return s.status === 'failed';
+            if (announcementFilter === 'wa_sent') return !!waSentHistory[s.id];
+            if (announcementFilter === 'wa_not_sent') return !waSentHistory[s.id];
+            return true;
+          });
+
+          return (
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+              {/* Header Banner */}
+              <div className="bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-900 p-6 rounded-2xl text-white shadow-md relative overflow-hidden">
+                <div className="absolute right-0 top-0 translate-x-8 -translate-y-8 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1.5 max-w-2xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-400 text-slate-950">
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>Fitur Baru: Pengumuman WhatsApp Orang Tua / Wali</span>
+                    </div>
+                    <h3 className="text-2xl font-black tracking-tight text-white">
+                      Pusat Pengumuman & Keputusan Hasil Seleksi
+                    </h3>
+                    <p className="text-xs text-emerald-100/90 leading-relaxed">
+                      Sampaikan surat keputusan kelulusan, jadwal tes, pengingat daftar ulang, dan penempatan rombel langsung ke nomor WhatsApp masing-masing calon orang tua/wali murid dengan template resmi SMP Al-Hadiid Cileungsi.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="px-4 py-3 bg-white/10 backdrop-blur-sm rounded-xl border border-white/15 text-center">
+                      <div className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">Terkirim WA</div>
+                      <div className="text-xl font-black text-white">{sentWaCount} <span className="text-xs font-normal text-emerald-200">/ {totalCount}</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Statistics Metric Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase">Total Murid</div>
+                  <div className="text-lg font-black text-slate-900 mt-0.5">{totalCount}</div>
+                </div>
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <div className="text-[10px] font-bold text-emerald-700 uppercase">Lulus Seleksi</div>
+                  <div className="text-lg font-black text-emerald-800 mt-0.5">{passedCount}</div>
+                </div>
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <div className="text-[10px] font-bold text-amber-700 uppercase">Cadangan (Waiting)</div>
+                  <div className="text-lg font-black text-amber-800 mt-0.5">{reservedCount}</div>
+                </div>
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                  <div className="text-[10px] font-bold text-rose-700 uppercase">Tidak Lulus</div>
+                  <div className="text-lg font-black text-rose-800 mt-0.5">{failedCount}</div>
+                </div>
+                <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl">
+                  <div className="text-[10px] font-bold text-teal-700 uppercase">✓ WA Terkirim</div>
+                  <div className="text-lg font-black text-teal-800 mt-0.5">{sentWaCount}</div>
+                </div>
+                <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
+                  <div className="text-[10px] font-bold text-indigo-700 uppercase">⏳ Belum Kirim WA</div>
+                  <div className="text-lg font-black text-indigo-800 mt-0.5">{unsentWaCount}</div>
+                </div>
+              </div>
+
+              {/* Search & Filter Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                {/* Search */}
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Cari siswa, no reg, nama wali, atau nomor WhatsApp..."
+                    value={announcementSearch}
+                    onChange={(e) => setAnnouncementSearch(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                  {announcementSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAnnouncementSearch('')}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[
+                    { id: 'all', label: `Semua (${totalCount})` },
+                    { id: 'passed', label: `Lulus (${passedCount})` },
+                    { id: 'passed_reserved', label: `Cadangan (${reservedCount})` },
+                    { id: 'failed', label: `Tidak Lulus (${failedCount})` },
+                    { id: 'wa_sent', label: `✓ Sudah WA (${sentWaCount})` },
+                    { id: 'wa_not_sent', label: `⏳ Belum WA (${unsentWaCount})` },
+                  ].map(f => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setAnnouncementFilter(f.id as any)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        announcementFilter === f.id
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </div>
+
+              {/* Announcements Table */}
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 border-b font-bold text-slate-700">
+                      <th className="p-3">No. Reg</th>
+                      <th className="p-3">Nama Siswa</th>
+                      <th className="p-3">Kontak Orang Tua (WhatsApp)</th>
+                      <th className="p-3 text-center">Nilai CBT</th>
+                      <th className="p-3">Status Seleksi</th>
+                      <th className="p-3 text-center">Tentukan Keputusan</th>
+                      <th className="p-3 text-center">Pesan Pengumuman WA</th>
+                      <th className="p-3 text-center">Dokumen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y text-slate-700">
+                    {filteredAnnouncementStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-8 text-center text-slate-400">
+                          Tidak ada calon murid yang sesuai dengan filter pencarian.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAnnouncementStudents.map(s => {
+                        const primaryContact = getPrimaryParentContact(s);
+                        const sentRecord = waSentHistory[s.id];
+                        const cleanPhone = cleanWhatsAppNumber(primaryContact.phone);
+
+                        return (
+                          <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                            {/* Reg Number */}
+                            <td className="p-3 font-mono font-bold text-emerald-800 whitespace-nowrap">
+                              {s.registrationNumber}
+                            </td>
+
+                            {/* Student Name */}
+                            <td className="p-3">
+                              <div className="font-bold text-slate-900">{s.fullName}</div>
+                              <div className="text-[10px] text-slate-400">{s.previousSchoolName || 'SMP Al-Hadiid'}</div>
+                            </td>
+
+                            {/* Parent Contact */}
+                            <td className="p-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 font-medium text-slate-800">
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                                    {primaryContact.role}
+                                  </span>
+                                  <span className="truncate max-w-[120px]" title={primaryContact.name}>
+                                    {primaryContact.name}
+                                  </span>
+                                </div>
+                                {primaryContact.isValid ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                    <Phone className="w-2.5 h-2.5" /> +{cleanPhone}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                    <AlertCircle className="w-2.5 h-2.5" /> {primaryContact.phone || 'Belum diisi'}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Exam Score */}
+                            <td className="p-3 text-center">
+                              <span className="font-bold font-mono text-slate-900 bg-slate-100 px-2 py-1 rounded">
+                                {s.finalScore ?? '-'}
+                              </span>
+                            </td>
+
+                            {/* Status */}
+                            <td className="p-3 whitespace-nowrap">
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                                s.status === 'passed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' :
+                                s.status === 'failed' ? 'bg-rose-100 text-rose-800 border border-rose-300' :
+                                s.status === 'passed_reserved' ? 'bg-amber-100 text-amber-800 border border-amber-300' :
+                                s.status === 'class_assigned' ? 'bg-blue-100 text-blue-800 border border-blue-300' :
+                                'bg-slate-100 text-slate-700 border border-slate-300'
+                              }`}>
+                                {s.status.replace(/_/g, ' ')}
+                              </span>
+                            </td>
+
+                            {/* Decision Buttons */}
+                            <td className="p-3 text-center">
+                              <div className="flex justify-center gap-1 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetDecision(s.id, 'passed')}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                                    s.status === 'passed'
+                                      ? 'bg-emerald-700 text-white ring-2 ring-emerald-400'
+                                      : 'bg-emerald-100 hover:bg-emerald-600 text-emerald-800 hover:text-white'
+                                  }`}
+                                  title="Tetapkan status LULUS"
+                                >
+                                  LULUS
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetDecision(s.id, 'passed_reserved')}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                                    s.status === 'passed_reserved'
+                                      ? 'bg-amber-600 text-white ring-2 ring-amber-400'
+                                      : 'bg-amber-100 hover:bg-amber-500 text-amber-900 hover:text-white'
+                                  }`}
+                                  title="Tetapkan status CADANGAN (Waiting List)"
+                                >
+                                  CADANGAN
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetDecision(s.id, 'failed')}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                                    s.status === 'failed'
+                                      ? 'bg-rose-700 text-white ring-2 ring-rose-400'
+                                      : 'bg-rose-100 hover:bg-rose-600 text-rose-800 hover:text-white'
+                                  }`}
+                                  title="Tetapkan status TIDAK LULUS"
+                                >
+                                  TDK LULUS
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* WhatsApp Announcement Button & Status */}
+                            <td className="p-3 text-center whitespace-nowrap">
+                              <div className="flex flex-col items-center gap-1.5">
+                                {sentRecord ? (
+                                  <div className="flex flex-col items-center gap-1">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      <span>Terkirim ({sentRecord.parentRole})</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setWaModalStudent(s);
+                                        setWaDefaultTemplate(
+                                          s.status === 'passed' ? 'passed' :
+                                          s.status === 'passed_reserved' ? 'passed_reserved' :
+                                          s.status === 'failed' ? 'failed' :
+                                          s.status === 'class_assigned' ? 'class_placement' : 'custom'
+                                        );
+                                      }}
+                                      className="px-2.5 py-1 bg-white hover:bg-slate-100 text-emerald-700 border border-emerald-300 rounded-lg text-[10px] font-bold shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                                      title="Kirim ulang pengumuman via WhatsApp"
+                                    >
+                                      <MessageCircle className="w-3 h-3" />
+                                      <span>Kirim Ulang WA</span>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setWaModalStudent(s);
+                                      setWaDefaultTemplate(
+                                        s.status === 'passed' ? 'passed' :
+                                        s.status === 'passed_reserved' ? 'passed_reserved' :
+                                        s.status === 'failed' ? 'failed' :
+                                        s.status === 'class_assigned' ? 'class_placement' :
+                                        s.status === 'scheduled_test' ? 'test_schedule' : 'custom'
+                                      );
+                                    }}
+                                    className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-[10px] font-extrabold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                                    title={`Kirim pesan pengumuman WhatsApp ke orang tua ${s.fullName}`}
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                    <span>Kirim Pengumuman WA</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Documents & Remedial */}
+                            <td className="p-3 text-center whitespace-nowrap">
+                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadExamResult(s)}
+                                  className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[10px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                                  title="Download Surat Keputusan Hasil Seleksi SPMB (PDF)"
+                                >
+                                  <Download className="w-3 h-3 text-amber-300" />
+                                  <span>Hasil (PDF)</span>
+                                </button>
+                                {s.status === 'failed' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAllowRetest(s.id)}
+                                    className="px-2 py-1 bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white rounded text-[10px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                                    title="Buka Akses Ujian Diulang (Remedial) untuk Calon Murid"
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>{s.retestCount ? `Ujian Ulang (${s.retestCount}x)` : 'Remedial'}</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* TAB 7: MANAJEMEN KUOTA KELAS */}
         {activeTab === 'quotas' && (
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">Manajemen Kuota Kelas (Rombel Kelas 7)</h3>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 mb-1.5">
+                  <Database className="w-3.5 h-3.5" />
+                  <span>Tabel Database: public.class_quotas</span>
+                </div>
+                <h3 className="text-xl font-extrabold text-slate-900">Manajemen Kuota Kelas (Rombel Kelas 7)</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Pengaturan kapasitas rombongan belajar terintegrasi langsung dengan database relasional Supabase.
+                </p>
+              </div>
+
+              <div className="flex items-center flex-wrap gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleRecalculateAndSyncQuotas}
+                  disabled={isSyncingQuota}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                  title="Hitung ulang keterisian kuota dari data siswa aktif di database"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQuota ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingQuota ? 'Menyinkronkan...' : 'Hitung Ulang & Sinkronkan'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowQuotaSqlModal(true)}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Skrip SQL Migrasi (011)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Supabase Table Integration Banner */}
+            {quotaTableStatus?.rowCount && quotaTableStatus.rowCount > 0 ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex items-center justify-between gap-3 text-xs text-emerald-800">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    <strong>Terintegrasi Penuh:</strong> {quotaTableStatus.rowCount} rombel aktif tersinkronisasi langsung dengan tabel <code className="font-mono bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-900 font-bold">public.class_quotas</code> di database Supabase.
+                  </span>
+                </div>
+                <span className="font-mono text-[11px] bg-emerald-200/60 px-2 py-0.5 rounded font-bold text-emerald-900 shrink-0">
+                  SSOT Relasional Aktif
+                </span>
+              </div>
+            ) : (
+              <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span>Integrasi Tabel Relasional (public.class_quotas) Siap Diaktifkan</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-relaxed max-w-2xl">
+                    Data kuota kelas saat ini berjalan dan terlindungi via fallback database server (<code className="font-mono text-amber-900 font-bold">spmb_app_state</code>). Untuk memindahkan kuota kelas secara permanen ke tabel relasional <code className="font-mono font-bold text-amber-900">public.class_quotas</code> dan membuka izin RLS, silakan jalankan skrip SQL migrasi (011) di Supabase Dashboard.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQuotaSqlModal(true)}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer active:scale-95"
+                >
+                  <FileCode className="w-3.5 h-3.5" />
+                  <span>Buka &amp; Salin SQL Migrasi</span>
+                </button>
+              </div>
+            )}
+
+            {/* Quota Summary Statistics Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Rombel</div>
+                <div className="text-2xl font-black text-slate-900 mt-1">
+                  {classQuotas.length} <span className="text-xs font-semibold text-slate-500">Kelas</span>
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">{schoolInfo.academicYear}</div>
+              </div>
+
+              <div className="bg-blue-50/60 border border-blue-200/80 rounded-xl p-4">
+                <div className="text-[11px] font-bold text-blue-700 uppercase tracking-wider">Total Kapasitas</div>
+                <div className="text-2xl font-black text-blue-900 mt-1">
+                  {classQuotas.reduce((acc, q) => acc + q.capacity, 0)} <span className="text-xs font-semibold text-blue-600">Murid</span>
+                </div>
+                <div className="text-[11px] text-blue-500 mt-0.5">Daya tampung seluruh rombel</div>
+              </div>
+
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4">
+                <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Kuota Terisi</div>
+                <div className="text-2xl font-black text-emerald-900 mt-1">
+                  {classQuotas.reduce((acc, q) => acc + q.filled, 0)} <span className="text-xs font-semibold text-emerald-600">Murid</span>
+                </div>
+                <div className="text-[11px] text-emerald-600 font-semibold mt-0.5">
+                  {classQuotas.reduce((acc, q) => acc + q.capacity, 0) > 0
+                    ? `${Math.round((classQuotas.reduce((acc, q) => acc + q.filled, 0) / classQuotas.reduce((acc, q) => acc + q.capacity, 0)) * 100)}% Terisi`
+                    : '0% Terisi'}
+                </div>
+              </div>
+
+              <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-4">
+                <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">Sisa Kuota Tersedia</div>
+                <div className="text-2xl font-black text-amber-900 mt-1">
+                  {Math.max(0, classQuotas.reduce((acc, q) => acc + q.capacity, 0) - classQuotas.reduce((acc, q) => acc + q.filled, 0))} <span className="text-xs font-semibold text-amber-600">Bangku</span>
+                </div>
+                <div className="text-[11px] text-amber-600 font-semibold mt-0.5">Siap menerima pendaftar</div>
+              </div>
             </div>
 
             {/* Quota List Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {classQuotas.map(q => (
-                <div key={q.id} className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-3">
-                  <div className="text-xs font-bold text-emerald-800 uppercase tracking-wider">{q.academicYear}</div>
-                  <div className="text-xl font-extrabold text-slate-900">{q.className}</div>
-                  <div className="text-xs text-slate-600">Wali Kelas: {q.homeroomTeacher}</div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                  <School className="w-4 h-4 text-emerald-600" />
+                  <span>Daftar Rombel & Kuota Tersedia</span>
+                </h4>
+                <span className="text-xs text-slate-500 font-medium">
+                  {classQuotas.length} rombongan belajar terdaftar
+                </span>
+              </div>
 
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs font-bold">
-                      <span>Kuota Terisi:</span>
-                      <span>{q.filled} / {q.capacity} murid</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {classQuotas.map(q => {
+                  const percent = q.capacity > 0 ? Math.min(100, Math.round((q.filled / q.capacity) * 100)) : 0;
+                  const isFull = q.filled >= q.capacity;
+                  return (
+                    <div key={q.id} className="bg-slate-50 hover:bg-slate-100/80 p-5 rounded-2xl border border-slate-200 transition-all flex flex-col justify-between shadow-xs">
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono font-extrabold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md uppercase tracking-wider">
+                            {q.academicYear || schoolInfo.academicYear}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditQuota(q)}
+                              className="p-1.5 hover:bg-white text-slate-500 hover:text-blue-600 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-200"
+                              title="Edit Kuota Kelas"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteClassQuota(q.id, q.className)}
+                              className="p-1.5 hover:bg-white text-slate-500 hover:text-rose-600 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-200"
+                              title="Hapus Kelas"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="text-base font-extrabold text-slate-900 leading-snug">{q.className}</div>
+                          <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-1">
+                            <User className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="truncate">{q.homeroomTeacher || 'Belum Ditentukan'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 pt-3 border-t border-slate-200/80 space-y-2">
+                        <div className="flex justify-between text-xs font-bold">
+                          <span className="text-slate-600">Terisi:</span>
+                          <span className={isFull ? 'text-rose-600 font-extrabold' : 'text-slate-900'}>
+                            {q.filled} / {q.capacity} <span className="font-normal text-slate-500">murid</span>
+                          </span>
+                        </div>
+
+                        <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              isFull ? 'bg-rose-500' : percent > 75 ? 'bg-amber-500' : 'bg-emerald-600'
+                            }`}
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                          <span>{percent}% Penuh</span>
+                          <span className={q.capacity - q.filled <= 5 ? 'text-amber-600 font-bold' : 'text-slate-500'}>
+                            Sisa: {Math.max(0, q.capacity - q.filled)} bangku
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-600 rounded-full"
-                        style={{ width: `${Math.min(100, (q.filled / q.capacity) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                  );
+                })}
+              </div>
             </div>
 
             {/* Add New Class Form */}
             <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
-              <h4 className="font-bold text-sm text-slate-900">Tambah Rombongan Belajar (Kelas Baru)</h4>
+              <div className="flex items-center gap-2">
+                <PlusCircle className="w-4 h-4 text-emerald-600" />
+                <h4 className="font-extrabold text-sm text-slate-900">Tambah Rombongan Belajar (Kelas Baru)</h4>
+              </div>
               <form onSubmit={handleAddClassQuota} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-                <input
-                  type="text"
-                  required
-                  placeholder="Nama Kelas (Contoh: 7 D)"
-                  value={newClassName}
-                  onChange={(e) => setNewClassName(e.target.value)}
-                  className="p-2.5 rounded-xl border"
-                />
-                <input
-                  type="number"
-                  required
-                  placeholder="Kuota (Contoh: 32)"
-                  value={newCapacity}
-                  onChange={(e) => setNewCapacity(Number(e.target.value))}
-                  className="p-2.5 rounded-xl border"
-                />
-                <input
-                  type="text"
-                  placeholder="Nama Wali Kelas"
-                  value={newHomeroom}
-                  onChange={(e) => setNewHomeroom(e.target.value)}
-                  className="p-2.5 rounded-xl border"
-                />
-                <button type="submit" className="py-2.5 bg-emerald-600 text-white font-bold rounded-xl">
-                  + Tambah Kelas
-                </button>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Nama Rombel / Kelas *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: 7 E (Tahfizh Intensif)"
+                    value={newClassName}
+                    onChange={(e) => setNewClassName(e.target.value)}
+                    className="w-full p-2.5 bg-white rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Kapasitas Maksimal (Siswa) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    required
+                    placeholder="Contoh: 32"
+                    value={newCapacity}
+                    onChange={(e) => setNewCapacity(Number(e.target.value))}
+                    className="w-full p-2.5 bg-white rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Nama Wali Kelas (Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Ustadz Fulan, S.Pd."
+                    value={newHomeroom}
+                    onChange={(e) => setNewHomeroom(e.target.value)}
+                    className="w-full p-2.5 bg-white rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all cursor-pointer shadow-sm active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Simpan Kelas</span>
+                  </button>
+                </div>
               </form>
             </div>
+
+            {/* Modal Edit Class Quota */}
+            {editingQuota && (
+              <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Edit className="w-4 h-4 text-emerald-600" />
+                      <h4 className="text-base font-extrabold text-slate-900">Edit Data Rombel</h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingQuota(null)}
+                      className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveEditQuota} className="space-y-4 text-xs">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Nama Rombel / Kelas *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editClassName}
+                        onChange={(e) => setEditClassName(e.target.value)}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Kapasitas (Murid) *</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          required
+                          value={editCapacity}
+                          onChange={(e) => setEditCapacity(Number(e.target.value))}
+                          className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Tahun Ajaran</label>
+                        <input
+                          type="text"
+                          value={editAcademicYear}
+                          onChange={(e) => setEditAcademicYear(e.target.value)}
+                          className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Wali Kelas</label>
+                      <input
+                        type="text"
+                        placeholder="Nama Ustadz / Guru Pembimbing"
+                        value={editHomeroom}
+                        onChange={(e) => setEditHomeroom(e.target.value)}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setEditingQuota(null)}
+                        className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl font-bold transition-all cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+                      >
+                        Simpan Perubahan
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Modal SQL Migration Helper */}
+            {showQuotaSqlModal && (
+              <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-slate-950 text-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-800 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <FileCode className="w-5 h-5 text-emerald-400" />
+                      <div>
+                        <h4 className="text-base font-extrabold text-white">Skrip SQL Migrasi Kuota Kelas</h4>
+                        <p className="text-[11px] text-slate-400">File: supabase/migrations/011_class_quotas_schema_and_policies.sql</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowQuotaSqlModal(false)}
+                      className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Salin dan jalankan skrip SQL berikut di <strong>SQL Editor Dashboard Supabase</strong> Anda untuk memastikan tabel <code className="text-emerald-400 font-mono">public.class_quotas</code> memiliki izin akses RLS Policy dan terisi data kelas resmi:
+                  </p>
+
+                  <div className="relative">
+                    <pre className="p-4 bg-slate-900 border border-slate-800 rounded-xl text-[11px] font-mono text-emerald-300 max-h-60 overflow-y-auto leading-relaxed">
+{`-- =====================================================================
+-- 011_class_quotas_schema_and_policies.sql
+-- Integrasi Tabel Relasional Kuota Kelas (Single Source of Truth)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS public.class_quotas (
+    id VARCHAR(100) PRIMARY KEY,
+    academic_year VARCHAR(50) DEFAULT '2027/2028' NOT NULL,
+    level VARCHAR(50) DEFAULT 'Kelas 7' NOT NULL,
+    class_name VARCHAR(100) NOT NULL,
+    capacity INTEGER DEFAULT 32 NOT NULL,
+    filled INTEGER DEFAULT 0 NOT NULL,
+    homeroom_teacher VARCHAR(255) DEFAULT 'Pengajar Al-Hadiid',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.class_quotas ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE public.class_quotas ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow select for class_quotas" ON public.class_quotas;
+DROP POLICY IF EXISTS "Allow all for class_quotas" ON public.class_quotas;
+
+CREATE POLICY "Allow all for class_quotas" ON public.class_quotas 
+FOR ALL USING (true) WITH CHECK (true);
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON public.class_quotas TO anon, authenticated, service_role;
+
+-- Masukkan rombel kelas 7 resmi SMP Al-Hadiid jika belum ada
+INSERT INTO public.class_quotas (id, academic_year, level, class_name, capacity, filled, homeroom_teacher, created_at)
+VALUES 
+    ('q1', '2027/2028', 'Kelas 7', '7 A (Tahfizh Unggulan)', 32, 0, 'Ustadz Ahmad Fauzi, S.Pd.I.', NOW()),
+    ('q2', '2027/2028', 'Kelas 7', '7 B (Sains & Digital)', 32, 0, 'Ibu Nuraeni, S.Si.', NOW()),
+    ('q3', '2027/2028', 'Kelas 7', '7 C (Bilingual & International)', 32, 0, 'Ustadz Rizky Syahputra, M.Pd.', NOW()),
+    ('q4', '2027/2028', 'Kelas 7', '7 D (Reguler Rabbani)', 32, 0, 'Ibu Fitri Handayani, S.Pd.', NOW())
+ON CONFLICT (id) DO UPDATE SET
+    class_name = EXCLUDED.class_name,
+    capacity = EXCLUDED.capacity,
+    homeroom_teacher = EXCLUDED.homeroom_teacher;
+
+NOTIFY pgrst, 'reload schema';`}
+                    </pre>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <span className="text-[11px] text-slate-400">
+                      * Selesai dijalankan di SQL Editor Supabase, skema &amp; RLS akan langsung aktif seketika.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sql = `-- =====================================================================
+-- 011_class_quotas_schema_and_policies.sql
+-- Integrasi Tabel Relasional Kuota Kelas (Single Source of Truth)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS public.class_quotas (
+    id VARCHAR(100) PRIMARY KEY,
+    academic_year VARCHAR(50) DEFAULT '2027/2028' NOT NULL,
+    level VARCHAR(50) DEFAULT 'Kelas 7' NOT NULL,
+    class_name VARCHAR(100) NOT NULL,
+    capacity INTEGER DEFAULT 32 NOT NULL,
+    filled INTEGER DEFAULT 0 NOT NULL,
+    homeroom_teacher VARCHAR(255) DEFAULT 'Pengajar Al-Hadiid',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.class_quotas ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE public.class_quotas ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow select for class_quotas" ON public.class_quotas;
+DROP POLICY IF EXISTS "Allow all for class_quotas" ON public.class_quotas;
+
+CREATE POLICY "Allow all for class_quotas" ON public.class_quotas 
+FOR ALL USING (true) WITH CHECK (true);
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON public.class_quotas TO anon, authenticated, service_role;
+
+-- Masukkan rombel kelas 7 resmi SMP Al-Hadiid jika belum ada
+INSERT INTO public.class_quotas (id, academic_year, level, class_name, capacity, filled, homeroom_teacher, created_at)
+VALUES 
+    ('q1', '2027/2028', 'Kelas 7', '7 A (Tahfizh Unggulan)', 32, 0, 'Ustadz Ahmad Fauzi, S.Pd.I.', NOW()),
+    ('q2', '2027/2028', 'Kelas 7', '7 B (Sains & Digital)', 32, 0, 'Ibu Nuraeni, S.Si.', NOW()),
+    ('q3', '2027/2028', 'Kelas 7', '7 C (Bilingual & International)', 32, 0, 'Ustadz Rizky Syahputra, M.Pd.', NOW()),
+    ('q4', '2027/2028', 'Kelas 7', '7 D (Reguler Rabbani)', 32, 0, 'Ibu Fitri Handayani, S.Pd.', NOW())
+ON CONFLICT (id) DO UPDATE SET
+    class_name = EXCLUDED.class_name,
+    capacity = EXCLUDED.capacity,
+    homeroom_teacher = EXCLUDED.homeroom_teacher;
+
+NOTIFY pgrst, 'reload schema';`;
+                        navigator.clipboard.writeText(sql);
+                        setCopiedSql(true);
+                        setTimeout(() => setCopiedSql(false), 2000);
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{copiedSql ? 'Tersalin ke Clipboard!' : 'Salin Skrip SQL'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1454,6 +2847,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={fetchQuestionsFromSupabase}
+                  disabled={isQuestionsLoading}
+                  className="px-3.5 py-2.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-600 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  title="Sinkronkan data soal langsung dari database Supabase"
+                >
+                  <RefreshCw className={`w-4 h-4 text-emerald-400 ${isQuestionsLoading ? 'animate-spin' : ''}`} />
+                  <span>{isQuestionsLoading ? 'Sinkronisasi...' : 'Refresh dari Supabase'}</span>
+                </button>
+
+                <button
                   onClick={handleOpenNewQuestionModal}
                   className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                 >
@@ -1484,6 +2887,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <Calendar className="w-4 h-4" />
                   <span>+ Tambah Jadwal Tes</span>
                 </button>
+              </div>
+            </div>
+
+            {/* Supabase Dynamic Data Status Ribbon */}
+            <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-950 shadow-sm">
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-3 w-3 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+                <div>
+                  <span className="font-extrabold text-emerald-900">Database Supabase Terhubung (Data Dinamis Multi-Perangkat)</span>
+                  <p className="text-[11px] text-emerald-700 mt-0.5">
+                    Semua penambahan, perubahan, dan impor soal tersinkronisasi dinamis ke database Supabase. Perangkat calon murid (HP, laptop, tablet) mengakses bank soal yang sama secara realtime.
+                  </p>
+                </div>
+              </div>
+              <div className="shrink-0 flex items-center gap-2">
+                <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-200">
+                  {lastQuestionsSync ? `Sinkron: ${lastQuestionsSync.toLocaleTimeString('id-ID')}` : 'Sinkronisasi Otomatis'}
+                </span>
               </div>
             </div>
 
@@ -3075,6 +4499,11 @@ Kunci: B`}
           />
         )}
 
+        {/* TAB: SUPABASE SYNC */}
+        {activeTab === 'supabase_sync' && (
+          <SupabaseSyncTab onRefreshAllData={onRefreshAllData} />
+        )}
+
         {/* TAB: DATABASE MANAGEMENT */}
         {activeTab === 'database_management' && (
           <div className="space-y-6">
@@ -3099,9 +4528,12 @@ Kunci: B`}
                 <span>Pusat Pengelolaan Database SPMB</span>
               </div>
               <p className="text-xs text-slate-300 max-w-2xl">
-                Gunakan menu ini untuk membuat cadangan (backup) seluruh data sistem, memulihkan (restore) dari file arsip, membersihkan data pendaftar lama, atau melakukan reset pabrik.
+                Gunakan menu ini untuk membuat cadangan (backup) seluruh data sistem, memulihkan (restore) dari file arsip, menyinkronkan dengan Supabase Cloud, membersihkan data pendaftar lama, atau melakukan reset pabrik.
               </p>
             </div>
+
+            {/* Supabase Live Cloud Sync Card */}
+            <SupabaseSyncButton variant="card" onDataSynced={onRefreshAllData} />
 
             {/* 4 Database Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -3411,34 +4843,493 @@ Kunci: B`}
         )}
 
         {/* STUDENT DETAIL MODAL */}
-        {selectedStudent && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-2xl w-full p-6 text-slate-900 relative shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-              <button
-                onClick={() => setSelectedStudent(null)}
-                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
+        {selectedStudent && (() => {
+          const formFilled = isStudentFormFilled(selectedStudent);
+          const proofUploaded = hasUploadedPaymentProof(selectedStudent);
+          const canDownload = canDownloadStudentForm(selectedStudent);
 
-              <h3 className="text-lg font-bold text-slate-900 border-b pb-2">
-                Detail Calon Murid: {selectedStudent.fullName}
-              </h3>
+          return (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-2xl w-full p-6 text-slate-900 relative shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto animate-scale-up">
+                <button
+                  onClick={() => setSelectedStudent(null)}
+                  className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Tutup Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
 
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div><span className="font-semibold">No Reg:</span> {selectedStudent.registrationNumber}</div>
-                <div><span className="font-semibold">NIK:</span> {selectedStudent.nik}</div>
-                <div><span className="font-semibold">TTL:</span> {selectedStudent.birthPlace}, {selectedStudent.birthDate}</div>
-                <div><span className="font-semibold">Sekolah Asal:</span> {selectedStudent.previousSchoolName}</div>
-                <div><span className="font-semibold">Ayah:</span> {selectedStudent.fatherName} ({selectedStudent.fatherPhone})</div>
-                <div><span className="font-semibold">Ibu:</span> {selectedStudent.motherName}</div>
-                <div><span className="font-semibold">Nilai Final:</span> {selectedStudent.finalScore || '-'}</div>
-                <div><span className="font-semibold">Status:</span> {selectedStudent.status}</div>
+                {/* Modal Header */}
+                <div className="border-b pb-3 pr-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-slate-900 text-white font-black text-lg flex items-center justify-center shrink-0">
+                      {selectedStudent.fullName.charAt(0)}
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">
+                        {selectedStudent.fullName}
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-0.5">
+                        <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          {selectedStudent.registrationNumber}
+                        </span>
+                        <span>•</span>
+                        <span>{selectedStudent.gender}</span>
+                        <span>•</span>
+                        <span className="capitalize font-semibold text-slate-700">
+                          Status: {selectedStudent.status.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* FITUR VERIFIKASI PEMBAYARAN & DATA CALON MURID */}
+                <div className={`p-4 rounded-2xl border space-y-3 ${
+                  selectedStudent.formPaymentStatus === 'verified' && (selectedStudent.isFormVerified || selectedStudent.status === 'form_verified')
+                    ? 'bg-emerald-50/80 border-emerald-400'
+                    : 'bg-amber-50/80 border-amber-300'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <span>Verifikasi Data & Pembayaran Formulir (Rp {(selectedStudent.formPaymentAmount || 200000).toLocaleString('id-ID')})</span>
+                    </div>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                      selectedStudent.formPaymentStatus === 'verified' && (selectedStudent.isFormVerified || selectedStudent.status === 'form_verified')
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-amber-500 text-white'
+                    }`}>
+                      {selectedStudent.formPaymentStatus === 'verified' && (selectedStudent.isFormVerified || selectedStudent.status === 'form_verified')
+                        ? '✓ Terverifikasi Resmi'
+                        : 'Menunggu Verifikasi'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-700 leading-relaxed">
+                    {selectedStudent.formPaymentStatus === 'verified' && (selectedStudent.isFormVerified || selectedStudent.status === 'form_verified')
+                      ? 'Data calon murid dan bukti pembayaran formulir telah disahkan oleh Panitia Admin. Akses download formulir pendaftaran dan kartu ujian telah aktif bagi calon murid.'
+                      : 'Verifikasi berkas dan pembayaran calon murid ini untuk mengaktifkan akses download Formulir Pendaftaran dan Kartu Peserta Ujian.'}
+                  </p>
+
+                  <div className="flex items-center gap-2 pt-1 flex-wrap">
+                    {!(selectedStudent.formPaymentStatus === 'verified' && (selectedStudent.isFormVerified || selectedStudent.status === 'form_verified')) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleVerifyFormAndData(selectedStudent.id, true)}
+                        className="flex-1 min-w-[200px] py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Verifikasi Data & Pembayaran (Sahkan Murid)</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleVerifyFormAndData(selectedStudent.id, false)}
+                        className="py-2 px-3 bg-white border border-slate-300 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-rose-500" />
+                        <span>Batalkan Verifikasi Data</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* DOWNLOAD FORMULIR & KARTU UJIAN OLEH ADMIN */}
+                <div className="p-4 bg-gradient-to-br from-slate-50 to-teal-50/50 border-2 border-slate-300 rounded-2xl shadow-sm space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold text-xs sm:text-sm">
+                      <Download className="w-4 h-4 text-teal-700 shrink-0" />
+                      <span>Download Dokumen Calon Murid (Panitia Admin)</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Admin panitia dapat langsung mengunduh Formulir Pendaftaran lengkap (PDF 3 Halaman) dan Kartu Peserta Ujian calon murid:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadStudentForm(selectedStudent)}
+                      className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Formulir (PDF 3 Hal)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadExamCard(selectedStudent)}
+                      className="py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Kartu Ujian (PDF)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* DOKUMEN UJIAN & FITUR UJIAN DIULANG */}
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                      <GraduationCap className="w-4 h-4 text-indigo-600" />
+                      <span>Dokumen Ujian Seleksi & Hasil Kelulusan (PDF)</span>
+                    </span>
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${
+                      selectedStudent.status === 'passed' ? 'bg-emerald-100 text-emerald-800' :
+                      selectedStudent.status === 'failed' ? 'bg-rose-100 text-rose-800' :
+                      'bg-slate-200 text-slate-700'
+                    }`}>
+                      {selectedStudent.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadExamCard(selectedStudent)}
+                      className="py-2.5 px-3 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 font-bold text-xs rounded-xl shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Download Kartu Ujian (PDF)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadExamResult(selectedStudent)}
+                      className="py-2.5 px-3 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Download Hasil Ujian (PDF)</span>
+                    </button>
+                  </div>
+
+                  {/* If student is failed, provide Panitia button to manage/re-allow Ujian Diulang */}
+                  {selectedStudent.status === 'failed' && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs text-rose-900 font-bold">
+                        <span className="flex items-center gap-1.5">
+                          <RefreshCw className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Status: Tidak Lulus (Remedial Aktif)</span>
+                        </span>
+                        <span className="text-[10px] bg-rose-200 text-rose-900 px-2 py-0.5 rounded font-bold">
+                          {selectedStudent.retestCount ? `Ujian Ulang: ${selectedStudent.retestCount}x` : 'Belum Ujian Ulang'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-rose-800 leading-relaxed">
+                        Fitur Ujian Diulang telah terbuka otomatis di akun murid. Anda juga dapat mereset dan mengaktifkan kembali sesi pengerjaan soal secara langsung.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleAllowRetest(selectedStudent.id)}
+                        className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-lg shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Buka / Reset Akses Ujian Diulang</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* PENGUMUMAN WHATSAPP ORANG TUA / WALI */}
+                <div className="p-4 bg-gradient-to-br from-emerald-50 via-teal-50/60 to-white border border-emerald-300 rounded-2xl shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-xs text-emerald-950 flex items-center gap-1.5">
+                      <MessageCircle className="w-4 h-4 text-emerald-600" />
+                      <span>Pengumuman Resmi via WhatsApp Orang Tua / Wali</span>
+                    </span>
+                    {waSentHistory[selectedStudent.id] ? (
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        ✓ Terkirim ({waSentHistory[selectedStudent.id].parentRole})
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                        Belum Terkirim
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-emerald-800/90 leading-relaxed">
+                    Kirimkan surat keputusan kelulusan, jadwal tes seleksi, pengingat biaya daftar ulang, atau pemberitahuan rombel langsung ke WhatsApp nomor orang tua calon murid ini.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWaModalStudent(selectedStudent);
+                      setWaDefaultTemplate(
+                        selectedStudent.status === 'passed' ? 'passed' :
+                        selectedStudent.status === 'passed_reserved' ? 'passed_reserved' :
+                        selectedStudent.status === 'failed' ? 'failed' :
+                        selectedStudent.status === 'class_assigned' ? 'class_placement' :
+                        selectedStudent.status === 'scheduled_test' ? 'test_schedule' : 'custom'
+                      );
+                    }}
+                    className="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                  >
+                    <MessageCircle className="w-4 h-4 text-emerald-100" />
+                    <span>{waSentHistory[selectedStudent.id] ? 'Kirim Ulang Pesan Pengumuman WhatsApp' : 'Kirim Pesan Pengumuman WhatsApp Sekarang'}</span>
+                  </button>
+                </div>
+
+                {/* Bukti Transfer Formulir Box jika sudah upload */}
+                {selectedStudent.formPaymentProofUrl && (
+                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <CreditCard className="w-4 h-4 text-emerald-600" />
+                        Bukti Transfer Biaya Formulir
+                      </span>
+                      <span className="font-mono font-bold text-emerald-700">
+                        Rp {(selectedStudent.formPaymentAmount || 200000).toLocaleString('id-ID')}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <a
+                        href={selectedStudent.formPaymentProofUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group relative block w-20 h-20 rounded-lg border border-slate-300 overflow-hidden bg-slate-900 shrink-0"
+                        title="Klik untuk membuka gambar ukuran penuh"
+                      >
+                        <img
+                          src={selectedStudent.formPaymentProofUrl}
+                          alt="Bukti Transfer Formulir"
+                          className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                          <Eye className="w-4 h-4 text-amber-300" />
+                        </div>
+                      </a>
+                      <div className="text-xs text-slate-600 space-y-1">
+                        <div><span className="font-semibold">Tanggal Upload:</span> {selectedStudent.formPaymentDate || '-'}</div>
+                        <div>
+                          <span className="font-semibold">Status Pembayaran:</span>{' '}
+                          <span className="font-bold text-emerald-700 uppercase">{selectedStudent.formPaymentStatus}</span>
+                        </div>
+                        {selectedStudent.formPaymentNotes && (
+                          <div className="text-slate-500 italic">"{selectedStudent.formPaymentNotes}"</div>
+                        )}
+                        <div className="pt-2 flex items-center gap-2">
+                          {selectedStudent.formPaymentStatus !== 'verified' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleVerifyFormPayment(selectedStudent.id, 'verified')}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] rounded-lg shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Verifikasi Bukti Pembayaran</span>
+                            </button>
+                          ) : (
+                            <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Lunas & Terverifikasi</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bukti Transfer BAM / Daftar Ulang & Input Verifikasi Panitia (Tahap 8 Alur SPMB) */}
+                {(selectedStudent.initialPaymentProofUrl || selectedStudent.initialPaymentStatus === 'verified' || selectedStudent.status === 'passed' || selectedStudent.status === 're_registered') && (
+                  <div className="p-4 bg-blue-50/80 border border-blue-200 rounded-xl space-y-3">
+                    <div className="font-bold text-xs text-blue-900 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <CreditCard className="w-4 h-4 text-blue-600" />
+                        <span>Tahap 8: Verifikasi Bukti Transfer & Input Nominal BAM</span>
+                      </span>
+                      <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${
+                        selectedStudent.initialPaymentStatus === 'verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {selectedStudent.initialPaymentStatus === 'verified' ? '✓ Lunas & Tercatat di Tabel' : 'Menunggu Verifikasi'}
+                      </span>
+                    </div>
+
+                    {selectedStudent.initialPaymentProofUrl && (
+                      <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-blue-100">
+                        <a
+                          href={selectedStudent.initialPaymentProofUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group relative block w-20 h-20 rounded-lg border border-blue-300 overflow-hidden bg-slate-900 shrink-0"
+                          title="Klik untuk membuka gambar ukuran penuh"
+                        >
+                          <img
+                            src={selectedStudent.initialPaymentProofUrl}
+                            alt="Bukti Transfer BAM"
+                            className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                            <Eye className="w-4 h-4 text-amber-300" />
+                          </div>
+                        </a>
+                        <div className="text-xs text-slate-600 space-y-1">
+                          <div><span className="font-semibold">Tanggal Upload Murid:</span> {selectedStudent.initialPaymentDate || '-'}</div>
+                          <div>
+                            <span className="font-semibold">Catatan Murid:</span>{' '}
+                            <span className="italic text-slate-500">{selectedStudent.initialPaymentNotes || 'Tidak ada catatan'}</span>
+                          </div>
+                          <a
+                            href={selectedStudent.initialPaymentProofUrl}
+                            download={`Bukti_BAM_${selectedStudent.registrationNumber}.jpg`}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 pt-1"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Unduh File Bukti BAM</span>
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Form Input Nominal & Verifikasi untuk Panitia */}
+                    {selectedStudent.initialPaymentStatus !== 'verified' ? (
+                      <div className="p-3 bg-white rounded-lg border border-blue-200 space-y-3">
+                        <div className="text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Input Nominal Transfer & Verifikasi ke Tabel Pembayaran:</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                              Nominal Transfer (Rp) *
+                            </label>
+                            <input
+                              type="number"
+                              value={bamVerifyNominal}
+                              onChange={(e) => setBamVerifyNominal(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 font-mono"
+                              placeholder={selectedStudent ? getTotalBamCost(selectedStudent).toString() : '6670000'}
+                            />
+                            <span className="text-[10px] text-slate-400">
+                              Standar {selectedStudent?.gender === 'Perempuan' ? 'Akhwat (Putri): Rp 6.890.000' : 'Ikhwan (Putra): Rp 6.670.000'}
+                            </span>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                              Tanggal Pembayaran *
+                            </label>
+                            <input
+                              type="date"
+                              value={bamVerifyDate}
+                              onChange={(e) => setBamVerifyDate(e.target.value)}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-medium text-slate-800"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                              Kategori Angsuran *
+                            </label>
+                            <select
+                              value={bamVerifyType}
+                              onChange={(e) => setBamVerifyType(e.target.value as BamInstallmentType)}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-medium text-slate-800 bg-white"
+                            >
+                              <option value="Lunas">Lunas (100%)</option>
+                              <option value="Cicilan 1">Cicilan 1</option>
+                              <option value="Cicilan 2">Cicilan 2</option>
+                              <option value="Cicilan 3">Cicilan 3</option>
+                              <option value="Custom">Custom</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                              Catatan Panitia
+                            </label>
+                            <input
+                              type="text"
+                              value={bamVerifyNotes}
+                              onChange={(e) => setBamVerifyNotes(e.target.value)}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-medium text-slate-800"
+                              placeholder="e.g. Pembayaran Lunas via Transfer BSI"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyAndRecordBamPayment(
+                            selectedStudent,
+                            bamVerifyNominal,
+                            bamVerifyDate,
+                            bamVerifyType,
+                            bamVerifyNotes
+                          )}
+                          className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <ShieldCheck className="w-4 h-4 text-blue-100" />
+                          <span>Verifikasi Bukti Transfer & Simpan ke Tabel Pembayaran</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <div className="font-bold text-emerald-800 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Pembayaran BAM Telah Diverifikasi & Masuk Tabel Pembayaran</span>
+                          </div>
+                          <div className="text-emerald-700 text-[11px]">
+                            Nominal: <b className="font-mono">Rp {(selectedStudent.initialPaymentAmount || 0).toLocaleString('id-ID')}</b> | Tanggal: {selectedStudent.initialPaymentDate || '-'}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedStudent(null);
+                            setActiveTab('payment_initial');
+                          }}
+                          className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-[10px] font-bold shadow-sm cursor-pointer"
+                        >
+                          Buka Tabel BAM →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Student Details Grid */}
+                <div className="space-y-3 text-xs">
+                  <div className="font-bold text-slate-800 border-b pb-1">Data Pribadi Calon Murid</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><span className="text-slate-500">NIK:</span> <strong className="font-mono">{selectedStudent.nik || '-'}</strong></div>
+                    <div><span className="text-slate-500">NISN:</span> <strong className="font-mono">{selectedStudent.nisn || '-'}</strong></div>
+                    <div><span className="text-slate-500">Tempat, Tgl Lahir:</span> <strong>{selectedStudent.birthPlace || '-'}, {selectedStudent.birthDate || '-'}</strong></div>
+                    <div><span className="text-slate-500">Agama:</span> <strong>{selectedStudent.religion || 'Islam'}</strong></div>
+                    <div><span className="text-slate-500">No. WhatsApp/HP:</span> <strong className="font-mono">{selectedStudent.phone || '-'}</strong></div>
+                    <div><span className="text-slate-500">Email Akun:</span> <strong>{selectedStudent.userEmail || '-'}</strong></div>
+                    <div className="col-span-2"><span className="text-slate-500">Alamat Rumah:</span> <strong>{selectedStudent.address || '-'}</strong></div>
+                  </div>
+
+                  <div className="font-bold text-slate-800 border-b pb-1 pt-2">Data Sekolah Asal & Orang Tua</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><span className="text-slate-500">Sekolah Asal:</span> <strong>{selectedStudent.previousSchoolName || '-'}</strong></div>
+                    <div><span className="text-slate-500">NPSN Asal:</span> <strong className="font-mono">{selectedStudent.previousSchoolNpsn || '-'}</strong></div>
+                    <div><span className="text-slate-500">Nama Ayah:</span> <strong>{selectedStudent.fatherName || '-'}</strong> ({selectedStudent.fatherPhone || '-'})</div>
+                    <div><span className="text-slate-500">Pekerjaan Ayah:</span> <strong>{selectedStudent.fatherJob || '-'}</strong></div>
+                    <div><span className="text-slate-500">Nama Ibu:</span> <strong>{selectedStudent.motherName || '-'}</strong> ({selectedStudent.motherPhone || '-'})</div>
+                    <div><span className="text-slate-500">Pekerjaan Ibu:</span> <strong>{selectedStudent.motherJob || '-'}</strong></div>
+                    <div><span className="text-slate-500">Nilai CBT / Tes:</span> <strong className="font-mono">{selectedStudent.finalScore !== undefined ? selectedStudent.finalScore : '-'}</strong></div>
+                    <div><span className="text-slate-500">Penempatan Kelas:</span> <strong className="text-blue-700">{selectedStudent.assignedClassName || '-'}</strong></div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
+
+      {/* MODAL PENGUMUMAN WHATSAPP ORANG TUA / WALI */}
+      {waModalStudent && (
+        <WhatsAppAnnouncementModal
+          isOpen={!!waModalStudent}
+          onClose={() => setWaModalStudent(null)}
+          student={waModalStudent}
+          schoolInfo={schoolInfo}
+          defaultTemplateKey={waDefaultTemplate}
+          onSentSuccess={() => {
+            setWaSentHistory(getWhatsAppSentHistory());
+          }}
+        />
+      )}
     </div>
   );
 };

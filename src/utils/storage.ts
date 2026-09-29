@@ -1,13 +1,11 @@
 import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion, FormPaymentRecord, BamPaymentRecord } from '../types';
 import { initialStudents, initialClassQuotas, initialCostBreakdowns, initialSchoolInfo, initialTestSchedules, initialGasConfig, initialWebsiteConfig, initialQuestionBank, initialFormPayments, initialBamPayments } from '../data/initialData';
 import {
-  syncStudentsToSupabase,
   fetchStudentsFromSupabase,
   syncClassQuotasToSupabase,
   fetchClassQuotasFromSupabase,
   syncSchoolInfoToSupabase,
   fetchSchoolInfoFromSupabase,
-  syncUsersDbToSupabase,
   fetchUsersDbFromSupabase,
   deleteUserFromSupabase,
   purgeApplicantDataFromSupabase,
@@ -27,7 +25,7 @@ import {
   fetchWebsiteConfigFromSupabase,
 } from './supabaseClient';
 
-const KEYS = {
+export const KEYS = {
   STUDENTS: 'spmb_alhadiid_students',
   CLASS_QUOTAS: 'spmb_alhadiid_class_quotas',
   COST_BREAKDOWN: 'spmb_alhadiid_cost_breakdown',
@@ -42,29 +40,37 @@ const KEYS = {
   BAM_PAYMENTS: 'spmb_alhadiid_bam_payments',
 };
 
+const inMemoryStorage: Record<string, string> = {};
+
 export function safeGetItem(key: string): string | null {
   try {
-    if (typeof window === 'undefined' || !window.localStorage) return null;
-    return localStorage.getItem(key);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const val = window.localStorage.getItem(key);
+      if (val !== null) return val;
+    }
   } catch (e) {
     console.warn(`[Storage] safeGetItem error for ${key}:`, e);
-    return null;
   }
+  return inMemoryStorage[key] ?? null;
 }
 
 export function safeSetItem(key: string, value: string): void {
+  inMemoryStorage[key] = value;
   try {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    localStorage.setItem(key, value);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
+    }
   } catch (e) {
     console.warn(`[Storage] safeSetItem error for ${key}:`, e);
   }
 }
 
 export function safeRemoveItem(key: string): void {
+  delete inMemoryStorage[key];
   try {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    localStorage.removeItem(key);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(key);
+    }
   } catch (e) {
     console.warn(`[Storage] safeRemoveItem error for ${key}:`, e);
   }
@@ -73,38 +79,30 @@ export function safeRemoveItem(key: string): void {
 export function getStoredStudents(): StudentData[] {
   const data = safeGetItem(KEYS.STUDENTS);
   if (!data) {
-    safeSetItem(KEYS.STUDENTS, JSON.stringify(initialStudents));
-    syncStudentsToSupabase(initialStudents);
-    return initialStudents;
+    return [];
   }
   try {
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed)) {
-      if (parsed.some((s) => s.id === 'std_001' || s.id === 'std_002' || s.userEmail === 'fathan.alkhatiri@gmail.com')) {
-        const cleaned = parsed.filter((s) => !s.id.startsWith('std_00') && s.userEmail !== 'fathan.alkhatiri@gmail.com');
-        safeSetItem(KEYS.STUDENTS, JSON.stringify(cleaned));
-        syncStudentsToSupabase(cleaned);
-        return cleaned;
-      }
-      return parsed;
+      // Filter out legacy demo student accounts if present
+      const cleaned = parsed.filter((s) => !s.id.startsWith('std_00') && s.userEmail !== 'fathan.alkhatiri@gmail.com');
+      return cleaned;
     }
-    return initialStudents;
+    return [];
   } catch {
-    return initialStudents;
+    return [];
   }
 }
 
 export function saveStudents(students: StudentData[]): void {
   safeSetItem(KEYS.STUDENTS, JSON.stringify(students));
   updateClassQuotaCounts(students);
-  syncStudentsToSupabase(students);
 }
 
 export function getStoredClassQuotas(): ClassQuota[] {
   const data = safeGetItem(KEYS.CLASS_QUOTAS);
   if (!data) {
     safeSetItem(KEYS.CLASS_QUOTAS, JSON.stringify(initialClassQuotas));
-    syncClassQuotasToSupabase(initialClassQuotas);
     return initialClassQuotas;
   }
   try {
@@ -140,7 +138,18 @@ export function getStoredCostBreakdown(): CostBreakdown[] {
   }
   try {
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : initialCostBreakdowns;
+    if (!Array.isArray(parsed) || parsed.length < 10) {
+      safeSetItem(KEYS.COST_BREAKDOWN, JSON.stringify(initialCostBreakdowns));
+      return initialCostBreakdowns;
+    }
+    // Pastikan setiap item memiliki amountIkhwan dan amountAkhwat terdefinisi
+    const enriched = parsed.map((item, idx) => ({
+      ...item,
+      amountIkhwan: item.amountIkhwan !== undefined ? Number(item.amountIkhwan) : (initialCostBreakdowns[idx]?.amountIkhwan || item.amount),
+      amountAkhwat: item.amountAkhwat !== undefined ? Number(item.amountAkhwat) : (initialCostBreakdowns[idx]?.amountAkhwat || item.amount),
+      amount: item.amountIkhwan !== undefined ? Number(item.amountIkhwan) : item.amount,
+    }));
+    return enriched;
   } catch {
     return initialCostBreakdowns;
   }
@@ -155,7 +164,6 @@ export function getStoredSchoolInfo(): SchoolInfo {
   const data = safeGetItem(KEYS.SCHOOL_INFO);
   if (!data) {
     safeSetItem(KEYS.SCHOOL_INFO, JSON.stringify(initialSchoolInfo));
-    syncSchoolInfoToSupabase(initialSchoolInfo);
     return initialSchoolInfo;
   }
   try {
@@ -174,6 +182,25 @@ export function getStoredSchoolInfo(): SchoolInfo {
 export function saveSchoolInfo(info: SchoolInfo): void {
   safeSetItem(KEYS.SCHOOL_INFO, JSON.stringify(info));
   syncSchoolInfoToSupabase(info);
+
+  // Sync to kepsek account if headmasterName is set
+  if (info.headmasterName && info.headmasterName.trim()) {
+    try {
+      const usersData = safeGetItem(KEYS.USERS_DB);
+      if (usersData) {
+        const users: UserAccount[] = JSON.parse(usersData);
+        if (Array.isArray(users)) {
+          const kepsekIdx = users.findIndex(u => u.role === 'kepsek' || u.id === 'usr_kepsek');
+          if (kepsekIdx >= 0 && users[kepsekIdx].name !== info.headmasterName.trim()) {
+            users[kepsekIdx].name = info.headmasterName.trim();
+            cacheUsersDbOnly(users);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export function getStoredTestSchedules(): TestSchedule[] {
@@ -239,6 +266,13 @@ export function getCurrentUser(): UserAccount | null {
   try {
     const user: UserAccount = JSON.parse(data);
     if (!user || typeof user !== 'object') return null;
+
+    // Invalidate deleted / tombstoned student sessions
+    if (user.id?.startsWith('std_00') || user.email === 'fathan.alkhatiri@gmail.com') {
+      safeRemoveItem(KEYS.CURRENT_USER);
+      return null;
+    }
+
     // Enforce super_admin role for superadmin email/username
     if (user.email?.toLowerCase() === 'superadmin@alhadiid.sch.id' || user.username?.toLowerCase() === 'superadmin' || user.id === 'usr_superadmin') {
       user.role = 'super_admin';
@@ -254,12 +288,12 @@ export function getCurrentUser(): UserAccount | null {
 }
 
 export function setCurrentUser(user: UserAccount | null): void {
-  if (!user) {
+  if (!user || user.id?.startsWith('std_00') || user.email === 'fathan.alkhatiri@gmail.com') {
     safeRemoveItem(KEYS.CURRENT_USER);
   } else {
     // Ensure plaintext password is never stored in current user session
     const sanitizedUser = { ...user };
-    delete sanitizedUser.password;
+    delete (sanitizedUser as any).password;
     safeSetItem(KEYS.CURRENT_USER, JSON.stringify(sanitizedUser));
   }
 }
@@ -267,101 +301,125 @@ export function setCurrentUser(user: UserAccount | null): void {
 export function getUsersDb(): UserAccount[] {
   const data = safeGetItem(KEYS.USERS_DB);
   if (!data) {
-    const defaultUsers: UserAccount[] = [
-      { id: 'usr_superadmin', name: 'Super Admin SPMB', email: 'superadmin@alhadiid.sch.id', username: 'superadmin', phone: '081234567899', role: 'super_admin', password: 'superadmin123', status: 'active', createdAt: '2027-01-01' },
-      { id: 'usr_admin', name: 'Panitia SPMB', email: 'admin@alhadiid.sch.id', username: 'admin', phone: '081234567890', role: 'admin', password: 'admin123', status: 'active', createdAt: '2027-01-01' },
-      { id: 'usr_kepsek', name: 'Dr. H. Ahmad Dahlan, M.Pd.', email: 'kepsek@alhadiid.sch.id', username: 'kepsek', phone: '081299887766', role: 'kepsek', password: 'kepsek123', status: 'active', createdAt: '2027-01-01' },
-    ];
-    safeSetItem(KEYS.USERS_DB, JSON.stringify(defaultUsers));
-    syncUsersDbToSupabase(defaultUsers);
-    return defaultUsers;
+    return [];
   }
   try {
-    let parsed: UserAccount[] = JSON.parse(data);
+    const parsed: UserAccount[] = JSON.parse(data);
     if (!Array.isArray(parsed)) return [];
 
-    // Filter out legacy demo student accounts
-    if (parsed.some((u) => u.id === 'std_001' || u.id === 'std_002' || u.email === 'fathan.alkhatiri@gmail.com')) {
-      parsed = parsed.filter((u) => u.id !== 'std_001' && u.id !== 'std_002' && u.email !== 'fathan.alkhatiri@gmail.com');
-      safeSetItem(KEYS.USERS_DB, JSON.stringify(parsed));
-      syncUsersDbToSupabase(parsed);
-    }
-
-    let updated = false;
-
-    // Ensure super_admin account exists
-    if (!parsed.some(u => u.role === 'super_admin' || u.email === 'superadmin@alhadiid.sch.id' || u.username === 'superadmin')) {
-      parsed.unshift({ id: 'usr_superadmin', name: 'Super Admin SPMB', email: 'superadmin@alhadiid.sch.id', username: 'superadmin', phone: '081234567899', role: 'super_admin', password: 'superadmin123', status: 'active', createdAt: '2027-01-01' });
-      updated = true;
-    }
-
-    // Ensure admin account exists
-    if (!parsed.some(u => u.role === 'admin' || u.email === 'admin@alhadiid.sch.id')) {
-      parsed.push({ id: 'usr_admin', name: 'Panitia SPMB', email: 'admin@alhadiid.sch.id', username: 'admin', phone: '081234567890', role: 'admin', password: 'admin123', status: 'active', createdAt: '2027-01-01' });
-      updated = true;
-    }
-
-    // Ensure kepsek account exists
-    if (!parsed.some(u => u.role === 'kepsek' || u.email === 'kepsek@alhadiid.sch.id')) {
-      parsed.push({ id: 'usr_kepsek', name: 'Dr. H. Ahmad Dahlan, M.Pd.', email: 'kepsek@alhadiid.sch.id', username: 'kepsek', phone: '081299887766', role: 'kepsek', password: 'kepsek123', status: 'active', createdAt: '2027-01-01' });
-      updated = true;
-    }
-
-    const result = parsed.map(u => {
-      const copy = { ...u };
-      if (copy.id === 'usr_superadmin' || copy.email?.toLowerCase() === 'superadmin@alhadiid.sch.id' || copy.username?.toLowerCase() === 'superadmin') {
-        if (copy.role !== 'super_admin') {
-          copy.role = 'super_admin';
-          updated = true;
-        }
-      }
-      if (!copy.password) {
-        if (copy.role === 'super_admin') copy.password = 'superadmin123';
-        else if (copy.role === 'admin') copy.password = 'admin123';
-        else if (copy.role === 'kepsek') copy.password = 'kepsek123';
-        else if (copy.role === 'student') copy.password = '123456';
-        updated = true;
-      }
-      if (copy.status === 'disabled' && copy.role === 'super_admin') {
-        copy.status = 'active';
-        updated = true;
-      }
-      if (copy.role === 'student' && !copy.username) {
-        copy.username = copy.email ? copy.email.split('@')[0].toLowerCase() : `user_${copy.id}`;
-        updated = true;
-      }
-      return copy;
-    });
-    if (updated) {
-      safeSetItem(KEYS.USERS_DB, JSON.stringify(result));
-    }
-    return result;
+    // Filter out legacy demo student accounts & sanitize passwords
+    return parsed
+      .filter((u) => !u.id.startsWith('std_00') && u.email !== 'fathan.alkhatiri@gmail.com')
+      .map(u => {
+        const copy = { ...u };
+        delete (copy as any).password;
+        return copy;
+      });
   } catch {
     return [];
   }
 }
 
+export function cacheUsersDbOnly(users: UserAccount[]): void {
+  // Sanitize passwords before saving to local storage
+  const sanitized = users.map(u => {
+    const copy = { ...u };
+    delete (copy as any).password;
+    return copy;
+  });
+  safeSetItem(KEYS.USERS_DB, JSON.stringify(sanitized));
+}
+
+/**
+ * @deprecated Use UserProfileRepository for server persistence and cacheUsersDbOnly for local cache.
+ */
 export function saveUsersDb(users: UserAccount[]): void {
-  safeSetItem(KEYS.USERS_DB, JSON.stringify(users));
-  syncUsersDbToSupabase(users);
+  // Pure local read cache - NO server push!
+  cacheUsersDbOnly(users);
 }
 
 export function saveUserToDb(user: UserAccount): void {
   const db = getUsersDb();
   const index = db.findIndex(u => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
+  const cleanUser = { ...user };
+  delete (cleanUser as any).password;
   if (index >= 0) {
-    db[index] = { ...db[index], ...user };
+    db[index] = { ...db[index], ...cleanUser };
   } else {
-    db.push(user);
+    db.push(cleanUser);
   }
-  saveUsersDb(db);
+  cacheUsersDbOnly(db);
+
+  // If user is kepsek, sync name to schoolInfo
+  if (user.role === 'kepsek' && user.name && user.name.trim()) {
+    try {
+      const schoolInfo = getStoredSchoolInfo();
+      if (schoolInfo && schoolInfo.headmasterName !== user.name.trim()) {
+        schoolInfo.headmasterName = user.name.trim();
+        saveSchoolInfo(schoolInfo);
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Mengambil akun Kepala Sekolah yang terdaftar di sistem.
+ */
+export function getKepalaSekolahAccount(): UserAccount | null {
+  try {
+    const users = getUsersDb();
+    // 1. Akun dengan role 'kepsek'
+    const kepsek = users.find(u => u.role === 'kepsek');
+    if (kepsek && kepsek.name && kepsek.name.trim()) return kepsek;
+
+    // 2. Akun sesi login aktif jika sedang login sebagai kepsek
+    const current = getCurrentUser();
+    if (current && current.role === 'kepsek' && current.name && current.name.trim()) return current;
+
+    // 3. Fallback pencarian berdasarkan email atau ID
+    const byEmailOrId = users.find(u => u.email?.toLowerCase().includes('kepsek') || u.id === 'usr_kepsek');
+    if (byEmailOrId && byEmailOrId.name && byEmailOrId.name.trim()) return byEmailOrId;
+  } catch (err) {
+    console.error('Gagal mengambil data akun kepala sekolah:', err);
+  }
+  return null;
+}
+
+/**
+ * Mengambil nama resmi Kepala Sekolah yang selalu disesuaikan dengan akun kepala sekolah.
+ */
+export function getKepalaSekolahName(schoolInfo?: SchoolInfo): string {
+  // 1. Prioritas utama: Nama resmi dari Akun Kepala Sekolah (role: 'kepsek')
+  const kepsekAccount = getKepalaSekolahAccount();
+  if (kepsekAccount?.name && kepsekAccount.name.trim()) {
+    return kepsekAccount.name.trim();
+  }
+
+  // 2. Prioritas kedua: Nama dari konfigurasi schoolInfo jika ada
+  if (schoolInfo?.headmasterName && schoolInfo.headmasterName.trim()) {
+    return schoolInfo.headmasterName.trim();
+  }
+
+  // 3. Prioritas ketiga: Nama dari storage school info
+  try {
+    const stored = getStoredSchoolInfo();
+    if (stored?.headmasterName && stored.headmasterName.trim()) {
+      return stored.headmasterName.trim();
+    }
+  } catch {
+    // ignore
+  }
+
+  return 'Dr. H. Ahmad Dahlan, M.Pd.';
 }
 
 export function deleteUserFromDb(userId: string): void {
   const db = getUsersDb();
   const target = db.find(u => u.id === userId);
   const filtered = db.filter(u => u.id !== userId);
-  saveUsersDb(filtered);
+  cacheUsersDbOnly(filtered);
 
   // If user was a student, also remove from students list
   if (target?.role === 'student' || target?.email) {
@@ -378,46 +436,9 @@ export function deleteUserFromDb(userId: string): void {
   deleteUserFromSupabase(userId, target?.email);
 }
 
-export function ensureStudentDataExists(user: UserAccount, existingStudents: StudentData[]): StudentData[] {
-  if (user.role !== 'student') return existingStudents;
-  const found = existingStudents.find(
-    s => s.id === user.id || s.userEmail.toLowerCase() === user.email.toLowerCase()
-  );
-  if (found) return existingStudents;
-
-  const newStudent: StudentData = {
-    id: user.id || `std_${Date.now()}`,
-    registrationNumber: user.registrationNumber || `SPMB2027${Math.floor(1000 + Math.random() * 9000)}`,
-    status: 'draft',
-    userEmail: user.email.toLowerCase(),
-    createdAt: user.createdAt || new Date().toISOString(),
-    fullName: user.name,
-    phone: user.phone || '081234567890',
-    formPaymentAmount: 200000,
-    formPaymentStatus: 'unpaid',
-    nik: '',
-    birthPlace: 'Bogor',
-    birthDate: '2013-01-01',
-    gender: 'Laki-laki',
-    religion: 'Islam',
-    address: 'Cileungsi, Bogor',
-    subdistrict: 'Cileungsi',
-    city: 'Kabupaten Bogor',
-    province: 'Jawa Barat',
-    previousSchoolName: '',
-    fatherName: '',
-    fatherPhone: user.phone || '081234567890',
-    fatherEducation: 'S1',
-    initialPaymentStatus: 'unpaid',
-    initialPaymentAmount: 8500000,
-    motherName: '',
-    motherJob: 'Ibu Rumah Tangga',
-    motherPhone: user.phone || '081234567890',
-  };
-
-  const updated = [newStudent, ...existingStudents];
-  saveStudents(updated);
-  return updated;
+export function ensureStudentDataExists(_user: UserAccount, existingStudents: StudentData[]): StudentData[] {
+  // Neutralized per Security Audit Tahap 3: Do not resurrect or auto-generate dummy student records
+  return existingStudents;
 }
 
 export async function loadDataFromSupabase(): Promise<{
@@ -459,17 +480,18 @@ export async function loadDataFromSupabase(): Promise<{
     fetchWebsiteConfigFromSupabase(),
   ]);
 
-  if (students && students.length > 0) safeSetItem(KEYS.STUDENTS, JSON.stringify(students));
-  if (classQuotas && classQuotas.length > 0) safeSetItem(KEYS.CLASS_QUOTAS, JSON.stringify(classQuotas));
-  if (schoolInfo) safeSetItem(KEYS.SCHOOL_INFO, JSON.stringify(schoolInfo));
-  if (usersDb && usersDb.length > 0) safeSetItem(KEYS.USERS_DB, JSON.stringify(usersDb));
-  if (formPayments && formPayments.length > 0) safeSetItem(KEYS.FORM_PAYMENTS, JSON.stringify(formPayments));
-  if (bamPayments && bamPayments.length > 0) safeSetItem(KEYS.BAM_PAYMENTS, JSON.stringify(bamPayments));
-  if (costBreakdown && costBreakdown.length > 0) safeSetItem(KEYS.COST_BREAKDOWN, JSON.stringify(costBreakdown));
-  if (testSchedules && testSchedules.length > 0) safeSetItem(KEYS.TEST_SCHEDULES, JSON.stringify(testSchedules));
-  if (questionBank && questionBank.length > 0) safeSetItem(KEYS.QUESTION_BANK, JSON.stringify(questionBank));
-  if (gasConfig) safeSetItem(KEYS.GAS_CONFIG, JSON.stringify(gasConfig));
-  if (websiteConfig) safeSetItem(KEYS.WEBSITE_CONFIG, JSON.stringify(websiteConfig));
+  // Treat empty arrays as valid responses from Supabase (Tahap 2 requirement)
+  if (students !== null) safeSetItem(KEYS.STUDENTS, JSON.stringify(students));
+  if (classQuotas !== null) safeSetItem(KEYS.CLASS_QUOTAS, JSON.stringify(classQuotas));
+  if (schoolInfo !== null) safeSetItem(KEYS.SCHOOL_INFO, JSON.stringify(schoolInfo));
+  if (usersDb !== null) safeSetItem(KEYS.USERS_DB, JSON.stringify(usersDb));
+  if (formPayments !== null) safeSetItem(KEYS.FORM_PAYMENTS, JSON.stringify(formPayments));
+  if (bamPayments !== null) safeSetItem(KEYS.BAM_PAYMENTS, JSON.stringify(bamPayments));
+  if (costBreakdown !== null) safeSetItem(KEYS.COST_BREAKDOWN, JSON.stringify(costBreakdown));
+  if (testSchedules !== null) safeSetItem(KEYS.TEST_SCHEDULES, JSON.stringify(testSchedules));
+  if (questionBank !== null) safeSetItem(KEYS.QUESTION_BANK, JSON.stringify(questionBank));
+  if (gasConfig !== null) safeSetItem(KEYS.GAS_CONFIG, JSON.stringify(gasConfig));
+  if (websiteConfig !== null) safeSetItem(KEYS.WEBSITE_CONFIG, JSON.stringify(websiteConfig));
 
   return {
     students,
@@ -517,22 +539,17 @@ export function saveWebsiteConfig(config: WebsiteConfig): void {
 export function getStoredFormPayments(): FormPaymentRecord[] {
   const data = safeGetItem(KEYS.FORM_PAYMENTS);
   if (!data) {
-    safeSetItem(KEYS.FORM_PAYMENTS, JSON.stringify(initialFormPayments));
-    return initialFormPayments;
+    return [];
   }
   try {
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed)) {
-      if (parsed.some((f) => f.id === 'fpay_001' || f.studentId === 'std_001')) {
-        const cleaned = parsed.filter((f) => !f.id.startsWith('fpay_00') && f.studentId !== 'std_001');
-        safeSetItem(KEYS.FORM_PAYMENTS, JSON.stringify(cleaned));
-        return cleaned;
-      }
-      return parsed;
+      const cleaned = parsed.filter((f) => !f.id.startsWith('fpay_00') && f.studentId !== 'std_001');
+      return cleaned;
     }
-    return initialFormPayments;
+    return [];
   } catch {
-    return initialFormPayments;
+    return [];
   }
 }
 
@@ -544,22 +561,17 @@ export function saveFormPayments(records: FormPaymentRecord[]): void {
 export function getStoredBamPayments(): BamPaymentRecord[] {
   const data = safeGetItem(KEYS.BAM_PAYMENTS);
   if (!data) {
-    safeSetItem(KEYS.BAM_PAYMENTS, JSON.stringify(initialBamPayments));
-    return initialBamPayments;
+    return [];
   }
   try {
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed)) {
-      if (parsed.some((b) => b.id === 'bampay_001' || b.studentId === 'std_001')) {
-        const cleaned = parsed.filter((b) => !b.id.startsWith('bampay_00') && b.studentId !== 'std_001');
-        safeSetItem(KEYS.BAM_PAYMENTS, JSON.stringify(cleaned));
-        return cleaned;
-      }
-      return parsed;
+      const cleaned = parsed.filter((b) => !b.id.startsWith('bampay_00') && b.studentId !== 'std_001');
+      return cleaned;
     }
-    return initialBamPayments;
+    return [];
   } catch {
-    return initialBamPayments;
+    return [];
   }
 }
 
@@ -617,8 +629,7 @@ export function importBackupData(backupJson: string): { success: boolean; messag
       saveGasConfig(data.gasConfig);
     }
     if (data.usersDb && Array.isArray(data.usersDb)) {
-      safeSetItem(KEYS.USERS_DB, JSON.stringify(data.usersDb));
-      syncUsersDbToSupabase(data.usersDb);
+      cacheUsersDbOnly(data.usersDb);
     }
     if (data.websiteConfig && typeof data.websiteConfig === 'object') {
       saveWebsiteConfig(data.websiteConfig);
@@ -648,8 +659,7 @@ export function purgeApplicantData(): void {
   // Clear student accounts from USERS_DB
   const users = getUsersDb();
   const nonStudentUsers = users.filter((u) => u.role !== 'student');
-  safeSetItem(KEYS.USERS_DB, JSON.stringify(nonStudentUsers));
-  syncUsersDbToSupabase(nonStudentUsers);
+  cacheUsersDbOnly(nonStudentUsers);
 
   // Reset filled count on class quotas
   const quotas = getStoredClassQuotas();
@@ -674,7 +684,6 @@ export function resetAllDataToDefault(): void {
   safeRemoveItem(KEYS.CURRENT_USER);
 
   // Sync reset to Supabase
-  syncStudentsToSupabase(initialStudents);
   syncClassQuotasToSupabase(initialClassQuotas);
   syncSchoolInfoToSupabase(initialSchoolInfo);
 }

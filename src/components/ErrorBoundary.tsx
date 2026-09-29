@@ -11,10 +11,13 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = {
-    hasError: false,
-    error: null,
-  };
+  constructor(props: Props) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null,
+    };
+  }
 
   public static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
@@ -25,11 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   private handleReset = () => {
-    try {
-      localStorage.clear();
-    } catch (e) {
-      console.warn('Could not clear localStorage:', e);
-    }
+    this.setState({ hasError: false, error: null });
     window.location.reload();
   };
 

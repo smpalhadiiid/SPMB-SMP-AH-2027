@@ -41,14 +41,14 @@ export const CbtBankSoalManager: React.FC = () => {
   const queryClient = useQueryClient();
 
   // Queries
-  const { data: soalList = [], isLoading: isSoalLoading, isFetching, refetch } = useQuery({
+  const { data: soalList = [], isLoading: isSoalLoading, isFetching, refetch } = useQuery<CbtSoal[]>({
     queryKey: ['cbt_soal'],
-    queryFn: fetchSoalSupabase,
+    queryFn: () => fetchSoalSupabase(false),
   });
 
   const { data: categories = [] } = useQuery({
     queryKey: ['cbt_kategori'],
-    queryFn: fetchKategoriSoalSupabase,
+    queryFn: () => fetchKategoriSoalSupabase(),
   });
 
   // State

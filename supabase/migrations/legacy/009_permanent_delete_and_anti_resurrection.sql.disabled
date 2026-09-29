@@ -1,0 +1,293 @@
+-- =====================================================================
+-- 009_permanent_delete_and_anti_resurrection.sql
+-- SOLUSI PERMANEN: DATA YANG DIHAPUS DARI SUPABASE TIDAK KEMBALI SAAT RELOAD
+-- SPMB SMP Al-Hadiid Cileungsi
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- 1. TABEL TOMBSTONE / BLACKLIST (public.deleted_records)
+-- Menyimpan riwayat ID record yang telah dihapus permanen oleh admin.
+-- Mencegah client / local storage / background sync memulihkan data lama.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.deleted_records (
+    id VARCHAR(100) PRIMARY KEY,
+    table_name VARCHAR(100) NOT NULL,
+    record_identifier VARCHAR(255),
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    deleted_by VARCHAR(100) DEFAULT 'admin_spmb',
+    reason TEXT DEFAULT 'Dihapus permanen oleh Admin SPMB'
+);
+
+CREATE INDEX IF NOT EXISTS idx_deleted_records_table ON public.deleted_records(table_name);
+CREATE INDEX IF NOT EXISTS idx_deleted_records_deleted_at ON public.deleted_records(deleted_at DESC);
+
+-- Berikan izin akses penuh ke tabel deleted_records
+GRANT ALL ON public.deleted_records TO anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------
+-- 2. TRIGGER FUNCTION: ANTI-RESURRECTION
+-- Jika ada client atau sinkronisasi lama yang mencoba meng-insert ulang
+-- record dengan ID yang sudah dihapus, trigger ini akan membatalkannya.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.prevent_deleted_record_resurrection()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM public.deleted_records 
+        WHERE id = NEW.id AND table_name = TG_TABLE_NAME
+    ) THEN
+        RAISE EXCEPTION 'Record ID [%] pada tabel [%] telah dihapus secara permanen dan ditolak untuk dimasukkan kembali.', NEW.id, TG_TABLE_NAME;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- Pasang trigger anti-resurrect pada tabel students dan users
+DROP TRIGGER IF EXISTS trg_prevent_students_resurrect ON public.students;
+CREATE TRIGGER trg_prevent_students_resurrect
+BEFORE INSERT OR UPDATE ON public.students
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_deleted_record_resurrection();
+
+DROP TRIGGER IF EXISTS trg_prevent_users_resurrect ON public.users;
+CREATE TRIGGER trg_prevent_users_resurrect
+BEFORE INSERT OR UPDATE ON public.users
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_deleted_record_resurrection();
+
+-- ---------------------------------------------------------------------
+-- 3. TRIGGER FUNCTION: OTOMATIS BERSIHKAN SPMB_APP_STATE & USER TERKAIT
+-- Ketika data murid dihapus di tabel students:
+-- a. Otomatis catat ID ke tabel deleted_records
+-- b. Otomatis hapus akun di public.users
+-- c. Otomatis hapus pembayaran di public.payments
+-- d. Otomatis buang murid dari JSON array di tabel spmb_app_state
+--    sehingga saat halaman web di-reload, data tidak pernah bangkit lagi!
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.on_student_deleted_cleanup()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_state_payload jsonb;
+    v_updated_payload jsonb;
+BEGIN
+    -- a. Catat ID ke tabel blacklist deleted_records
+    INSERT INTO public.deleted_records (id, table_name, record_identifier, deleted_at, reason)
+    VALUES (
+        OLD.id, 
+        'students', 
+        COALESCE(OLD.registration_number, OLD.full_name, OLD.id), 
+        NOW(), 
+        'Dihapus permanen dari tabel students'
+    )
+    ON CONFLICT (id) DO NOTHING;
+
+    -- b. Hapus akun pengguna terkait di public.users (jika ada)
+    DELETE FROM public.users WHERE id = OLD.id OR email = OLD.user_email;
+
+    -- c. Hapus data pembayaran terkait di public.payments (jika ada)
+    DELETE FROM public.payments WHERE student_id = OLD.id;
+
+    -- d. Bersihkan cache JSON snapshot di spmb_app_state (kunci: 'students')
+    SELECT payload INTO v_state_payload 
+    FROM public.spmb_app_state 
+    WHERE key = 'students' LIMIT 1;
+
+    IF v_state_payload IS NOT NULL AND jsonb_typeof(v_state_payload) = 'array' THEN
+        SELECT jsonb_agg(elem) INTO v_updated_payload
+        FROM jsonb_array_elements(v_state_payload) elem
+        WHERE (elem->>'id') != OLD.id 
+          AND (elem->>'registrationNumber') != COALESCE(OLD.registration_number, '');
+
+        UPDATE public.spmb_app_state
+        SET payload = COALESCE(v_updated_payload, '[]'::jsonb),
+            updated_at = NOW()
+        WHERE key = 'students';
+    END IF;
+
+    -- e. Bersihkan cache kunci alternatif jika ada
+    SELECT payload INTO v_state_payload 
+    FROM public.spmb_app_state 
+    WHERE key = 'spmb_alhadiid_students' LIMIT 1;
+
+    IF v_state_payload IS NOT NULL AND jsonb_typeof(v_state_payload) = 'array' THEN
+        SELECT jsonb_agg(elem) INTO v_updated_payload
+        FROM jsonb_array_elements(v_state_payload) elem
+        WHERE (elem->>'id') != OLD.id 
+          AND (elem->>'registrationNumber') != COALESCE(OLD.registration_number, '');
+
+        UPDATE public.spmb_app_state
+        SET payload = COALESCE(v_updated_payload, '[]'::jsonb),
+            updated_at = NOW()
+        WHERE key = 'spmb_alhadiid_students';
+    END IF;
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_on_student_deleted_cleanup ON public.students;
+CREATE TRIGGER trg_on_student_deleted_cleanup
+AFTER DELETE ON public.students
+FOR EACH ROW
+EXECUTE FUNCTION public.on_student_deleted_cleanup();
+
+-- ---------------------------------------------------------------------
+-- 4. PERBAIKAN FOREIGN KEY CASCADE
+-- Menjamin saat data induk dihapus, seluruh tabel relasi terhapus otomatis
+-- tanpa menyebabkan 'violates foreign key constraint'
+-- ---------------------------------------------------------------------
+DO $$
+BEGIN
+    -- Pastikan relasi payments -> students menggunakan CASCADE
+    IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'payments_student_id_fkey' AND table_name = 'payments'
+    ) THEN
+        ALTER TABLE public.payments DROP CONSTRAINT payments_student_id_fkey;
+        ALTER TABLE public.payments 
+            ADD CONSTRAINT payments_student_id_fkey 
+            FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE;
+    END IF;
+
+    -- Pastikan relasi jawaban_peserta -> students menggunakan CASCADE (jika ada)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'jawaban_peserta_student_id_fkey' AND table_name = 'jawaban_peserta'
+    ) THEN
+        ALTER TABLE public.jawaban_peserta DROP CONSTRAINT jawaban_peserta_student_id_fkey;
+        ALTER TABLE public.jawaban_peserta 
+            ADD CONSTRAINT jawaban_peserta_student_id_fkey 
+            FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE;
+    END IF;
+
+    -- Pastikan relasi hasil_ujian -> students menggunakan CASCADE (jika ada)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'hasil_ujian_student_id_fkey' AND table_name = 'hasil_ujian'
+    ) THEN
+        ALTER TABLE public.hasil_ujian DROP CONSTRAINT hasil_ujian_student_id_fkey;
+        ALTER TABLE public.hasil_ujian 
+            ADD CONSTRAINT hasil_ujian_student_id_fkey 
+            FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- 5. FUNCTION / RPC: delete_student_permanent(p_student_id TEXT)
+-- Fungsi SQL yang dapat dipanggil langsung dari Supabase RPC atau SQL Editor
+-- untuk menghapus satu pendaftar hingga ke akar-akarnya.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.delete_student_permanent(p_student_id TEXT)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_found_name TEXT;
+    v_user_email TEXT;
+BEGIN
+    -- Ambil informasi siswa sebelum dihapus
+    SELECT full_name, user_email INTO v_found_name, v_user_email
+    FROM public.students
+    WHERE id = p_student_id OR registration_number = p_student_id
+    LIMIT 1;
+
+    -- 1. Catat ke tabel blacklist deleted_records
+    INSERT INTO public.deleted_records (id, table_name, record_identifier, deleted_at, reason)
+    VALUES (
+        p_student_id, 
+        'students', 
+        COALESCE(v_found_name, p_student_id), 
+        NOW(), 
+        'Dihapus permanen via RPC delete_student_permanent'
+    )
+    ON CONFLICT (id) DO NOTHING;
+
+    -- 2. Hapus jawaban & hasil ujian CBT (jika ada)
+    DELETE FROM public.jawaban_peserta WHERE student_id = p_student_id;
+    DELETE FROM public.hasil_ujian WHERE student_id = p_student_id;
+
+    -- 3. Hapus data pembayaran
+    DELETE FROM public.payments WHERE student_id = p_student_id;
+
+    -- 4. Hapus data siswa dari tabel students
+    DELETE FROM public.students WHERE id = p_student_id OR registration_number = p_student_id;
+
+    -- 5. Hapus akun pengguna di public.users
+    IF v_user_email IS NOT NULL THEN
+        DELETE FROM public.users WHERE email = v_user_email OR id = p_student_id;
+    ELSE
+        DELETE FROM public.users WHERE id = p_student_id;
+    END IF;
+
+    -- 6. Bersihkan dari spmb_app_state (key: students)
+    UPDATE public.spmb_app_state
+    SET payload = (
+        SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+        FROM jsonb_array_elements(payload) elem
+        WHERE (elem->>'id') != p_student_id 
+          AND (elem->>'registrationNumber') != p_student_id
+    ),
+    updated_at = NOW()
+    WHERE key = 'students';
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'Data calon murid berhasil dihapus permanen dan tidak akan kembali lagi saat reload.',
+        'student_id', p_student_id,
+        'student_name', v_found_name
+    );
+END;
+$$;
+
+-- Berikan hak eksekusi function ke anon, authenticated, dan service_role
+GRANT EXECUTE ON FUNCTION public.delete_student_permanent(TEXT) TO anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------
+-- 6. PERBAIKAN KEBIJAKAN RLS (ROW LEVEL SECURITY) UNTUK DELETE
+-- Memastikan query DELETE dari frontend maupun API tidak diblokir secara diam-diam
+-- ---------------------------------------------------------------------
+GRANT ALL ON public.students TO anon, authenticated, service_role;
+GRANT ALL ON public.users TO anon, authenticated, service_role;
+GRANT ALL ON public.payments TO anon, authenticated, service_role;
+GRANT ALL ON public.spmb_app_state TO anon, authenticated, service_role;
+
+-- Kebijakan DELETE eksplisit untuk tabel students
+DROP POLICY IF EXISTS "Allow delete students" ON public.students;
+CREATE POLICY "Allow delete students" ON public.students
+FOR DELETE TO public
+USING (true);
+
+-- Kebijakan DELETE eksplisit untuk tabel users
+DROP POLICY IF EXISTS "Allow delete users" ON public.users;
+CREATE POLICY "Allow delete users" ON public.users
+FOR DELETE TO public
+USING (true);
+
+-- Kebijakan DELETE eksplisit untuk tabel payments
+DROP POLICY IF EXISTS "Allow delete payments" ON public.payments;
+CREATE POLICY "Allow delete payments" ON public.payments
+FOR DELETE TO public
+USING (true);
+
+-- ---------------------------------------------------------------------
+-- 7. PEMBERSIHAN SEKARANG (ONE-TIME CLEANUP):
+-- Membersihkan data di spmb_app_state agar sisa-sisa ID yang sudah tidak ada
+-- di tabel public.students dibuang dari array JSON.
+-- ---------------------------------------------------------------------
+UPDATE public.spmb_app_state
+SET payload = (
+    SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+    FROM jsonb_array_elements(spmb_app_state.payload) elem
+    WHERE elem->>'id' IN (SELECT id FROM public.students)
+),
+updated_at = NOW()
+WHERE key = 'students';
+
+-- Selesai! Script ini menjamin data yang dihapus tidak akan pernah muncul kembali saat browser di-reload.

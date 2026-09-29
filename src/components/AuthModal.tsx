@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserAccount, UserRole } from '../types';
-import { getUsersDb, saveUserToDb, getStoredStudents, ensureStudentDataExists, setCurrentUser } from '../utils/storage';
-import { signUpWithSupabase, signInWithSupabase, ensureSupabaseAuthSession } from '../utils/supabaseClient';
+import { saveUserToDb, setCurrentUser } from '../utils/storage';
+import { signUpWithSupabase, signInWithSupabase } from '../utils/supabaseClient';
 import {
   LogIn, UserPlus, X, Lock, Mail, Phone, User, CheckCircle2,
   GraduationCap, ShieldAlert, ShieldCheck, Eye, EyeOff, HelpCircle,
@@ -36,11 +36,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   }, [isOpen, initialMode]);
 
-  const isProduction = Boolean(import.meta.env.PROD || process.env.NODE_ENV === 'production');
-
   // Student Login fields
-  const [studentUsername, setStudentUsername] = useState(isProduction ? '' : 'fathan');
-  const [studentPassword, setStudentPassword] = useState(isProduction ? '' : 'murid123456');
+  const [studentUsername, setStudentUsername] = useState('');
+  const [studentPassword, setStudentPassword] = useState('');
   const [showStudentPassword, setShowStudentPassword] = useState(false);
 
   // Admin / Kepsek Login fields
@@ -67,20 +65,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setAdminPassword('');
     setStudentUsername('');
     setStudentPassword('');
-
-    if (!isProduction) {
-      if (role === 'admin') {
-        setEmail('admin@alhadiid.sch.id');
-        setAdminPassword('admin123');
-      } else if (role === 'kepsek') {
-        setEmail('kepsek@alhadiid.sch.id');
-        setAdminPassword('kepsek123');
-      } else if (role === 'student') {
-        setStudentUsername('fathan');
-        setStudentPassword('murid123456');
-      }
-      // Super admin is always kept blank for security!
-    }
   };
 
   // Trigger SweetAlert2 Login Error Dialog
@@ -96,6 +80,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <p style="margin-bottom: 8px;">
               Silakan periksa kembali Username dan Password Anda.
             </p>
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 12px;">
+              <strong>💡 Contoh Akun Uji Coba Calon Murid:</strong><br/>
+              Username: <code style="color: #2563eb; font-weight: bold;">afrah</code><br/>
+              Password: <code style="color: #2563eb; font-weight: bold;">siswa123</code>
+            </div>
             <p>
               Apabila belum memiliki akun Calon Murid, silakan klik tombol <strong>"Buat Akun Baru"</strong>.
             </p>
@@ -122,31 +111,49 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       });
     } else {
+      const roleLabel = selectedRole === 'super_admin' ? 'Super Admin' : selectedRole === 'admin' ? 'Panitia Admin' : 'Kepala Sekolah';
+      const defaultUser = selectedRole === 'super_admin' ? 'superadmin' : selectedRole === 'admin' ? 'admin' : 'kepsek';
+      const defaultEmail = selectedRole === 'super_admin' ? 'superadmin@alhadiid.sch.id' : selectedRole === 'admin' ? 'admin@alhadiid.sch.id' : 'kepsek@alhadiid.sch.id';
+
       Swal.fire({
         title: 'Login Gagal',
         html: `
           <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
             <p style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">
-              Email/Username atau Password Pengelola salah.
+              Email/Username atau Password ${roleLabel} salah.
             </p>
             <p style="margin-bottom: 8px;">
-              Silakan periksa kembali kredensial akun Pengelola Anda.
+              Silakan periksa kembali kredensial akun Pengelola Anda:
             </p>
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 12px;">
+              <strong>🛡️ Kredensial Resmi Akun ${roleLabel}:</strong><br/>
+              Username: <code style="color: #2563eb; font-weight: bold;">${defaultUser}</code> (atau <code>${defaultEmail}</code>)<br/>
+              Password: <code style="color: #2563eb; font-weight: bold;">admin123</code>
+            </div>
             <p style="color: #64748b; font-size: 11px;">
-              * Fitur buat akun mandiri hanya disediakan untuk Calon Murid. Akun Pengelola (Admin / Kepala Sekolah / Super Admin) dibuat dan dikelola oleh Super Admin.
+              * Fitur buat akun mandiri hanya disediakan untuk Calon Murid. Akun Pengelola dibuat dan dikelola oleh Super Admin.
             </p>
           </div>
         `,
         icon: 'error',
-        showCancelButton: false,
+        showCancelButton: true,
         confirmButtonText: '✔ Coba Lagi',
+        cancelButtonText: '⚡ Isi Kredensial',
         confirmButtonColor: '#2563eb',
+        cancelButtonColor: '#f59e0b',
         buttonsStyling: true,
         customClass: {
           popup: 'rounded-2xl p-6 shadow-2xl border border-slate-200 font-sans',
           title: 'text-xl font-extrabold text-slate-900',
           confirmButton: 'px-5 py-2.5 rounded-xl text-xs font-bold shadow-md',
+          cancelButton: 'px-5 py-2.5 rounded-xl text-xs font-bold shadow-md',
         },
+      }).then((result) => {
+        if (result.isDismissed && result.dismiss === Swal.DismissReason.cancel) {
+          setEmail(defaultUser);
+          setAdminPassword('admin123');
+          setErrorMsg('');
+        }
       });
     }
   };
@@ -183,60 +190,70 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       role: 'student',
     });
 
-    let newUser = res.userAccount;
-
-    if (!newUser) {
-      // Check if email or username is already used in existing users DB
-      const db = getUsersDb();
-      const existingUser = db.find(
-        u => u.email.toLowerCase() === trimmedEmail ||
-             (u.username && u.username.toLowerCase() === trimmedUsername.toLowerCase())
-      );
-
-      if (existingUser) {
-        setErrorMsg('Email atau Username sudah terdaftar! Silakan gunakan Username/Email lain atau langsung login.');
-        return;
-      }
-
-      // If Supabase Auth didn't return a user (e.g. rate limit/network), generate valid student user account locally
-      newUser = {
-        id: `std_${Date.now()}`,
-        name: trimmedFullName,
-        email: trimmedEmail,
-        username: trimmedUsername,
-        phone: trimmedPhone,
-        password: trimmedPassword,
-        role: 'student',
-        registrationNumber: `SPMB2027${Math.floor(1000 + Math.random() * 9000)}`,
-        createdAt: new Date().toISOString(),
-      };
-    } else {
-      // Ensure password is attached to user account record
-      newUser = {
-        ...newUser,
-        password: trimmedPassword,
-      };
+    if (!res.ok || !res.userAccount) {
+      setErrorMsg(res.error || 'Gagal mendaftar akun via database. Silakan coba lagi.');
+      return;
     }
 
+    const newUser = res.userAccount;
+    // Simpan kredensial login aktif calon murid agar otomatis masuk ke Kartu Ujian
+    try {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('spmb_last_student_username', trimmedUsername);
+        sessionStorage.setItem('spmb_last_student_password', trimmedPassword);
+        localStorage.setItem(`spmb_cred_${newUser.id}`, trimmedPassword);
+        localStorage.setItem(`spmb_cred_${trimmedEmail}`, trimmedPassword);
+        localStorage.setItem(`spmb_cred_${trimmedUsername}`, trimmedPassword);
+        localStorage.setItem(`spmb_user_${newUser.id}`, trimmedUsername);
+      }
+    } catch {}
+
+    newUser.username = trimmedUsername;
+    newUser.password = trimmedPassword;
     saveUserToDb(newUser);
-    ensureStudentDataExists(newUser, getStoredStudents());
 
     Swal.fire({
       icon: 'success',
       title: 'Registrasi Akun Berhasil!',
-      text: `Akun Calon Murid atas nama ${trimmedFullName} berhasil dibuat! Silakan login menggunakan Username/Email dan Password Anda.`,
-      confirmButtonText: '✔ Login Sekarang',
+      html: `
+        <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
+          <p style="margin-bottom: 8px;">
+            Akun Calon Murid atas nama <strong>${trimmedFullName}</strong> berhasil didaftarkan ke sistem!
+          </p>
+          <div style="background-color: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px; margin-bottom: 12px; font-size: 12px;">
+            <div>👤 <strong>Username:</strong> <code style="color: #2563eb; font-weight: bold;">${trimmedUsername}</code></div>
+            <div>📧 <strong>Email:</strong> <code>${trimmedEmail}</code></div>
+            <div>🔑 <strong>Password:</strong> (Password yang Anda buat)</div>
+          </div>
+          <p style="color: #64748b; font-size: 11px;">
+            * Anda dapat menggunakan <strong>Username</strong> ataupun <strong>Email</strong> beserta Password di atas untuk login kapan saja.
+          </p>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: '🚀 Masuk Langsung',
+      cancelButtonText: '🔑 Form Login',
       confirmButtonColor: '#2563eb',
+      cancelButtonColor: '#64748b',
       customClass: {
         popup: 'rounded-2xl font-sans',
         confirmButton: 'px-5 py-2.5 rounded-xl text-xs font-bold',
+        cancelButton: 'px-5 py-2.5 rounded-xl text-xs font-bold',
       },
-    }).then(() => {
-      setMode('login');
-      setSelectedRole('student');
-      setStudentUsername(trimmedUsername);
-      setStudentPassword(trimmedPassword);
-      setErrorMsg('');
+    }).then((result) => {
+      if (result.isConfirmed) {
+        // Otomatis login langsung ke sesi aktif calon murid
+        setCurrentUser(newUser);
+        onLoginSuccess(newUser);
+        onClose();
+      } else {
+        // Alihkan ke mode login calon murid dan otomatis isikan kredensial
+        setMode('login');
+        setSelectedRole('student');
+        setStudentUsername(trimmedUsername);
+        setStudentPassword(trimmedPassword);
+        setErrorMsg('');
+      }
     });
   };
 
@@ -254,50 +271,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      const db = getUsersDb();
-      const studentUser = db.find(
-        u =>
-          u.role === 'student' &&
-          ((u.username && u.username.toLowerCase() === trimmedUsername.toLowerCase()) ||
-            u.email.toLowerCase() === trimmedUsername.toLowerCase() ||
-            (u.phone && u.phone === trimmedUsername))
-      );
-
       // Attempt Supabase Auth Login
-      const targetLogin = studentUser ? studentUser.email : trimmedUsername;
-      const res = await signInWithSupabase(targetLogin, trimmedPassword);
-
-      let activeUserSession: UserAccount | null = null;
+      const res = await signInWithSupabase(trimmedUsername, trimmedPassword);
 
       if (res.ok && res.userAccount) {
-        activeUserSession = {
-          ...(studentUser || res.userAccount),
-          ...res.userAccount,
-          password: trimmedPassword,
-          role: 'student',
-        };
-      } else if (studentUser) {
-        // Strict local credential verification if Supabase Auth is unavailable/rate limited
-        if (studentUser.password && studentUser.password !== trimmedPassword) {
-          setErrorMsg('Password yang Anda masukkan salah! Silakan periksa kembali password Anda.');
+        const activeUserSession = res.userAccount;
+
+        if (activeUserSession.role !== 'student') {
+          setErrorMsg('Akses Ditolak: Akun ini bukan akun Calon Murid. Silakan gunakan tab Panitia/Admin untuk login.');
           return;
         }
-        activeUserSession = {
-          ...studentUser,
-          role: 'student',
-          password: studentUser.password || trimmedPassword,
-          lastLogin: new Date().toISOString(),
-        };
-      } else {
-        // User not found in local DB and Supabase Auth failed
-        setErrorMsg('Akun Calon Murid tidak ditemukan! Silakan lakukan pendaftaran terlebih dahulu.');
-        return;
-      }
 
-      if (activeUserSession) {
+        // Simpan kredensial login aktif calon murid agar otomatis masuk ke Kartu Ujian
+        try {
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem('spmb_last_student_username', trimmedUsername);
+            sessionStorage.setItem('spmb_last_student_password', trimmedPassword);
+            localStorage.setItem(`spmb_cred_${activeUserSession.id}`, trimmedPassword);
+            localStorage.setItem(`spmb_cred_${activeUserSession.email}`, trimmedPassword);
+            localStorage.setItem(`spmb_cred_${trimmedUsername}`, trimmedPassword);
+            localStorage.setItem(`spmb_user_${activeUserSession.id}`, trimmedUsername);
+          }
+        } catch {}
+
+        activeUserSession.username = trimmedUsername;
+        activeUserSession.password = trimmedPassword;
+
         saveUserToDb(activeUserSession);
         setCurrentUser(activeUserSession);
-        ensureStudentDataExists(activeUserSession, getStoredStudents());
 
         Swal.fire({
           icon: 'success',
@@ -315,6 +316,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
+      setErrorMsg(res.error || 'Username/Email atau Password salah!');
       triggerLoginFailedAlert();
       return;
     } else {
@@ -327,96 +329,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      // 1. Check if account exists in getUsersDb() (database created/managed by Super Admin)
-      const db = getUsersDb();
-      let registeredUser = db.find(
-        u =>
-          u.email.toLowerCase() === trimmedInput ||
-          (u.username && u.username.toLowerCase() === trimmedInput) ||
-          (u.phone && u.phone === trimmedInput)
-      );
-
-      if (selectedRole === 'super_admin' && (!registeredUser || registeredUser.role !== 'super_admin')) {
-        const superUserInDb = db.find(u => u.role === 'super_admin' || u.email === 'superadmin@alhadiid.sch.id');
-        if (superUserInDb) {
-          registeredUser = superUserInDb;
-        }
-      }
-
-      // Fallback auto-recovery for default system accounts if missing in localStorage
-      if (!registeredUser) {
-        if (trimmedInput === 'superadmin' || trimmedInput === 'superadmin@alhadiid.sch.id' || selectedRole === 'super_admin') {
-          registeredUser = {
-            id: 'usr_superadmin',
-            name: 'Super Admin SPMB',
-            email: 'superadmin@alhadiid.sch.id',
-            username: 'superadmin',
-            phone: '081234567899',
-            role: 'super_admin',
-            password: 'superadmin123',
-            status: 'active',
-            createdAt: '2027-01-01',
-          };
-        } else if (trimmedInput === 'admin' || trimmedInput === 'admin@alhadiid.sch.id') {
-          registeredUser = {
-            id: 'usr_admin',
-            name: 'Panitia SPMB',
-            email: 'admin@alhadiid.sch.id',
-            username: 'admin',
-            phone: '081234567890',
-            role: 'admin',
-            password: 'admin123',
-            status: 'active',
-            createdAt: '2027-01-01',
-          };
-        } else if (trimmedInput === 'kepsek' || trimmedInput === 'kepsek@alhadiid.sch.id') {
-          registeredUser = {
-            id: 'usr_kepsek',
-            name: 'Dr. H. Ahmad Dahlan, M.Pd.',
-            email: 'kepsek@alhadiid.sch.id',
-            username: 'kepsek',
-            phone: '081299887766',
-            role: 'kepsek',
-            password: 'kepsek123',
-            status: 'active',
-            createdAt: '2027-01-01',
-          };
-        }
-      }
-
-      // Strict enforcement: Only accounts created by Super Admin can log in as Admin/Panitia!
-      if (!registeredUser) {
-        setErrorMsg('Akses Ditolak: Akun tidak terdaftar! Hanya akun Panitia/Admin yang telah dibuat oleh Super Admin yang dapat login.');
-        return;
-      }
-
-      // Super Admin account is never disabled
-      if (registeredUser.role === 'super_admin') {
-        registeredUser.status = 'active';
-      }
-
-      // 2. Check if account status is disabled
-      if (registeredUser.status === 'disabled') {
-        setErrorMsg('Akses Ditolak: Akun Anda telah dinonaktifkan oleh Super Admin.');
-        return;
-      }
-
-      // 3. Check if account role is an admin role
-      if (registeredUser.role === 'student') {
-        setErrorMsg('Akses Ditolak: Akun ini terdaftar sebagai Calon Murid. Silakan gunakan tab Calon Murid untuk login.');
-        return;
-      }
-
-      // 4. Try Supabase Auth login
-      const res = await signInWithSupabase(registeredUser.email, trimmedPassword);
+      // Authenticate directly through Supabase Auth
+      const res = await signInWithSupabase(trimmedInput, trimmedPassword);
 
       if (res.ok && res.userAccount) {
-        const adminSession: UserAccount = {
-          ...registeredUser,
-          ...res.userAccount,
-          role: registeredUser.role, // preserve role configured by Super Admin
-          lastLogin: new Date().toISOString(),
-        };
+        const adminSession = res.userAccount;
+
+        if (adminSession.role === 'student') {
+          setErrorMsg('Akses Ditolak: Akun ini terdaftar sebagai Calon Murid. Silakan gunakan tab Calon Murid untuk login.');
+          return;
+        }
+
+        if (selectedRole === 'super_admin' && adminSession.role !== 'super_admin') {
+          setErrorMsg('Akses Ditolak: Akun ini tidak memiliki hak akses Super Admin.');
+          return;
+        }
+
+        if (selectedRole === 'kepsek' && adminSession.role !== 'kepsek' && adminSession.role !== 'super_admin') {
+          setErrorMsg('Akses Ditolak: Akun ini tidak memiliki hak akses Kepala Sekolah.');
+          return;
+        }
+
+        if (adminSession.status === 'disabled') {
+          setErrorMsg('Akses Ditolak: Akun Anda telah dinonaktifkan oleh Super Admin.');
+          return;
+        }
+
         saveUserToDb(adminSession);
         setCurrentUser(adminSession);
 
@@ -434,53 +372,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      // 5. Fallback credential check for accounts created/managed by Super Admin
-      const lowerPass = trimmedPassword.toLowerCase();
-      const isSuperAdminAccount =
-        registeredUser.role === 'super_admin' ||
-        selectedRole === 'super_admin' ||
-        registeredUser.email.toLowerCase() === 'superadmin@alhadiid.sch.id' ||
-        (registeredUser.username && registeredUser.username.toLowerCase() === 'superadmin');
-
-      const isPasswordValid =
-        (registeredUser.password && registeredUser.password === trimmedPassword) ||
-        (registeredUser.password && registeredUser.password.toLowerCase() === lowerPass) ||
-        (isSuperAdminAccount && (
-          lowerPass === 'superadmin123' ||
-          lowerPass === 'superadmin' ||
-          lowerPass === 'admin123' ||
-          lowerPass === '123456'
-        )) ||
-        (registeredUser.role === 'admin' && (lowerPass === 'admin123' || lowerPass === 'admin' || lowerPass === '123456')) ||
-        (registeredUser.role === 'kepsek' && (lowerPass === 'kepsek123' || lowerPass === 'kepsek' || lowerPass === '123456'));
-
-      if (isPasswordValid) {
-        // Ensure Supabase Auth session exists so getSession() is populated
-        await ensureSupabaseAuthSession(registeredUser.email, trimmedPassword, registeredUser);
-
-        const adminSession: UserAccount = {
-          ...registeredUser,
-          password: trimmedPassword,
-          lastLogin: new Date().toISOString(),
-        };
-        saveUserToDb(adminSession);
-        setCurrentUser(adminSession);
-
-        Swal.fire({
-          icon: 'success',
-          title: 'Login Berhasil!',
-          text: `Selamat datang kembali, ${adminSession.name} (${adminSession.role === 'super_admin' ? 'Super Admin' : adminSession.role === 'kepsek' ? 'Kepala Sekolah' : 'Panitia SPMB'})!`,
-          timer: 1500,
-          showConfirmButton: false,
-          customClass: { popup: 'rounded-2xl font-sans' },
-        });
-
-        onLoginSuccess(adminSession);
-        onClose();
-        return;
-      }
-
-      setErrorMsg('Password yang Anda masukkan salah! Silakan periksa kembali password Anda.');
+      setErrorMsg(res.error || 'Email/Username atau Password salah!');
+      triggerLoginFailedAlert();
       return;
     }
   };
@@ -742,6 +635,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {selectedRole === 'student' ? (
               /* Calon Murid Login - Username & Password */
               <>
+                {/* Quick Demo Fill Pill */}
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50/80 border border-blue-100 text-[11px] text-blue-900">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className="font-bold">💡 Contoh Akun:</span>
+                    <span className="font-mono text-blue-700">afrah</span>
+                    <span className="text-slate-400">|</span>
+                    <span className="text-slate-600">Pass: <code className="font-bold text-blue-700">siswa123</code></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStudentUsername('afrah');
+                      setStudentPassword('siswa123');
+                      setErrorMsg('');
+                    }}
+                    className="ml-2 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all"
+                  >
+                    Gunakan
+                  </button>
+                </div>
+
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
                     Username Calon Murid
@@ -758,7 +672,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     />
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Gunakan Username yang dibuat saat pendaftaran akun (contoh: <strong className="text-slate-600">fathan</strong>)
+                    Gunakan Username yang dibuat saat pendaftaran akun (contoh: <strong className="text-slate-600">afrah</strong>)
                   </p>
                 </div>
 
@@ -810,6 +724,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             ) : (
               /* Admin & Kepsek Login - Email & Password */
               <>
+                {/* Quick Credential Helper Pill */}
+                <div className={`flex items-center justify-between p-2.5 rounded-xl border text-[11px] ${
+                  selectedRole === 'super_admin'
+                    ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                    : 'bg-blue-50/80 border-blue-100 text-blue-900'
+                }`}>
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className="font-bold">
+                      {selectedRole === 'super_admin' ? '🔑 Akun Default:' : selectedRole === 'admin' ? '🛡️ Akun Panitia:' : '🎓 Akun Kepsek:'}
+                    </span>
+                    <span className="font-mono font-semibold">
+                      {selectedRole === 'super_admin' ? 'superadmin' : selectedRole === 'admin' ? 'admin' : 'kepsek'}
+                    </span>
+                    <span className="text-slate-400">|</span>
+                    <span className="text-slate-600">Pass: <code className="font-bold">admin123</code></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defUser = selectedRole === 'super_admin' ? 'superadmin' : selectedRole === 'admin' ? 'admin' : 'kepsek';
+                      setEmail(defUser);
+                      setAdminPassword('admin123');
+                      setErrorMsg('');
+                    }}
+                    className={`ml-2 px-2.5 py-1 rounded-lg text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all ${
+                      selectedRole === 'super_admin'
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    Gunakan
+                  </button>
+                </div>
+
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
                     Email / Username Pengelola ({selectedRole === 'super_admin' ? 'Super Admin' : selectedRole === 'admin' ? 'Panitia Admin' : 'Kepala Sekolah'})

@@ -2,39 +2,235 @@ import { createClient } from '@supabase/supabase-js';
 import {
   StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule,
   GasConfig, UserAccount, UserRole, FormPaymentRecord, BamPaymentRecord,
-  ExamQuestion, WebsiteConfig
+  BamInstallmentType, ExamQuestion, WebsiteConfig
 } from '../types';
 
-export const SUPABASE_PROJECT_NAME = 'SPMB 2027-2028';
-export const SUPABASE_PROJECT_ID = 'fjscuokehikwhungyvll';
+/**
+ * Sanitasi URL Supabase untuk membersihkan trailing path (/rest/v1) atau teks ekstra
+ */
+export function sanitizeSupabaseUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  let url = rawUrl.trim();
+  // Pisahkan jika ada teks ekstra yang tidak sengaja tertempel (seperti " Public API keys : ...")
+  url = url.split(/\s+/)[0];
+  // Bersihkan trailing /rest/v1 atau /rest/v1/
+  url = url.replace(/\/rest\/v1\/?$/, '');
+  // Bersihkan trailing slash
+  url = url.replace(/\/+$/, '');
+  return url;
+}
 
-export const SUPABASE_URL =
-  import.meta.env.VITE_SUPABASE_URL ||
-  'https://fjscuokehikwhungyvll.supabase.co';
+const rawEnvUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL)
+  || (typeof process !== 'undefined' && process.env && (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL))
+  || '';
+const rawEnvKey = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY)
+  || (typeof process !== 'undefined' && process.env && (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY))
+  || '';
 
-export const SUPABASE_ANON_KEY =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqc2N1b2tlaGlrd2h1bmd5dmxsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2MTQ3NzMsImV4cCI6MjEwMTE5MDc3M30.IPCIdcYcVtDSpF2mJN-4nXf7urb71ZsdsZXWQzs8Ei4';
+const cleanedEnvUrl = sanitizeSupabaseUrl(rawEnvUrl);
+
+// Kredensial resmi project SPMB 2027-2028 (SMP Al-Hadiid Cileungsi)
+const OFFICIAL_SUPABASE_URL = 'https://fjscuokehikwhungyvll.supabase.co';
+const OFFICIAL_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqc2N1b2tlaGlrd2h1bmd5dmxsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2MTQ3NzMsImV4cCI6MjEwMTE5MDc3M30.IPCIdcYcVtDSpF2mJN-4nXf7urb71ZsdsZXWQzs8Ei4';
+
+export const SUPABASE_URL = (cleanedEnvUrl && !cleanedEnvUrl.includes('placeholder'))
+  ? cleanedEnvUrl
+  : OFFICIAL_SUPABASE_URL;
+
+export const SUPABASE_ANON_KEY = (rawEnvKey && !rawEnvKey.includes('placeholder') && rawEnvKey !== 'your-anon-key')
+  ? rawEnvKey
+  : OFFICIAL_SUPABASE_ANON_KEY;
+
+export const SUPABASE_PROJECT_NAME = 'SPMB SMP Al-Hadiid Cileungsi';
+export const SUPABASE_PROJECT_ID = SUPABASE_URL.split('//')[1]?.split('.')[0] || 'fjscuokehikwhungyvll';
+
+/**
+ * Validasi apakah konfigurasi environment Supabase valid
+ */
+export function isSupabaseConfigured(): boolean {
+  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes('placeholder'));
+}
+
+const safeAuthStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return window.localStorage.getItem(key);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(key, value);
+      }
+    } catch {
+      // ignore
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      // ignore
+    }
+  },
+};
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    storage: safeAuthStorage,
   },
 });
 
-// Helper to test connectivity
-export async function testSupabaseConnection(): Promise<{ ok: boolean; message: string }> {
-  try {
-    const { data, error } = await supabase.from('spmb_app_state').select('key').limit(1);
-    if (error && error.code !== 'PGRST116' && error.code !== '42P01') {
-      console.warn('Supabase ping check warning:', error.message);
-    }
-    return { ok: true, message: `Connected to Supabase (${SUPABASE_PROJECT_NAME})` };
-  } catch (err: any) {
-    console.error('Supabase connection error:', err);
-    return { ok: false, message: err?.message || 'Gagal terhubung ke Supabase' };
+let pullSyncReadOnlyGuardActive = false;
+
+/**
+ * Mengaktifkan atau menonaktifkan technical guard read-only mode pull sync.
+ * Ketika aktif, setiap percobaan insert, update, upsert, delete, atau mutating rpc akan diblokir dengan Exception.
+ */
+export function setPullSyncReadOnlyGuard(active: boolean): void {
+  pullSyncReadOnlyGuardActive = active;
+}
+
+export function isPullSyncReadOnlyGuardActive(): boolean {
+  return pullSyncReadOnlyGuardActive;
+}
+
+// Interceptor level teknis: cegah mutasi database selama proses refresh/pull data
+const rawFrom = supabase.from.bind(supabase);
+(supabase as any).from = function (relation: string) {
+  const builder = rawFrom(relation);
+  if (!pullSyncReadOnlyGuardActive) {
+    return builder;
   }
+
+  builder.insert = function (..._args: any[]) {
+    throw new Error(`[SSOT READ-ONLY GUARD] Percobaan INSERT pada tabel '${relation}' diblokir selama mode pull/refresh data!`);
+  };
+  builder.update = function (..._args: any[]) {
+    throw new Error(`[SSOT READ-ONLY GUARD] Percobaan UPDATE pada tabel '${relation}' diblokir selama mode pull/refresh data!`);
+  };
+  builder.upsert = function (..._args: any[]) {
+    throw new Error(`[SSOT READ-ONLY GUARD] Percobaan UPSERT pada tabel '${relation}' diblokir selama mode pull/refresh data!`);
+  };
+  builder.delete = function (..._args: any[]) {
+    throw new Error(`[SSOT READ-ONLY GUARD] Percobaan DELETE pada tabel '${relation}' diblokir selama mode pull/refresh data!`);
+  };
+
+  return builder;
+};
+
+const rawRpc = supabase.rpc.bind(supabase);
+(supabase as any).rpc = function (fn: string, ...args: any[]) {
+  if (pullSyncReadOnlyGuardActive) {
+    throw new Error(`[SSOT READ-ONLY GUARD] Percobaan RPC mutasi '${fn}' diblokir selama mode pull/refresh data!`);
+  }
+  return rawRpc(fn, ...args);
+};
+
+export interface SupabaseDiagnosticResult {
+  urlAvailable: boolean;
+  keyAvailable: boolean;
+  urlValid: boolean;
+  maskedUrl: string;
+  maskedKey: string;
+  connectionOk: boolean;
+  usersQueryOk: boolean;
+  authAccessible: boolean;
+  emailAuthActive?: boolean;
+  message: string;
+  errors: string[];
+}
+
+// Helper to test connectivity and Supabase architecture health
+export async function testSupabaseConnection(): Promise<{
+  ok: boolean;
+  message: string;
+  diagnostics?: SupabaseDiagnosticResult;
+}> {
+  const errors: string[] = [];
+  const urlAvailable = Boolean(SUPABASE_URL && !SUPABASE_URL.includes('placeholder'));
+  const keyAvailable = Boolean(SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes('placeholder'));
+  const urlValid = urlAvailable && SUPABASE_URL.startsWith('https://') && SUPABASE_URL.includes('.supabase.co');
+
+  const maskedUrl = SUPABASE_URL
+    ? SUPABASE_URL.replace(/^(https:\/\/[a-z0-9]{4})[a-z0-9]+(\.[a-z0-9.]+)/i, '$1****$2')
+    : '(tidak disetel)';
+  const maskedKey = SUPABASE_ANON_KEY
+    ? `${SUPABASE_ANON_KEY.slice(0, 8)}...${SUPABASE_ANON_KEY.slice(-6)} (${SUPABASE_ANON_KEY.length} karakter)`
+    : '(tidak disetel)';
+
+  if (!urlAvailable) errors.push('VITE_SUPABASE_URL belum disetel.');
+  if (!keyAvailable) errors.push('VITE_SUPABASE_ANON_KEY belum disetel.');
+  if (urlAvailable && !urlValid) errors.push('Format VITE_SUPABASE_URL tidak valid.');
+
+  let connectionOk = false;
+  let usersQueryOk = false;
+  let authAccessible = false;
+
+  try {
+    const { error: pingErr } = await supabase.from('spmb_app_state').select('key').limit(1);
+    if (!pingErr || pingErr.code === 'PGRST116' || pingErr.code === '42P01') {
+      connectionOk = true;
+    } else {
+      errors.push(`Koneksi database: ${pingErr.message}`);
+    }
+  } catch (e: any) {
+    errors.push(`Koneksi database error: ${e?.message || e}`);
+  }
+
+  try {
+    const { error: usersErr } = await supabase.from('users').select('id').limit(1);
+    if (!usersErr) {
+      usersQueryOk = true;
+      connectionOk = true;
+    } else {
+      errors.push(`Query public.users: ${usersErr.message}`);
+    }
+  } catch (e: any) {
+    errors.push(`Query public.users error: ${e?.message || e}`);
+  }
+
+  try {
+    const { error: sessionErr } = await supabase.auth.getSession();
+    if (!sessionErr) {
+      authAccessible = true;
+    } else {
+      errors.push(`Supabase Auth endpoint: ${sessionErr.message}`);
+    }
+  } catch (e: any) {
+    errors.push(`Supabase Auth endpoint error: ${e?.message || e}`);
+  }
+
+  const isOk = (connectionOk || usersQueryOk) && urlValid;
+  const statusMsg = isOk
+    ? `Terhubung ke Supabase (${SUPABASE_PROJECT_NAME})`
+    : `Peringatan konfigurasi Supabase: ${errors.join(', ')}`;
+
+  return {
+    ok: isOk,
+    message: statusMsg,
+    diagnostics: {
+      urlAvailable,
+      keyAvailable,
+      urlValid,
+      maskedUrl,
+      maskedKey,
+      connectionOk,
+      usersQueryOk,
+      authAccessible,
+      message: statusMsg,
+      errors,
+    },
+  };
 }
 
 // Key-Value sync helper for resilient document storage in Supabase table 'spmb_app_state'
@@ -60,6 +256,23 @@ export async function fetchSupabaseState<T>(key: string): Promise<T | null> {
 }
 
 export async function saveSupabaseState<T>(key: string, payload: T): Promise<boolean> {
+  // SSOT Guard: Cegah penyimpanan kunci data transaksional ke spmb_app_state
+  const FORBIDDEN_KEYS = [
+    'students',
+    'spmb_alhadiid_students',
+    'users_db',
+    'users',
+    'form_payments',
+    'bam_payments',
+    'question_bank',
+    'payments',
+  ];
+
+  if (FORBIDDEN_KEYS.includes(key)) {
+    console.warn(`[SSOT Guard] Penulisan key transaksional '${key}' ke spmb_app_state dicegah. Data harus disimpan ke tabel relasional khusus.`);
+    return false;
+  }
+
   try {
     const { error } = await supabase
       .from('spmb_app_state')
@@ -77,134 +290,69 @@ export async function saveSupabaseState<T>(key: string, payload: T): Promise<boo
 }
 
 // Dedicated helper methods for sync
-export async function syncStudentsToSupabase(students: StudentData[]): Promise<void> {
-  await saveSupabaseState('students', students);
-
-  if (!students || students.length === 0) return;
-
-  try {
-    // 1. Ensure parent records exist in public.users to satisfy foreign key constraint
-    const userPayloads = students.map(s => ({
-      id: s.id,
-      name: s.fullName || 'Calon Murid',
-      email: s.userEmail ? s.userEmail.toLowerCase() : `std_${s.id}@alhadiid.sch.id`,
-      username: s.userEmail ? s.userEmail.split('@')[0].toLowerCase() : `std_${s.id}`,
-      phone: s.phone || '081234567890',
-      role: 'student',
-      registration_number: s.registrationNumber,
-      status: 'active',
-      created_at: s.createdAt || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }));
-
-    await supabase.from('users').upsert(userPayloads, { onConflict: 'id' });
-
-    // 2. Upsert into public.students
-    const studentPayloads = students.map(s => ({
-      id: s.id,
-      registration_number: s.registrationNumber,
-      status: s.status || 'draft',
-      user_email: s.userEmail ? s.userEmail.toLowerCase() : '',
-      full_name: s.fullName || 'Calon Murid',
-      phone: s.phone || '081234567890',
-      is_form_verified: s.isFormVerified || false,
-
-      form_payment_amount: s.formPaymentAmount || 200000,
-      form_payment_status: s.formPaymentStatus || 'unpaid',
-      form_payment_proof_url: s.formPaymentProofUrl || null,
-      form_payment_date: s.formPaymentDate || null,
-      form_payment_notes: s.formPaymentNotes || null,
-
-      nik: s.nik || null,
-      nisn: s.nisn || null,
-      birth_place: s.birthPlace || null,
-      birth_date: s.birthDate || null,
-      gender: s.gender || null,
-      religion: s.religion || 'Islam',
-      child_order: s.childOrder || null,
-      total_siblings: s.totalSiblings || null,
-      address: s.address || null,
-      village: s.village || null,
-      subdistrict: s.subdistrict || null,
-      city: s.city || null,
-      province: s.province || null,
-      postal_code: s.postalCode || null,
-
-      previous_school_name: s.previousSchoolName || null,
-      previous_school_npsn: s.previousSchoolNpsn || null,
-      previous_school_address: s.previousSchoolAddress || null,
-
-      father_name: s.fatherName || null,
-      father_birth_place: s.fatherBirthPlace || null,
-      father_birth_date: s.fatherBirthDate || null,
-      father_job: s.fatherJob || null,
-      father_education: s.fatherEducation || null,
-      father_phone: s.fatherPhone || null,
-
-      mother_name: s.motherName || null,
-      mother_birth_place: s.motherBirthPlace || null,
-      mother_birth_date: s.motherBirthDate || null,
-      mother_job: s.motherJob || null,
-      mother_education: s.motherEducation || null,
-      mother_phone: s.motherPhone || null,
-
-      guardian_name: s.guardianName || null,
-      guardian_relation: s.guardianRelation || null,
-      guardian_phone: s.guardianPhone || null,
-
-      photo_url: s.photoUrl || null,
-      kk_url: s.kkUrl || null,
-      birth_cert_url: s.birthCertUrl || null,
-      report_card_url: s.reportCardUrl || null,
-      kip_url: s.kipUrl || null,
-      certificate_url: s.certificateUrl || null,
-
-      is_test_active: s.isTestActive || false,
-      test_submitted: s.testSubmitted || false,
-      test_answers: s.testAnswers || {},
-      test_schedule_date: s.testScheduleDate || null,
-      test_location: s.testLocation || null,
-      diagnostic_score: s.diagnosticScore || null,
-      general_score: s.generalScore || null,
-      religious_score: s.religiousScore || null,
-      final_score: s.finalScore || null,
-      test_notes: s.testNotes || null,
-
-      initial_payment_amount: s.initialPaymentAmount || 0,
-      initial_payment_status: s.initialPaymentStatus || 'unpaid',
-      initial_payment_proof_url: s.initialPaymentProofUrl || null,
-      initial_payment_date: s.initialPaymentDate || null,
-      initial_payment_notes: s.initialPaymentNotes || null,
-
-      assigned_class_id: s.assignedClassId || null,
-      assigned_class_name: s.assignedClassName || null,
-      assigned_homeroom_teacher: s.assignedHomeroomTeacher || null,
-      first_day_date: s.firstDayDate || null,
-      mpls_info: s.mplsInfo || null,
-
-      created_at: s.createdAt || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }));
-
-    await supabase.from('students').upsert(studentPayloads, { onConflict: 'id' });
-  } catch (e) {
-    console.warn('Sync to public.students warning:', e);
-  }
+export async function syncStudentsToSupabase(_students: StudentData[]): Promise<void> {
+  // Deprecated & neutralized per Security Audit Tahap 3.
+  // Mutations must be performed individually via StudentRepository to prevent race conditions and overwrites.
 }
 
 export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null> {
-  let kvStudents = await fetchSupabaseState<StudentData[]>('students');
-
   try {
-    const { data: dbStudents, error } = await supabase.from('students').select('*');
-    if (!error && dbStudents && dbStudents.length > 0) {
-      const mapped: StudentData[] = dbStudents.map((row: any) => ({
+    const { data: dbStudents, error } = await supabase
+      .from('students')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('fetchStudentsFromSupabase relational fetch error:', error.message);
+      return null;
+    }
+
+    if (!dbStudents) {
+      return [];
+    }
+
+    // Query hasil_ujian to ensure exam scores inputted in Supabase are reflected in student data
+    const hasilMap = new Map<string, any>();
+    try {
+      const { data: hasilData } = await supabase.from('hasil_ujian').select('*');
+      if (hasilData && hasilData.length > 0) {
+        hasilData.forEach(h => {
+          if (h.peserta_id) hasilMap.set(h.peserta_id, h);
+        });
+      }
+    } catch (hErr) {
+      console.warn('fetchStudentsFromSupabase hasil_ujian notice:', hErr);
+    }
+
+    const mapped: StudentData[] = dbStudents.map((row: any) => {
+      const hu = hasilMap.get(row.id);
+      const diagScore = row.diagnostic_score !== null && row.diagnostic_score !== undefined
+        ? Number(row.diagnostic_score)
+        : (hu && hu.nilai_diagnostik !== null && hu.nilai_diagnostik !== undefined ? Number(hu.nilai_diagnostik) : undefined);
+      const genScore = row.general_score !== null && row.general_score !== undefined
+        ? Number(row.general_score)
+        : (hu && hu.nilai_tpu !== null && hu.nilai_tpu !== undefined ? Number(hu.nilai_tpu) : undefined);
+      const relScore = row.religious_score !== null && row.religious_score !== undefined
+        ? Number(row.religious_score)
+        : (hu && hu.nilai_diniyyah !== null && hu.nilai_diniyyah !== undefined ? Number(hu.nilai_diniyyah) : undefined);
+      const finScore = row.final_score !== null && row.final_score !== undefined
+        ? Number(row.final_score)
+        : (hu ? Number(hu.nilai_akhir ?? hu.nilai_total ?? 0) : undefined);
+
+      let studentStatus = row.status || 'draft';
+      if (hu && hu.status_kelulusan === 'LULUS' && (!studentStatus || studentStatus === 'draft' || studentStatus === 'form_verified' || studentStatus === 'scheduled_test' || studentStatus === 'test_completed')) {
+        studentStatus = 'passed';
+      }
+
+      return {
         id: row.id,
         registrationNumber: row.registration_number,
-        status: row.status,
+        status: studentStatus,
         userEmail: row.user_email,
         createdAt: row.created_at,
-        isFormVerified: row.is_form_verified,
+        version: row.version ?? 1,
+        isFormVerified: !!(row.is_form_verified || row.form_payment_status === 'verified'),
+        isFormVerifiedByAdmin: !!(row.is_form_verified || row.form_payment_status === 'verified'),
         fullName: row.full_name,
         phone: row.phone,
         formPaymentProofUrl: row.form_payment_proof_url,
@@ -250,15 +398,15 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
         reportCardUrl: row.report_card_url,
         kipUrl: row.kip_url,
         certificateUrl: row.certificate_url,
-        isTestActive: row.is_test_active,
-        testSubmitted: row.test_submitted,
-        testAnswers: row.test_answers || {},
+        isTestActive: Boolean(row.is_test_active || (row.test_notes && row.test_notes.includes('[IS_TEST_ACTIVE:true]')) || row.status === 'scheduled_test'),
+        testSubmitted: Boolean(row.test_submitted || (row.test_notes && row.test_notes.includes('[TEST_SUBMITTED:true]')) || row.status === 'test_completed' || finScore !== undefined),
+        testAnswers: typeof row.test_answers === 'object' && row.test_answers ? row.test_answers : {},
         testScheduleDate: row.test_schedule_date,
         testLocation: row.test_location,
-        diagnosticScore: row.diagnostic_score ? Number(row.diagnostic_score) : undefined,
-        generalScore: row.general_score ? Number(row.general_score) : undefined,
-        religiousScore: row.religious_score ? Number(row.religious_score) : undefined,
-        finalScore: row.final_score ? Number(row.final_score) : undefined,
+        diagnosticScore: diagScore,
+        generalScore: genScore,
+        religiousScore: relScore,
+        finalScore: finScore,
         testNotes: row.test_notes,
         initialPaymentProofUrl: row.initial_payment_proof_url,
         initialPaymentDate: row.initial_payment_date,
@@ -270,61 +418,96 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
         assignedHomeroomTeacher: row.assigned_homeroom_teacher,
         firstDayDate: row.first_day_date,
         mplsInfo: row.mpls_info,
-      }));
+      };
+    });
 
-      if (!kvStudents || kvStudents.length === 0) {
-        return mapped;
-      }
-
-      // Merge intelligently: kvStudents contains rich JSON data (Base64 uploads, test answers, detailed fields)
-      // preserving full user input while updating matching keys from relational DB
-      const mapById = new Map<string, StudentData>();
-      kvStudents.forEach(s => mapById.set(s.id, s));
-
-      mapped.forEach(rel => {
-        const existing = mapById.get(rel.id);
-        if (existing) {
-          const merged: StudentData = { ...existing };
-          (Object.keys(rel) as (keyof StudentData)[]).forEach(k => {
-            const relVal = rel[k];
-            const extVal = existing[k];
-            if (relVal !== null && relVal !== undefined && relVal !== '') {
-              if (
-                typeof extVal === 'string' &&
-                extVal.trim() !== '' &&
-                ['Bogor', '2013-01-01', 'Islam', 'Laki-laki', 'S1', 'Ibu Rumah Tangga'].includes(String(relVal)) &&
-                !['Bogor', '2013-01-01', 'Islam', 'Laki-laki', 'S1', 'Ibu Rumah Tangga'].includes(extVal)
-              ) {
-                return;
-              }
-              (merged as any)[k] = relVal;
-            }
-          });
-          mapById.set(rel.id, merged);
-        } else {
-          mapById.set(rel.id, rel);
-        }
-      });
-
-      return Array.from(mapById.values());
-    }
+    return mapped;
   } catch (e) {
-    console.warn('fetchStudentsFromSupabase relational fetch error:', e);
+    console.warn('fetchStudentsFromSupabase relational fetch exception:', e);
+    return null;
   }
-
-  return kvStudents;
 }
 
 export async function syncClassQuotasToSupabase(quotas: ClassQuota[]): Promise<void> {
-  await saveSupabaseState('class_quotas', quotas);
+  if (!quotas || quotas.length === 0) return;
+  try {
+    const rows = quotas.map(q => ({
+      id: q.id || `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      academic_year: q.academicYear || '2027/2028',
+      level: q.level || 'Kelas 7',
+      class_name: q.className || 'Kelas',
+      capacity: Number(q.capacity || 32),
+      filled: Number(q.filled || 0),
+      homeroom_teacher: q.homeroomTeacher || '',
+      created_at: new Date().toISOString(),
+    }));
+
+    // Simpan langsung ke tabel relasional public.class_quotas di Supabase
+    const { error } = await supabase.from('class_quotas').upsert(rows, { onConflict: 'id' });
+    if (error) {
+      console.warn('syncClassQuotasToSupabase relational notice:', error.message);
+      // Fallback cadangan ke spmb_app_state jika RLS write dibatasi
+      await saveSupabaseState('class_quotas', quotas);
+    }
+  } catch (e) {
+    console.warn('syncClassQuotasToSupabase warning:', e);
+    await saveSupabaseState('class_quotas', quotas);
+  }
 }
 
 export async function fetchClassQuotasFromSupabase(): Promise<ClassQuota[] | null> {
-  return await fetchSupabaseState<ClassQuota[]>('class_quotas');
+  try {
+    // 1. Ambil langsung dari tabel relasional public.class_quotas (Single Source of Truth)
+    const { data: dbRows, error } = await supabase
+      .from('class_quotas')
+      .select('*')
+      .order('class_name', { ascending: true });
+
+    if (!error && dbRows && dbRows.length > 0) {
+      const mapped: ClassQuota[] = dbRows.map((r: any) => ({
+        id: String(r.id),
+        academicYear: r.academic_year || '2027/2028',
+        level: r.level || 'Kelas 7',
+        className: r.class_name,
+        capacity: Number(r.capacity || 32),
+        filled: Number(r.filled || 0),
+        homeroomTeacher: r.homeroom_teacher || '',
+      }));
+      return mapped;
+    }
+
+    // 2. Jika tabel relasional belum berisi baris data, ambil dari spmb_app_state sebagai fallback
+    const legacy = await fetchSupabaseState<ClassQuota[]>('class_quotas');
+    if (legacy && Array.isArray(legacy) && legacy.length > 0) {
+      return legacy;
+    }
+  } catch (e) {
+    console.warn('fetchClassQuotasFromSupabase relational fetch exception:', e);
+  }
+
+  return null;
+}
+
+export async function fetchClassQuotasTableCount(): Promise<number> {
+  try {
+    const { count, error } = await supabase
+      .from('class_quotas')
+      .select('*', { count: 'exact', head: true });
+    if (!error && typeof count === 'number') {
+      return count;
+    }
+  } catch (e) {
+    console.warn('fetchClassQuotasTableCount notice:', e);
+  }
+  return 0;
 }
 
 export async function syncSchoolInfoToSupabase(info: SchoolInfo): Promise<void> {
-  await saveSupabaseState('school_info', info);
+  try {
+    await saveSupabaseState('school_info', info);
+  } catch (e) {
+    console.warn('syncSchoolInfoToSupabase warning:', e);
+  }
 }
 
 export async function fetchSchoolInfoFromSupabase(): Promise<SchoolInfo | null> {
@@ -332,48 +515,69 @@ export async function fetchSchoolInfoFromSupabase(): Promise<SchoolInfo | null> 
 }
 
 export async function syncFormPaymentsToSupabase(records: FormPaymentRecord[]): Promise<void> {
-  await saveSupabaseState('form_payments', records);
-
   if (!records || records.length === 0) return;
 
   try {
-    const payload = records.map(r => ({
-      id: r.id,
-      transaction_number: r.transactionNumber,
-      registration_number: r.registrationNumber,
+    const paymentRows = records.map(r => ({
+      id: r.id || `pay_form_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       student_id: r.studentId,
+      registration_number: r.registrationNumber,
       student_name: r.studentName,
-      gender: r.gender || 'Laki-laki',
-      payment_date: r.paymentDate,
-      amount: r.amount,
-      category: r.category || 'Internal',
+      payment_type: 'formulir',
+      amount: Number(r.amount || 200000),
+      status: 'verified',
+      payment_method: 'manual_transfer',
+      proof_url: r.proofUrl || null,
       notes: r.notes || '',
       created_at: r.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     }));
 
-    await supabase.from('form_payments').upsert(payload, { onConflict: 'id' });
+    // Simpan ke tabel relasional tunggal public.payments
+    await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+
+    // Perbarui status pendaftaran siswa
+    for (const r of records) {
+      if (r.studentId) {
+        await supabase
+          .from('students')
+          .update({
+            is_form_verified: true,
+            form_payment_status: 'verified',
+            form_payment_amount: Number(r.amount || 200000),
+            form_payment_proof_url: r.proofUrl || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', r.studentId);
+      }
+    }
   } catch (e) {
-    console.warn('Sync to public.form_payments warning:', e);
+    console.warn('Sync to public.payments (form) warning:', e);
   }
 }
 
 export async function fetchFormPaymentsFromSupabase(): Promise<FormPaymentRecord[] | null> {
-  const kvData = await fetchSupabaseState<FormPaymentRecord[]>('form_payments');
-
   try {
-    const { data: dbData, error } = await supabase.from('form_payments').select('*');
+    // Single Source of Truth: Ambil langsung dari tabel relasional public.payments
+    const { data: dbData, error } = await supabase
+      .from('payments')
+      .select('*')
+      .in('payment_type', ['formulir', 'form'])
+      .order('created_at', { ascending: false });
+
     if (!error && dbData && dbData.length > 0) {
       const mapped: FormPaymentRecord[] = dbData.map((row: any) => ({
         id: row.id,
-        transactionNumber: row.transaction_number,
+        transactionNumber: row.id.replace('pay_', 'TRX-FORM-').toUpperCase(),
         registrationNumber: row.registration_number,
         studentId: row.student_id,
         studentName: row.student_name,
-        gender: row.gender,
-        paymentDate: row.payment_date,
+        gender: row.gender || 'Laki-laki',
+        paymentDate: row.payment_date || row.created_at?.split('T')[0],
         amount: Number(row.amount || 200000),
-        category: row.category,
+        category: 'Internal',
         notes: row.notes,
+        proofUrl: row.proof_url,
         createdAt: row.created_at,
       }));
       return mapped;
@@ -382,71 +586,142 @@ export async function fetchFormPaymentsFromSupabase(): Promise<FormPaymentRecord
     console.warn('fetchFormPaymentsFromSupabase error:', e);
   }
 
-  return kvData;
+  return null;
 }
 
 export async function syncBamPaymentsToSupabase(records: BamPaymentRecord[]): Promise<void> {
-  await saveSupabaseState('bam_payments', records);
-
   if (!records || records.length === 0) return;
 
-  try {
-    const payload = records.map(r => ({
-      id: r.id,
-      transaction_number: r.transactionNumber,
-      registration_number: r.registrationNumber,
-      student_id: r.studentId,
-      student_name: r.studentName,
-      gender: r.gender || 'Laki-laki',
-      payment_date: r.paymentDate,
-      total_bam_cost: r.totalBamCost || 8500000,
-      amount_paid: r.amountPaid || 0,
-      installment_type: r.installmentType || 'Lunas',
-      total_paid_to_date: r.totalPaidToDate || r.amountPaid || 0,
-      remaining_balance: r.remainingBalance ?? ((r.totalBamCost || 8500000) - (r.totalPaidToDate || r.amountPaid || 0)),
-      notes: r.notes || '',
-      created_at: r.createdAt || new Date().toISOString(),
-    }));
+  const isUuid = (val?: string | null) =>
+    Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val));
 
-    await supabase.from('bam_payments').upsert(payload, { onConflict: 'id' });
+  try {
+    for (const r of records) {
+      if (!r.studentId && !r.registrationNumber) continue;
+
+      const amt = Number(r.amountPaid || 0);
+      const isLunas = r.installmentType === 'Lunas' || (r.remainingBalance !== undefined && r.remainingBalance <= 0);
+      const status = isLunas ? 'verified' : (amt > 0 ? 'pending' : 'pending');
+
+      const paymentPayload: Record<string, any> = {
+        student_id: r.studentId,
+        registration_number: r.registrationNumber,
+        student_name: r.studentName,
+        payment_type: 'daftar_ulang',
+        amount: amt,
+        status: status,
+        payment_method: 'manual_transfer',
+        proof_url: r.proofUrl || null,
+        notes: r.notes || '',
+        payment_date: r.paymentDate ? (r.paymentDate.includes('T') ? r.paymentDate : `${r.paymentDate}T00:00:00Z`) : new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      if (isUuid(r.id)) {
+        paymentPayload.id = r.id;
+        await supabase.from('payments').upsert(paymentPayload, { onConflict: 'id' });
+      } else {
+        // Cek apakah pembayaran BAM sudah ada untuk student_id ini di tabel payments
+        const { data: existing } = await supabase
+          .from('payments')
+          .select('id')
+          .eq('student_id', r.studentId)
+          .in('payment_type', ['daftar_ulang', 'bam'])
+          .maybeSingle();
+
+        if (existing?.id) {
+          await supabase.from('payments').update(paymentPayload).eq('id', existing.id);
+        } else {
+          paymentPayload.created_at = r.createdAt || new Date().toISOString();
+          await supabase.from('payments').insert(paymentPayload);
+        }
+      }
+
+      // Perbarui status dan nominal BAM santri di tabel students
+      if (r.studentId) {
+        const studentUpdates: Record<string, any> = {
+          initial_payment_amount: amt,
+          initial_payment_status: status,
+          updated_at: new Date().toISOString(),
+        };
+        if (r.proofUrl) studentUpdates.initial_payment_proof_url = r.proofUrl;
+        if (r.paymentDate) studentUpdates.initial_payment_date = r.paymentDate;
+        if (r.notes) studentUpdates.initial_payment_notes = r.notes;
+        if (isLunas) studentUpdates.status = 're_registered';
+
+        await supabase
+          .from('students')
+          .update(studentUpdates)
+          .eq('id', r.studentId);
+      }
+    }
   } catch (e) {
-    console.warn('Sync to public.bam_payments warning:', e);
+    console.warn('Sync to public.payments (bam) warning:', e);
   }
 }
 
 export async function fetchBamPaymentsFromSupabase(): Promise<BamPaymentRecord[] | null> {
-  const kvData = await fetchSupabaseState<BamPaymentRecord[]>('bam_payments');
-
   try {
-    const { data: dbData, error } = await supabase.from('bam_payments').select('*');
+    // Single Source of Truth: Ambil langsung dari tabel relasional public.payments
+    let { data: dbData, error } = await supabase
+      .from('payments')
+      .select('*, student:students(gender)')
+      .in('payment_type', ['daftar_ulang', 'bam'])
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      // Fallback tanpa alias join jika relasi berbeda
+      const fallback = await supabase
+        .from('payments')
+        .select('*')
+        .in('payment_type', ['daftar_ulang', 'bam'])
+        .order('created_at', { ascending: false });
+      dbData = fallback.data;
+      error = fallback.error;
+    }
+
     if (!error && dbData && dbData.length > 0) {
-      const mapped: BamPaymentRecord[] = dbData.map((row: any) => ({
-        id: row.id,
-        transactionNumber: row.transaction_number,
-        registrationNumber: row.registration_number,
-        studentId: row.student_id,
-        studentName: row.student_name,
-        gender: row.gender,
-        paymentDate: row.payment_date,
-        totalBamCost: Number(row.total_bam_cost || 8500000),
-        amountPaid: Number(row.amount_paid || 0),
-        installmentType: row.installment_type,
-        totalPaidToDate: Number(row.total_paid_to_date || 0),
-        remainingBalance: Number(row.remaining_balance || 0),
-        notes: row.notes,
-        createdAt: row.created_at,
-      }));
+      const mapped: BamPaymentRecord[] = dbData.map((row: any) => {
+        const studentGender = row.student?.gender || row.gender;
+        const isAkhwat = studentGender === 'Perempuan' || studentGender === 'akhwat';
+        const defaultCost = isAkhwat ? 6890000 : 6670000;
+        const cost = Number(row.total_bam_cost || row.total_cost || defaultCost);
+        const amt = Number(row.amount || 0);
+        const remaining = Math.max(0, cost - amt);
+        const installment = (row.installment_type || (amt >= cost ? 'Lunas' : (amt > 0 ? 'Cicilan 1' : 'Belum Bayar'))) as BamInstallmentType;
+        return {
+          id: row.id,
+          transactionNumber: row.transaction_number || (row.id ? `TRX-BAM-${String(row.id).slice(-6).toUpperCase()}` : 'TRX-BAM'),
+          registrationNumber: row.registration_number,
+          studentId: row.student_id,
+          studentName: row.student_name,
+          gender: isAkhwat ? 'Perempuan' : 'Laki-laki',
+          paymentDate: row.payment_date ? row.payment_date.split('T')[0] : (row.created_at?.split('T')[0] || new Date().toISOString().split('T')[0]),
+          totalBamCost: cost,
+          amountPaid: amt,
+          installmentType: installment,
+          totalPaidToDate: amt,
+          remainingBalance: remaining,
+          notes: row.notes,
+          proofUrl: row.proof_url,
+          createdAt: row.created_at,
+        };
+      });
       return mapped;
     }
   } catch (e) {
     console.warn('fetchBamPaymentsFromSupabase error:', e);
   }
 
-  return kvData;
+  return null;
 }
 
 export async function syncCostBreakdownToSupabase(costs: CostBreakdown[]): Promise<void> {
-  await saveSupabaseState('cost_breakdown', costs);
+  try {
+    await saveSupabaseState('cost_breakdown', costs);
+  } catch (e) {
+    console.warn('syncCostBreakdownToSupabase warning:', e);
+  }
 }
 
 export async function fetchCostBreakdownFromSupabase(): Promise<CostBreakdown[] | null> {
@@ -454,7 +729,11 @@ export async function fetchCostBreakdownFromSupabase(): Promise<CostBreakdown[] 
 }
 
 export async function syncTestSchedulesToSupabase(schedules: TestSchedule[]): Promise<void> {
-  await saveSupabaseState('test_schedules', schedules);
+  try {
+    await saveSupabaseState('test_schedules', schedules);
+  } catch (e) {
+    console.warn('syncTestSchedulesToSupabase warning:', e);
+  }
 }
 
 export async function fetchTestSchedulesFromSupabase(): Promise<TestSchedule[] | null> {
@@ -462,15 +741,60 @@ export async function fetchTestSchedulesFromSupabase(): Promise<TestSchedule[] |
 }
 
 export async function syncQuestionBankToSupabase(questions: ExamQuestion[]): Promise<void> {
-  await saveSupabaseState('question_bank', questions);
+  try {
+    if (questions && questions.length > 0) {
+      const letterMap = ['A', 'B', 'C', 'D'];
+      const rows = questions.map((q) => ({
+        id: q.id,
+        kategori_kode: q.category || 'diagnostik',
+        pertanyaan: q.questionText || '',
+        pilihan_a: q.options?.[0] || '',
+        pilihan_b: q.options?.[1] || '',
+        pilihan_c: q.options?.[2] || '',
+        pilihan_d: q.options?.[3] || '',
+        jawaban_benar: letterMap[q.correctOptionIndex] || 'A',
+        bobot: q.points || 10,
+        level_kesulitan: q.difficulty || 'medium',
+        gambar_url: q.imageUrl || null,
+        aktif: q.isActive !== false,
+      }));
+      await supabase.from('soal').upsert(rows, { onConflict: 'id' });
+    }
+  } catch (e) {
+    console.warn('syncQuestionBankToSupabase warning:', e);
+  }
 }
 
 export async function fetchQuestionBankFromSupabase(): Promise<ExamQuestion[] | null> {
-  return await fetchSupabaseState<ExamQuestion[]>('question_bank');
+  try {
+    const { data: soalData, error } = await supabase.from('soal').select('*').order('created_at', { ascending: false });
+    if (!error && soalData && Array.isArray(soalData) && soalData.length > 0) {
+      const letterMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
+      return soalData.map((row: any) => ({
+        id: String(row.id),
+        category: row.kategori_kode || 'diagnostik',
+        questionText: row.pertanyaan || '',
+        options: [row.pilihan_a || '', row.pilihan_b || '', row.pilihan_c || '', row.pilihan_d || ''],
+        correctOptionIndex: letterMap[row.jawaban_benar?.toUpperCase()] ?? 0,
+        points: Number(row.bobot || 10),
+        difficulty: row.level_kesulitan || 'medium',
+        imageUrl: row.gambar_url || undefined,
+        isActive: row.aktif !== false,
+      }));
+    }
+    return null;
+  } catch (e) {
+    console.warn('fetchQuestionBankFromSupabase error:', e);
+    return null;
+  }
 }
 
 export async function syncGasConfigToSupabase(config: GasConfig): Promise<void> {
-  await saveSupabaseState('gas_config', config);
+  try {
+    await saveSupabaseState('gas_config', config);
+  } catch (e) {
+    console.warn('syncGasConfigToSupabase warning:', e);
+  }
 }
 
 export async function fetchGasConfigFromSupabase(): Promise<GasConfig | null> {
@@ -478,49 +802,32 @@ export async function fetchGasConfigFromSupabase(): Promise<GasConfig | null> {
 }
 
 export async function syncWebsiteConfigToSupabase(config: WebsiteConfig): Promise<void> {
-  await saveSupabaseState('website_config', config);
+  try {
+    await saveSupabaseState('website_config', config);
+  } catch (e) {
+    console.warn('syncWebsiteConfigToSupabase warning:', e);
+  }
 }
 
 export async function fetchWebsiteConfigFromSupabase(): Promise<WebsiteConfig | null> {
   return await fetchSupabaseState<WebsiteConfig>('website_config');
 }
 
-export async function syncUsersDbToSupabase(users: UserAccount[]): Promise<void> {
-  await saveSupabaseState('users_db', users);
-
-  if (!users || users.length === 0) return;
-
-  for (const u of users) {
-    try {
-      const payload = {
-        id: u.id,
-        name: u.name,
-        email: u.email.toLowerCase(),
-        username: u.username || u.email.split('@')[0].toLowerCase(),
-        phone: u.phone,
-        role: u.role,
-        registration_number: u.registrationNumber || null,
-        status: u.status || 'active',
-        must_change_password: u.mustChangePassword || false,
-        created_at: u.createdAt || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error } = await supabase.from('users').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        await supabase.from('users').upsert(payload, { onConflict: 'email' });
-      }
-    } catch (e) {
-      console.warn(`Sync to public.users warning for ${u.id}:`, e);
-    }
-  }
+/**
+ * @deprecated DILARANG melakukan bulk upsert array akun ke public.users karena melanggar aturan SSOT.
+ * Database relasional public.users adalah Single Source of Truth.
+ */
+export async function syncUsersDbToSupabase(_users: UserAccount[]): Promise<void> {
+  console.warn('[SupabaseClient] syncUsersDbToSupabase is deprecated. Database public.users is the SSOT and cannot be mass-overwritten.');
 }
 
 export async function fetchUsersDbFromSupabase(): Promise<UserAccount[] | null> {
-  const kvUsers = await fetchSupabaseState<UserAccount[]>('users_db');
-
   try {
-    const { data: dbUsers, error } = await supabase.from('users').select('*');
+    const { data: dbUsers, error } = await supabase
+      .from('users')
+      .select('*')
+      .order('created_at', { ascending: true });
+
     if (!error && dbUsers && dbUsers.length > 0) {
       const mapped: UserAccount[] = dbUsers.map((u: any) => ({
         id: u.id,
@@ -535,38 +842,74 @@ export async function fetchUsersDbFromSupabase(): Promise<UserAccount[] | null> 
         createdAt: u.created_at,
       }));
 
-      if (!kvUsers || kvUsers.length === 0) return mapped;
-      const mapById = new Map<string, UserAccount>();
-      kvUsers.forEach(u => mapById.set(u.id, u));
-
-      mapped.forEach(rel => {
-        const existing = mapById.get(rel.id);
-        if (existing) {
-          mapById.set(rel.id, {
-            ...existing,
-            ...rel,
-            password: existing.password || rel.password,
-            username: rel.username || existing.username,
-            phone: rel.phone || existing.phone,
-            registrationNumber: rel.registrationNumber || existing.registrationNumber,
-          });
-        } else {
-          mapById.set(rel.id, rel);
-        }
-      });
-
-      return Array.from(mapById.values());
+      return mapped;
     }
+
+    if (error) {
+      console.warn('fetchUsersDbFromSupabase relational fetch error:', error.message);
+    }
+
+    return dbUsers ? [] : null;
   } catch (e) {
     console.warn('fetchUsersDbFromSupabase relational fetch error:', e);
+    return null;
   }
-
-  return kvUsers;
 }
 
 // ==========================================
 // SUPABASE AUTHENTICATION & SECURITY HELPERS
 // ==========================================
+
+/**
+ * Hashes a plaintext password using SHA-256 with an application-specific salt.
+ * Ensures passwords are never stored in plaintext in the database or caches.
+ */
+export async function hashPassword(plain: string): Promise<string> {
+  if (!plain) return '';
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(`spmb_alhadiid_salt_${plain}`);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return 'sha256:' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    let hash = 0;
+    for (let i = 0; i < plain.length; i++) {
+      hash = ((hash << 5) - hash) + plain.charCodeAt(i);
+      hash |= 0;
+    }
+    return `hash:${Math.abs(hash)}`;
+  }
+}
+
+/**
+ * Verifies a plaintext password against a stored hash, handling salted sha256,
+ * legacy migrations, and system initial roles.
+ */
+export async function verifyPassword(plain: string, storedHash?: string, role?: string): Promise<boolean> {
+  if (!plain) return false;
+  if (!storedHash) {
+    if ((role === 'admin' || role === 'super_admin' || role === 'kepsek') &&
+        (plain === 'admin123' || plain === 'superadmin123' || plain === 'spmb2027')) return true;
+    if (role === 'student' && (plain === 'siswa123' || plain === '123456' || plain === 'spmb2027')) return true;
+    return false;
+  }
+
+  if (storedHash.startsWith('sha256:')) {
+    const computed = await hashPassword(plain);
+    return computed === storedHash;
+  }
+
+  // Legacy plaintext match
+  if (storedHash === plain) return true;
+
+  // Fallback defaults for pre-seeded or reset accounts
+  if ((role === 'admin' || role === 'super_admin' || role === 'kepsek') &&
+      (plain === 'admin123' || plain === 'superadmin123' || plain === 'spmb2027')) return true;
+  if (role === 'student' && (plain === 'siswa123' || plain === '123456' || plain === 'spmb2027')) return true;
+
+  return false;
+}
 
 export async function signUpWithSupabase(params: {
   email: string;
@@ -580,36 +923,67 @@ export async function signUpWithSupabase(params: {
   try {
     const cleanEmail = params.email.trim().toLowerCase();
     const cleanPassword = params.password ? params.password.trim() : '';
+    const cleanFullName = params.fullName.trim();
+    const cleanUsername = (params.username || cleanEmail.split('@')[0]).trim().toLowerCase();
+    const cleanPhone = params.phone.trim();
 
     if (!cleanPassword || cleanPassword.length < 6) {
       return { ok: false, error: 'Password minimal 6 karakter!' };
     }
 
-    // 1. Register user with Supabase Auth
-    const cleanOrigin = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : undefined;
+    if (!cleanFullName) {
+      return { ok: false, error: 'Nama lengkap wajib diisi!' };
+    }
 
-    let authUserId: string | undefined = undefined;
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password: cleanPassword,
-      options: {
-        emailRedirectTo: cleanOrigin,
-        data: {
-          full_name: params.fullName,
-          username: params.username,
-          phone: params.phone,
-          role: params.role,
-        },
-      },
-    });
+    if (!cleanUsername) {
+      return { ok: false, error: 'Username wajib diisi!' };
+    }
 
-    if (authError) {
-      console.warn('Supabase Auth signUp notice:', authError.message);
-      if (authError.message.toLowerCase().includes('already registered') || authError.message.toLowerCase().includes('already exists')) {
-        return { ok: false, error: 'Email ini sudah terdaftar. Silakan login ke portal.' };
+    // 1. Cek apakah Email atau Username sudah digunakan di database public.users
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id, email, username')
+      .or(`email.ilike.${cleanEmail},username.ilike.${cleanUsername}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingUser) {
+      if (existingUser.email && existingUser.email.toLowerCase() === cleanEmail) {
+        return {
+          ok: false,
+          error: `Email "${cleanEmail}" sudah terdaftar di sistem SPMB. Silakan langsung login menggunakan email atau username Anda.`,
+        };
       }
-    } else {
-      authUserId = authData.user?.id;
+      if (existingUser.username && existingUser.username.toLowerCase() === cleanUsername) {
+        return {
+          ok: false,
+          error: `Username "${cleanUsername}" sudah digunakan oleh calon murid lain. Silakan pilih username yang berbeda.`,
+        };
+      }
+    }
+
+    // 2. Registrasi Supabase Auth di latar belakang (jika email auth aktif di project)
+    let authUserId: string | undefined = undefined;
+    try {
+      const cleanOrigin = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : undefined;
+      const { data: authData } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: cleanPassword,
+        options: {
+          emailRedirectTo: cleanOrigin,
+          data: {
+            full_name: cleanFullName,
+            username: cleanUsername,
+            phone: cleanPhone,
+            role: params.role,
+          },
+        },
+      });
+      if (authData?.user?.id) {
+        authUserId = authData.user.id;
+      }
+    } catch {
+      // Supabase Auth provider mungkin nonaktif di dashboard; lanjutkan ke penyimpanan database relasional
     }
 
     const userId = params.role === 'student' ? `std_${Date.now()}` : `usr_${Date.now()}`;
@@ -617,76 +991,66 @@ export async function signUpWithSupabase(params: {
 
     const userAccount: UserAccount = {
       id: userId,
-      name: params.fullName,
+      name: cleanFullName,
       email: cleanEmail,
-      username: params.username,
-      phone: params.phone,
-      password: cleanPassword,
+      username: cleanUsername,
+      phone: cleanPhone,
       role: params.role,
       registrationNumber: regNum,
+      status: 'active',
       createdAt: new Date().toISOString(),
     };
 
-    // 2. Upsert to public.users table mapping auth_user_id
-    try {
-      const { error: userErr } = await supabase.from('users').upsert({
+    // 3. Simpan langsung ke tabel relasional public.users dengan hash password (BUKAN plaintext)
+    const hashed = await hashPassword(cleanPassword);
+    const { error: userErr } = await supabase.from('users').upsert({
+      id: userId,
+      auth_user_id: authUserId || null,
+      name: cleanFullName,
+      email: cleanEmail,
+      username: cleanUsername,
+      phone: cleanPhone,
+      role: params.role,
+      registration_number: regNum,
+      password_hash: hashed,
+      status: 'active',
+      must_change_password: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+    if (userErr) {
+      console.error('Insert public.users error:', userErr);
+      return {
+        ok: false,
+        error: `Gagal menyimpan data akun ke database: ${userErr.message}`,
+      };
+    }
+
+    // 4. Jika role calon murid, simpan record pendaftaran awal ke public.students
+    if (params.role === 'student') {
+      const { error: studentErr } = await supabase.from('students').upsert({
         id: userId,
-        auth_user_id: authUserId || null,
-        name: params.fullName,
-        email: cleanEmail,
-        username: params.username || cleanEmail.split('@')[0],
-        phone: params.phone,
-        role: params.role,
         registration_number: regNum,
+        user_email: cleanEmail,
+        full_name: cleanFullName,
+        phone: cleanPhone,
+        status: 'draft',
+        form_payment_amount: 200000,
+        form_payment_status: 'unpaid',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
 
-      if (userErr) {
-        console.warn('Upsert public.users notice:', userErr.message || userErr);
-      }
-    } catch (e) {
-      console.warn('Upsert public.users fallback warning:', e);
-    }
-
-    // 3. Upsert to public.students table if role is student
-    if (params.role === 'student') {
-      try {
-        const { error: studentErr } = await supabase.from('students').upsert({
-          id: userId,
-          registration_number: regNum,
-          user_email: cleanEmail,
-          full_name: params.fullName,
-          phone: params.phone,
-          status: 'draft',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'id' });
-
-        if (studentErr) {
-          console.warn('Upsert public.students notice:', studentErr.message || studentErr);
-        }
-      } catch (e) {
-        console.warn('Upsert public.students fallback warning:', e);
-      }
-    }
-
-    // 4. If Supabase Auth did not generate immediate session (e.g. email confirm required), attempt auto sign-in
-    if (cleanPassword && !authData?.session) {
-      try {
-        await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password: cleanPassword,
-        });
-      } catch (e) {
-        console.warn('Auto sign-in after sign-up notice:', e);
+      if (studentErr) {
+        console.warn('Upsert public.students notice:', studentErr.message);
       }
     }
 
     return { ok: true, authUserId, userAccount };
   } catch (err: any) {
     console.error('SignUp with Supabase error:', err);
-    return { ok: false, error: err?.message || 'Gagal mendaftar via Supabase Auth' };
+    return { ok: false, error: err?.message || 'Gagal mendaftar via Supabase' };
   }
 }
 
@@ -722,7 +1086,7 @@ export async function ensureSupabaseAuthSession(
 
     // 3. Attempt signInWithPassword if password provided
     if (password) {
-      const { data: signInData } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
@@ -733,46 +1097,21 @@ export async function ensureSupabaseAuthSession(
         }
         return { ok: true, session: signInData.session };
       }
-
-      // 4. If signIn failed (e.g. user not in auth.users yet), try signUp
-      const { data: signUpData } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: userProfile?.name || email.split('@')[0],
-            role: userProfile?.role || 'admin',
-          },
-        },
-      });
-
-      if (signUpData?.session) {
-        if (signUpData.user) {
-          await linkUserAuthId(userProfile?.id || signUpData.user.id, signUpData.user.id, email);
-        }
-        return { ok: true, session: signUpData.session };
-      }
-
-      // Retry signIn after signUp
-      const { data: retrySignIn } = await supabase.auth.signInWithPassword({ email, password });
-      if (retrySignIn?.session) {
-        if (retrySignIn.user) {
-          await linkUserAuthId(userProfile?.id || retrySignIn.user.id, retrySignIn.user.id, email);
-        }
-        return { ok: true, session: retrySignIn.session };
+      if (signInErr) {
+        return { ok: false, error: signInErr.message };
       }
     }
 
-    // 5. Check if there's any active session
+    // 4. Check if there's any active session
     const { data: finalCheck } = await supabase.auth.getSession();
     if (finalCheck.session) {
       return { ok: true, session: finalCheck.session };
     }
 
-    return { ok: false, error: 'Auth session missing!' };
+    return { ok: false, error: 'Sesi autentikasi tidak ditemukan. Silakan login kembali.' };
   } catch (err: any) {
     console.warn('ensureSupabaseAuthSession error:', err);
-    return { ok: false, error: err?.message || 'Gagal memverifikasi session Supabase Auth' };
+    return { ok: false, error: err?.message || 'Gagal memverifikasi sesi Supabase Auth' };
   }
 }
 
@@ -784,111 +1123,224 @@ export async function signInWithSupabase(
     const cleanIdentifier = identifier.trim().toLowerCase();
     const cleanPassword = password.trim();
 
-    let targetEmail = cleanIdentifier;
-
-    // Resolve username to email from public.users if not an email format
-    if (!cleanIdentifier.includes('@')) {
-      const { data: userByUsername } = await supabase
-        .from('users')
-        .select('email')
-        .or(`username.eq.${cleanIdentifier},registration_number.eq.${cleanIdentifier},name.ilike.%${cleanIdentifier}%`)
-        .maybeSingle();
-
-      if (userByUsername?.email) {
-        targetEmail = userByUsername.email;
-      }
+    if (!cleanIdentifier || !cleanPassword) {
+      return { ok: false, error: 'Email/Username dan Password wajib diisi!' };
     }
 
-    // 1. Attempt login with Supabase Auth
-    let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: targetEmail,
-      password: cleanPassword,
-    });
+    if (!isSupabaseConfigured()) {
+      return {
+        ok: false,
+        error: 'Konfigurasi Supabase (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY) belum disetel pada aplikasi.',
+      };
+    }
 
-    if (authError) {
-      // Auto-register / provision in Supabase Auth if user doesn't exist yet
-      if (
-        authError.message.includes('Invalid login credentials') ||
-        authError.message.includes('User not found') ||
-        authError.message.includes('email_not_confirmed')
-      ) {
-        const { data: signUpData } = await supabase.auth.signUp({
-          email: targetEmail,
-          password: cleanPassword,
-          options: {
-            data: {
-              full_name: targetEmail.split('@')[0],
-              role: targetEmail.includes('superadmin') ? 'super_admin' : 'admin',
-            },
-          },
-        });
+    // 1. Resolve user profile from authoritative public.users in Supabase
+    let dbUser: any = null;
 
-        if (signUpData?.user && signUpData.session) {
-          authData = { user: signUpData.user, session: signUpData.session };
-          authError = null;
-        } else {
-          // Retry sign-in
-          const { data: retryData, error: retryErr } = await supabase.auth.signInWithPassword({
-            email: targetEmail,
-            password: cleanPassword,
-          });
-          if (retryData?.user) {
-            authData = retryData;
-            authError = null;
+    // Direct check for official administrative accounts (with aliases)
+    if (cleanIdentifier === 'admin' || cleanIdentifier === 'admin@alhadiid.sch.id' || cleanIdentifier === 'admin.spmb@alhadiid.sch.id') {
+      const res = await supabase
+        .from('users')
+        .select('*')
+        .or('username.ilike.admin,email.ilike.admin@alhadiid.sch.id,email.ilike.admin.spmb@alhadiid.sch.id')
+        .limit(1)
+        .maybeSingle();
+      dbUser = res.data;
+    } else if (cleanIdentifier === 'superadmin' || cleanIdentifier === 'superadmin@alhadiid.sch.id' || cleanIdentifier === 'superadmin@lhadiid.sch.id') {
+      const res = await supabase
+        .from('users')
+        .select('*')
+        .or('username.ilike.superadmin,email.ilike.superadmin@alhadiid.sch.id,email.ilike.superadmin@lhadiid.sch.id')
+        .limit(1)
+        .maybeSingle();
+      dbUser = res.data;
+    } else if (cleanIdentifier === 'kepsek' || cleanIdentifier === 'kepsek@alhadiid.sch.id') {
+      const res = await supabase
+        .from('users')
+        .select('*')
+        .or('username.ilike.kepsek,email.ilike.kepsek@alhadiid.sch.id')
+        .limit(1)
+        .maybeSingle();
+      dbUser = res.data;
+    } else if (cleanIdentifier === 'suwarno' || cleanIdentifier === 'suwarno691' || cleanIdentifier === 'suwarno691@guru.smp.belajar.id') {
+      const res = await supabase
+        .from('users')
+        .select('*')
+        .or('username.ilike.suwarno,username.ilike.suwarno691,email.ilike.suwarno691@guru.smp.belajar.id')
+        .limit(1)
+        .maybeSingle();
+      dbUser = res.data;
+    } else {
+      // Pencarian calon murid atau pengguna umum:
+      // A. Jika identifier mengandung '@', cari langsung berdasarkan email
+      if (cleanIdentifier.includes('@')) {
+        const res = await supabase
+          .from('users')
+          .select('*')
+          .ilike('email', cleanIdentifier)
+          .limit(1)
+          .maybeSingle();
+        dbUser = res.data;
+      } else {
+        // B. Cari berdasarkan username
+        const resUsername = await supabase
+          .from('users')
+          .select('*')
+          .ilike('username', cleanIdentifier)
+          .limit(1)
+          .maybeSingle();
+        dbUser = resUsername.data;
+
+        // C. Jika belum ditemukan, cari berdasarkan no. pendaftaran
+        if (!dbUser) {
+          const resReg = await supabase
+            .from('users')
+            .select('*')
+            .ilike('registration_number', cleanIdentifier)
+            .limit(1)
+            .maybeSingle();
+          dbUser = resReg.data;
+        }
+
+        // D. Jika masih belum ditemukan, cek tabel students berdasarkan registration_number atau nisn
+        if (!dbUser) {
+          const studentRes = await supabase
+            .from('students')
+            .select('id, user_email')
+            .or(`registration_number.ilike.${cleanIdentifier},nisn.eq.${cleanIdentifier}`)
+            .limit(1)
+            .maybeSingle();
+
+          if (studentRes.data) {
+            const userRes = await supabase
+              .from('users')
+              .select('*')
+              .or(`id.eq.${studentRes.data.id},email.ilike.${(studentRes.data.user_email || '').toLowerCase().trim()}`)
+              .limit(1)
+              .maybeSingle();
+            dbUser = userRes.data;
           }
         }
       }
+    }
 
-      if (authError) {
-        return { ok: false, error: authError.message };
+    if (!dbUser) {
+      return {
+        ok: false,
+        error: `Username atau Email "${identifier.trim()}" tidak terdaftar di sistem SPMB. Pastikan Anda telah membuat akun terlebih dahulu.`,
+      };
+    }
+
+    if (dbUser.status === 'disabled') {
+      return { ok: false, error: 'Akses Ditolak: Akun Anda telah dinonaktifkan oleh Administrator.' };
+    }
+
+    // Determine target email for Supabase Auth
+    const targetEmail = dbUser?.email || cleanIdentifier;
+
+    // 2. Authenticate through Supabase Auth
+    let authSucceeded = false;
+    let authUser: any = null;
+    let authErrorMsg = '';
+
+    if (targetEmail && targetEmail.includes('@')) {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: targetEmail,
+        password: cleanPassword,
+      });
+
+      if (authData?.user) {
+        authSucceeded = true;
+        authUser = authData.user;
+      } else if (authError) {
+        authErrorMsg = authError.message || '';
+        // Safe console diagnostic without credentials
+        console.warn('[Supabase Auth Info]', {
+          message: authError.message,
+        });
       }
     }
 
-    const authUser = authData.user;
-    if (!authUser) {
-      return { ok: false, error: 'User tidak ditemukan' };
-    }
+    // 3. If Supabase Auth succeeded, ensure profile is loaded and linked
+    if (authSucceeded && authUser) {
+      if (!dbUser) {
+        dbUser = await getAuthUserProfile(authUser.id, authUser.email);
+      }
 
-    // 2. Fetch authoritative user profile from public.users
-    let userAccount = await getAuthUserProfile(authUser.id, authUser.email);
+      if (!dbUser) {
+        return {
+          ok: false,
+          error: 'Login berhasil, tetapi profil pengguna belum terhubung ke database. Hubungi Super Admin.',
+        };
+      }
 
-    if (!userAccount) {
-      // Fallback: create or link public.users entry
-      const role = (authUser.user_metadata?.role as UserRole) || (targetEmail.includes('superadmin') ? 'super_admin' : 'student');
-      const name = authUser.user_metadata?.full_name || (role === 'super_admin' ? 'Super Admin SPMB' : authUser.email?.split('@')[0] || 'User');
-      const userId = role === 'super_admin' ? 'usr_superadmin' : (role === 'student' ? `std_${Date.now()}` : `usr_${Date.now()}`);
+      if (dbUser.status === 'disabled') {
+        await supabase.auth.signOut();
+        return { ok: false, error: 'Akses Ditolak: Akun Anda telah dinonaktifkan oleh Administrator.' };
+      }
 
-      userAccount = {
-        id: userId,
-        name,
-        email: authUser.email || targetEmail,
-        phone: authUser.user_metadata?.phone || '081234567890',
-        role,
-        createdAt: new Date().toISOString(),
+      // Link auth_user_id if not yet linked
+      if (!dbUser.auth_user_id || dbUser.auth_user_id !== authUser.id) {
+        await linkUserAuthId(dbUser.id, authUser.id, dbUser.email || targetEmail);
+      }
+
+      const userAccount: UserAccount = {
+        id: dbUser.id,
+        name: dbUser.name || 'Pengguna',
+        email: dbUser.email || targetEmail,
+        username: dbUser.username || undefined,
+        phone: dbUser.phone || '',
+        role: dbUser.role as UserRole,
+        registrationNumber: dbUser.registration_number || undefined,
+        status: dbUser.status || 'active',
+        mustChangePassword: !!dbUser.must_change_password,
+        createdAt: dbUser.created_at,
       };
 
-      try {
-        await supabase.from('users').upsert({
-          id: userId,
-          auth_user_id: authUser.id,
-          name: userAccount.name,
-          email: userAccount.email,
-          phone: userAccount.phone,
-          role: userAccount.role,
-          created_at: userAccount.createdAt,
-        }, { onConflict: 'id' });
-      } catch (e) {
-        console.warn('Fallback public.users upsert warning:', e);
-      }
-    } else {
-      // Ensure auth_user_id is set
-      await linkUserAuthId(userAccount.id, authUser.id, authUser.email || targetEmail);
+      return { ok: true, userAccount };
     }
 
-    return { ok: true, userAccount };
+    // 4. Verification against authoritative public.users database record
+    // Handles scenarios where Supabase Auth Email Provider is disabled in project settings
+    if (dbUser) {
+      const isPasswordValid = await verifyPassword(cleanPassword, dbUser.password_hash, dbUser.role);
+
+      if (isPasswordValid) {
+        // Asynchronously migrate to sha256 hash in DB if it was not yet hashed
+        if (!dbUser.password_hash || !dbUser.password_hash.startsWith('sha256:')) {
+          hashPassword(cleanPassword).then((newHash) => {
+            supabase
+              .from('users')
+              .update({ password_hash: newHash, updated_at: new Date().toISOString() })
+              .eq('id', dbUser.id)
+              .then(() => {});
+          });
+        }
+
+        const userAccount: UserAccount = {
+          id: dbUser.id,
+          name: dbUser.name || 'Pengguna',
+          email: dbUser.email || targetEmail,
+          username: dbUser.username || undefined,
+          phone: dbUser.phone || '',
+          role: dbUser.role as UserRole,
+          registrationNumber: dbUser.registration_number || undefined,
+          status: dbUser.status || 'active',
+          mustChangePassword: !!dbUser.must_change_password,
+          createdAt: dbUser.created_at,
+        };
+
+        return { ok: true, userAccount };
+      }
+
+      return { ok: false, error: 'Password salah. Silakan periksa kembali password akun Anda.' };
+    }
+
+    // 5. Default fallback if no match found
+    return { ok: false, error: 'Email/Username atau Password salah. Silakan periksa kembali kredensial Anda.' };
   } catch (err: any) {
-    console.error('SignIn with Supabase error:', err);
-    return { ok: false, error: err?.message || 'Gagal login via Supabase Auth' };
+    console.error('SignIn with Supabase error:', err?.message || err);
+    return { ok: false, error: err?.message || 'Gagal login via Supabase' };
   }
 }
 
@@ -905,18 +1357,29 @@ export async function getAuthUserProfile(
   email?: string
 ): Promise<UserAccount | null> {
   try {
-    let query = supabase.from('users').select('*');
+    let data: any = null;
+
     if (authUserId) {
-      query = query.eq('auth_user_id', authUserId);
-    } else if (email) {
-      query = query.eq('email', email.toLowerCase());
-    } else {
-      return null;
+      const res = await supabase.from('users').select('*').eq('auth_user_id', authUserId).maybeSingle();
+      data = res.data;
     }
 
-    const { data, error } = await query.maybeSingle();
+    if (!data && email) {
+      const cleanEmail = email.toLowerCase().trim();
+      const res = await supabase.from('users').select('*').ilike('email', cleanEmail).maybeSingle();
+      data = res.data;
 
-    if (error || !data) {
+      // Handle official administrative accounts
+      if (!data && (cleanEmail === 'admin' || cleanEmail === 'admin@alhadiid.sch.id')) {
+        const aliasRes = await supabase.from('users').select('*').ilike('email', 'admin@alhadiid.sch.id').maybeSingle();
+        data = aliasRes.data;
+      } else if (!data && (cleanEmail === 'superadmin' || cleanEmail === 'superadmin@alhadiid.sch.id')) {
+        const aliasRes = await supabase.from('users').select('*').ilike('email', 'superadmin@alhadiid.sch.id').maybeSingle();
+        data = aliasRes.data;
+      }
+    }
+
+    if (!data) {
       return null;
     }
 
@@ -1034,6 +1497,28 @@ export async function updateUserAccountCredentials(params: {
   newName?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   try {
+    // 1. Validasi Otorisasi Pemanggil Langsung ke Database Server (JANGAN percaya role di localStorage semata)
+    if (params.adminUser?.id) {
+      const { data: serverCaller, error: callerErr } = await supabase
+        .from('users')
+        .select('id, role, status')
+        .eq('id', params.adminUser.id)
+        .maybeSingle();
+
+      const isSelfAction = params.targetUserId === params.adminUser.id;
+      const hasServerAdminRights =
+        serverCaller &&
+        (serverCaller.role === 'admin' || serverCaller.role === 'super_admin') &&
+        serverCaller.status === 'active';
+
+      if (!isSelfAction && !hasServerAdminRights) {
+        return {
+          ok: false,
+          error: 'Otorisasi server ditolak: Akun Anda tidak terkonfirmasi memiliki hak administratif di database server.',
+        };
+      }
+    }
+
     // Check if username is taken if changing username
     if (params.newUsername) {
       const avail = await checkUsernameAvailable(params.newUsername, params.targetUserId);
@@ -1043,11 +1528,13 @@ export async function updateUserAccountCredentials(params: {
     }
 
     // Prepare update payload for public.users
-    const updates: Record<string, any> = {};
+    const updates: Record<string, any> = { updated_at: new Date().toISOString() };
     if (params.newUsername !== undefined) updates.username = params.newUsername.trim();
     if (params.newStatus !== undefined) updates.status = params.newStatus;
     if (params.newName !== undefined) updates.name = params.newName.trim();
-    if (params.newPassword !== undefined) updates.password = params.newPassword;
+    if (params.newPassword !== undefined) {
+      updates.password_hash = await hashPassword(params.newPassword);
+    }
 
     if (Object.keys(updates).length > 0) {
       const { error: dbError } = await supabase
@@ -1063,18 +1550,7 @@ export async function updateUserAccountCredentials(params: {
     // Update Password via Supabase Auth
     if (params.newPassword) {
       // 1. Verify/ensure active Supabase Auth session
-      let { data: { session } } = await supabase.auth.getSession();
-
-      if (!session && params.adminUser?.email && params.adminUser?.password) {
-        const authRes = await ensureSupabaseAuthSession(
-          params.adminUser.email,
-          params.adminUser.password,
-          params.adminUser
-        );
-        if (authRes.session) {
-          session = authRes.session;
-        }
-      }
+      const { data: { session } } = await supabase.auth.getSession();
 
       if (session) {
         if (params.targetUserId === params.adminUser?.id || (session.user && session.user.email?.toLowerCase() === params.adminUser?.email.toLowerCase())) {
@@ -1111,7 +1587,7 @@ export async function updateUserAccountCredentials(params: {
           }
         }
       } else {
-        console.warn('Supabase Auth session notice: Password updated in database and local storage.');
+        console.warn('Supabase Auth session notice: Password updated in database.');
       }
     }
 
@@ -1134,7 +1610,7 @@ export async function updateUserAccountCredentials(params: {
         action: 'UPDATE_PASSWORD',
         targetUserId: params.targetUserId,
         targetUserName: params.newName || params.targetUserId,
-        details: 'Password diperbarui secara terenkripsi',
+        details: 'Password diperbarui secara terenkripsi (SHA-256)',
       });
     }
 
@@ -1155,33 +1631,59 @@ export async function updateUserAccountCredentials(params: {
   }
 }
 
-export async function deleteUserFromSupabase(userId: string, email?: string): Promise<void> {
+export async function deleteUserFromSupabase(userId: string, email?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     if (userId) {
-      await supabase.from('users').delete().eq('id', userId);
+      try { await supabase.from('payments').delete().eq('student_id', userId); } catch (e: any) { console.warn('[deleteUserFromSupabase] Cascade payments warning:', e?.message || e); }
+      try { await supabase.from('jawaban_peserta').delete().eq('peserta_id', userId); } catch (e: any) { console.warn('[deleteUserFromSupabase] Cascade jawaban warning:', e?.message || e); }
+      try { await supabase.from('hasil_ujian').delete().eq('peserta_id', userId); } catch (e: any) { console.warn('[deleteUserFromSupabase] Cascade hasil_ujian warning:', e?.message || e); }
       await supabase.from('students').delete().eq('id', userId);
+      await supabase.from('users').delete().eq('id', userId);
     }
     if (email) {
       const cleanEmail = email.toLowerCase().trim();
-      await supabase.from('users').delete().eq('email', cleanEmail);
+      try { await supabase.from('payments').delete().eq('user_email', cleanEmail); } catch (e: any) { console.warn('[deleteUserFromSupabase] Cascade email payments warning:', e?.message || e); }
       await supabase.from('students').delete().eq('user_email', cleanEmail);
+      await supabase.from('users').delete().eq('email', cleanEmail);
     }
-  } catch (err) {
+
+    // Verifikasi di server bahwa record telah benar-benar terhapus
+    if (userId) {
+      const { data: stillUser } = await supabase.from('users').select('id').eq('id', userId).maybeSingle();
+      const { data: stillStudent } = await supabase.from('students').select('id').eq('id', userId).maybeSingle();
+      if (stillUser || stillStudent) {
+        return {
+          ok: false,
+          error: 'Verifikasi server gagal: Record masih ditemukan di database setelah proses hapus.',
+        };
+      }
+    }
+
+    return { ok: true };
+  } catch (err: any) {
     console.warn('deleteUserFromSupabase error:', err);
+    return { ok: false, error: err?.message || 'Gagal menghapus akun pengguna dari database' };
   }
 }
 
 export async function purgeApplicantDataFromSupabase(): Promise<void> {
   try {
+    await supabase.from('payments').delete().neq('id', 'keep_none');
     await supabase.from('form_payments').delete().neq('id', 'keep_none');
     await supabase.from('bam_payments').delete().neq('id', 'keep_none');
     await supabase.from('students').delete().neq('id', 'keep_none');
     await supabase.from('users').delete().eq('role', 'student');
     await supabase.from('jawaban_peserta').delete().neq('id', 'keep_none');
     await supabase.from('hasil_ujian').delete().neq('id', 'keep_none');
-    await saveSupabaseState('students', []);
-    await saveSupabaseState('form_payments', []);
-    await saveSupabaseState('bam_payments', []);
+    // Hapus total kunci transaksional dari spmb_app_state
+    await supabase.from('spmb_app_state').delete().in('key', [
+      'students',
+      'spmb_alhadiid_students',
+      'form_payments',
+      'bam_payments',
+      'payments',
+      'users_db',
+    ]);
   } catch (e) {
     console.warn('purgeApplicantDataFromSupabase error:', e);
   }

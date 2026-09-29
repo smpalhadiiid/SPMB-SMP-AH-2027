@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { SchoolInfo, CostBreakdown, TestSchedule, WebsiteConfig, UserAccount } from '../types';
+import { SchoolInfo, CostBreakdown, TestSchedule, WebsiteConfig, UserAccount, UserRole } from '../types';
+import { initialCostBreakdowns } from '../data/initialData';
 import { 
   Sparkles, CheckCircle2, Award, BookOpen, ShieldCheck, Download, Video,
   MessageSquare, ChevronRight, HelpCircle, GraduationCap, MapPin, 
@@ -16,7 +17,7 @@ interface LandingPageProps {
   currentUser?: UserAccount | null;
   onOpenAuth: (mode: 'login' | 'register') => void;
   onOpenWhatsApp: () => void;
-  onSelectRoleView: (role: 'student' | 'admin' | 'kepsek') => void;
+  onSelectRoleView: (role: UserRole) => void;
   onUpdateWebsiteConfig?: (updated: WebsiteConfig) => void;
   onUpdateSchoolInfo?: (updated: SchoolInfo) => void;
 }
@@ -69,7 +70,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     showFaqSection: websiteConfig?.showFaqSection ?? true,
   });
 
-  const totalCosts = costBreakdowns.reduce((acc, curr) => acc + curr.amount, 0);
+  const effectiveCostItems = costBreakdowns && costBreakdowns.length >= 10 ? costBreakdowns : initialCostBreakdowns;
+  const totalBamIkhwan = effectiveCostItems.reduce((acc, curr) => acc + (curr.amountIkhwan ?? curr.amount ?? 0), 0);
+  const totalBamAkhwat = effectiveCostItems.reduce((acc, curr) => acc + (curr.amountAkhwat ?? curr.amount ?? 0), 0);
+  const totalCosts = totalBamIkhwan;
 
   const handleSaveQuickSettings = (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,7 +88,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const faqs = [
     {
       q: 'Bagaimana alur pendaftaran murid baru secara online?',
-      a: 'Alur pendaftaran terdiri dari 12 tahapan sederhana: 1. Buat akun SPMB -> 2. Bayar biaya formulir Rp200.000 -> 3. Verifikasi Panitia -> 4. Isi Formulir Biodata Lengkap & Upload Berkas -> 5. Cetak Bukti Pendaftaran -> 6. Mengikuti Tes Diagnostik -> 7. Pengumuman Kelulusan -> 8. Daftar Ulang & Penempatan Kelas.'
+      a: 'Alur pendaftaran SPMB terdiri dari 8 tahapan terintegrasi: 1. Calon murid membuat akun sebelum login untuk mendaftar -> 2. Setelah berhasil login selanjutnya upload bukti pembayaran formulir -> 3. Setelah upload bukti pembayaran formulir selanjutnya mengisi data calon murid (sebelum diverifikasi admin, download formulir dan kartu ujian belum aktif) -> 4. Setelah diverifikasi admin panitia untuk bukti transfer dan pengisian data, fitur download formulir dan kartu ujian aktif pada dashboard calon murid dan admin -> 5. Calon murid melakukan ujian sesuai jadwal yang ditentukan dengan menu login ujian menggunakan Nomor Registrasi pada kartu ujian -> 6. Setelah selesai ujian, calon murid menunggu keputusan panitia berdasarkan hasil ujian -> 7. Setelah ada hasil ujian dan dinyatakan lulus, calon murid melakukan pembayaran BAM -> 8. Panitia memverifikasi bukti transfer dan menginput nominal transfer sehingga data pembayaran masuk ke tabel pembayaran.'
     },
     {
       q: 'Berapa biaya formulir pendaftaran dan ke rekening mana pembayarannya?',
@@ -330,25 +334,42 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
                 {/* Direct quick action card */}
                 <div className="bg-slate-800/80 p-4 rounded-xl space-y-3">
-                  <div className="text-xs text-slate-300 font-medium">
-                    Tahapan Pendaftaran Online:
+                  <div className="text-xs text-slate-300 font-bold flex items-center justify-between">
+                    <span>8 Alur Pendaftaran SPMB:</span>
+                    <span className="text-[10px] text-emerald-400 font-mono">Resmi 2026/2027</span>
                   </div>
-                  <div className="space-y-2 text-xs text-slate-300">
+                  <div className="space-y-1.5 text-xs text-slate-300">
                     <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">1</span>
-                      <span>Registrasi Akun Orang Tua / Calon Murid</span>
+                      <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">1</span>
+                      <span className="text-[11px]">Buat akun sebelum login</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">2</span>
-                      <span>Pembayaran Formulir Rp200.000 via BSI</span>
+                      <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">2</span>
+                      <span className="text-[11px]">Login & upload bukti bayar formulir</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">3</span>
-                      <span>Isi Formulir Lengkap & Upload Berkas</span>
+                      <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">3</span>
+                      <span className="text-[11px]">Isi data calon murid (dokumen terkunci)</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">4</span>
-                      <span>Tes Diagnostik & Pengumuman Hasil</span>
+                      <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">4</span>
+                      <span className="text-[11px]">Verifikasi admin → download formulir & kartu ujian aktif</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">5</span>
+                      <span className="text-[11px]">Login ujian pakai No. Registrasi & tes</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-4 h-4 rounded-full bg-amber-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">6</span>
+                      <span className="text-[11px]">Menunggu keputusan hasil ujian panitia</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-4 h-4 rounded-full bg-teal-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">7</span>
+                      <span className="text-[11px]">Hasil lulus → bayar Biaya Awal Masuk (BAM)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">8</span>
+                      <span className="text-[11px]">Panitia verifikasi & catat nominal transfer ke tabel</span>
                     </div>
                   </div>
                 </div>
@@ -551,11 +572,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
                   <div className="bg-emerald-950/80 border border-emerald-500/40 p-4 rounded-xl text-center min-w-[150px]">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">Total Biaya Ikhwan</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.665.000</div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">
+                      Rp {totalBamIkhwan.toLocaleString('id-ID')}
+                    </div>
                   </div>
                   <div className="bg-emerald-950/80 border border-emerald-500/40 p-4 rounded-xl text-center min-w-[150px]">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300">Total Biaya Akhwat</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.895.000</div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">
+                      Rp {totalBamAkhwat.toLocaleString('id-ID')}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -567,9 +592,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     <ShieldCheck className="w-5 h-5 text-emerald-600" />
                     <span>B. Rincian Komponen Biaya Awal Masuk (BAM)</span>
                   </h3>
-                  <span className="text-xs font-semibold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">
-                    Sesuai SK Resmi Biaya Pendidikan
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {schoolInfo.bamBrochureUrl && (
+                      <a
+                        href={schoolInfo.bamBrochureUrl}
+                        download={schoolInfo.bamBrochureFileName || 'BAM_SMP_2027.jpeg'}
+                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh Dokumen SK Resmi</span>
+                      </a>
+                    )}
+                    <span className="text-xs font-semibold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">
+                      Sesuai SK Resmi Biaya Pendidikan
+                    </span>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -584,33 +621,26 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-slate-800">
-                      {[
-                        { no: 1, name: 'Dana Awal Pendidikan (DAP)', ikhwan: 4250000, akhwat: 4250000, ket: 'Sekali' },
-                        { no: 2, name: 'Dana Praktik Komputer', ikhwan: 150000, akhwat: 150000, ket: 'Per Tahun' },
-                        { no: 3, name: 'Dana Praktik IPA', ikhwan: 100000, akhwat: 100000, ket: 'Per Tahun' },
-                        { no: 4, name: 'Perlengkapan / Seragam (Paket)*', ikhwan: 700000, akhwat: 920000, ket: 'Sekali', highlight: true },
-                        { no: 5, name: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', ikhwan: 425000, akhwat: 425000, ket: 'Per Bulan' },
-                        { no: 6, name: 'Tabungan Wajib', ikhwan: 25000, akhwat: 25000, ket: 'Per Bulan' },
-                        { no: 7, name: 'MPLS / MOS', ikhwan: 100000, akhwat: 100000, ket: 'Sekali' },
-                        { no: 8, name: 'Dana Sosial', ikhwan: 25000, akhwat: 25000, ket: 'Per Tahun' },
-                        { no: 9, name: 'Penilaian Akhir Semester (PAS)', ikhwan: 220000, akhwat: 220000, ket: 'Per Tahun' },
-                        { no: 10, name: 'Penilaian Akhir Tahun (PAT)', ikhwan: 225000, akhwat: 225000, ket: 'Per Tahun' },
-                        { no: 11, name: 'Kegiatan Ekstrakurikuler / AMBAP', ikhwan: 125000, akhwat: 125000, ket: 'Per Tahun' },
-                        { no: 12, name: 'Biaya Dauroh (Kegiatan Pesantren)', ikhwan: 120000, akhwat: 120000, ket: 'Per Tahun' },
-                        { no: 13, name: 'Biaya Cetak (Raport, Foto, Name Tag, Kalender)', ikhwan: 200000, akhwat: 210000, ket: 'Per Tahun' },
-                      ].map((row) => (
-                        <tr key={row.no} className={`hover:bg-emerald-50/50 transition-colors ${row.highlight ? 'bg-amber-50/60 font-medium' : ''}`}>
-                          <td className="py-3 px-4 text-center font-bold text-slate-500">{row.no}</td>
-                          <td className="py-3 px-4 font-semibold text-slate-900">{row.name}</td>
-                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
-                            Rp {row.ikhwan.toLocaleString('id-ID')}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
-                            Rp {row.akhwat.toLocaleString('id-ID')}
-                          </td>
-                          <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.ket}</td>
-                        </tr>
-                      ))}
+                      {effectiveCostItems.map((item, idx) => {
+                        const ikhwanCost = Number(item.amountIkhwan ?? item.amount ?? 0);
+                        const akhwatCost = Number(item.amountAkhwat ?? item.amount ?? 0);
+                        const isDiff = ikhwanCost !== akhwatCost;
+                        return (
+                          <tr key={item.id || idx} className={`hover:bg-emerald-50/50 transition-colors ${isDiff ? 'bg-amber-50/60 font-medium' : ''}`}>
+                            <td className="py-3 px-4 text-center font-bold text-slate-500">{idx + 1}</td>
+                            <td className="py-3 px-4 font-semibold text-slate-900">{item.title}</td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                              Rp {ikhwanCost.toLocaleString('id-ID')}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                              Rp {akhwatCost.toLocaleString('id-ID')}
+                            </td>
+                            <td className="py-3 px-4 text-center text-slate-600 font-medium">
+                              {item.period || 'Sekali'}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="bg-emerald-900 text-white font-extrabold text-xs sm:text-sm">
@@ -618,10 +648,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                           TOTAL BIAYA AWAL MASUK (BAM):
                         </td>
                         <td className="py-4 px-4 text-right font-mono text-amber-300 text-base">
-                          Rp 6.665.000
+                          Rp {totalBamIkhwan.toLocaleString('id-ID')}
                         </td>
                         <td className="py-4 px-4 text-right font-mono text-amber-300 text-base">
-                          Rp 6.895.000
+                          Rp {totalBamAkhwat.toLocaleString('id-ID')}
                         </td>
                         <td className="py-4 px-4 text-center text-emerald-200 font-normal text-xs">Awal Masuk</td>
                       </tr>
@@ -671,7 +701,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                         <span className="text-emerald-700">Skema Prioritas</span>
                       </div>
                       <div className="text-slate-600 text-[11px]">
-                        Ikhwan: <b>Rp 6.665.000</b> | Akhwat: <b>Rp 6.895.000</b>
+                        Ikhwan: <b>Rp 6.670.000</b> | Akhwat: <b>Rp 6.890.000</b>
                       </div>
                     </div>
 
@@ -682,7 +712,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       </div>
                       <div className="text-slate-700 text-[11px]">
                         DP Awal: <b>Rp 4.000.000</b> (Ikhwan/Akhwat) saat pendaftaran.<br />
-                        Pelunasan Paling Lambat: <b>31 Oktober {schoolInfo.academicYear.split('/')[0]}</b>.
+                        Pelunasan Paling Lambat: <b>30 Oktober {schoolInfo.academicYear.split('/')[0]}</b>.
                       </div>
                     </div>
                   </div>
