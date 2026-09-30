@@ -4,7 +4,7 @@ import { getStoredFormPayments, saveFormPayments } from '../../utils/storage';
 import { PaymentRepository } from '../../repositories/PaymentRepository';
 import { StudentRepository } from '../../repositories/StudentRepository';
 import { fetchFormPaymentsFromSupabase } from '../../utils/supabaseClient';
-import { generateRegistrationPDF } from '../../utils/pdfGenerator';
+import { generateRegistrationPDF, generatePaymentReceiptPDF } from '../../utils/pdfGenerator';
 import { canDownloadStudentForm, isStudentFormFilled } from '../../utils/formEligibility';
 import {
   CreditCard, Plus, Search, Filter, CheckCircle2, User,
@@ -136,9 +136,20 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
   const [filterCategory, setFilterCategory] = useState<'all' | 'Internal' | 'Eksternal' | 'Bazaar'>('all');
   const [filterProof, setFilterProof] = useState<'all' | 'has_proof' | 'no_proof'>('all');
 
-  const handleVerifyStudentForm = (studentId: string, isVerified: boolean) => {
+  const handleVerifyStudentForm = (studentId: string, isVerified: boolean, rejectionReason?: string) => {
     const targetStudent = students.find(s => s.id === studentId);
     if (!targetStudent) return;
+
+    if (!isVerified && (!rejectionReason || !rejectionReason.trim())) {
+      const reason = window.prompt('Masukkan alasan penolakan bukti pembayaran formulir (wajib):');
+      if (!reason || !reason.trim()) {
+        alert('Penolakan dibatalkan: Alasan penolakan wajib diisi untuk memberi tahu calon murid.');
+        return;
+      }
+      rejectionReason = reason.trim();
+    }
+
+    const rejectionNote = rejectionReason ? `Ditolak: ${rejectionReason}` : undefined;
 
     const updatedStudents = students.map(s => {
       if (s.id === studentId) {
@@ -147,6 +158,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
           formPaymentStatus: isVerified ? ('verified' as const) : ('rejected' as const),
           isFormVerified: isVerified,
           isFormVerifiedByAdmin: isVerified,
+          formPaymentNotes: isVerified ? s.formPaymentNotes : rejectionNote,
           status: isVerified && (s.status === 'pending_payment' || s.status === 'draft' || s.status === 'verifying_payment')
             ? ('filling_form' as const)
             : s.status,
@@ -157,7 +169,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
 
     onUpdateStudents(updatedStudents);
 
-    // Sync to Supabase
+    // Sync to Supabase public.payments
     PaymentRepository.create({
       studentId: targetStudent.id,
       registrationNumber: targetStudent.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`,
@@ -169,12 +181,14 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
       bankName: 'BSI',
       paymentDate: targetStudent.formPaymentDate || new Date().toISOString().split('T')[0],
       proofUrl: targetStudent.formPaymentProofUrl,
-      notes: targetStudent.formPaymentNotes || (isVerified ? 'Verifikasi Otomatis Bukti Formulir Admin' : 'Pembayaran Ditolak Admin'),
+      rejectionReason: !isVerified ? rejectionReason : undefined,
+      notes: isVerified ? (targetStudent.formPaymentNotes || 'Verifikasi Bukti Formulir Admin') : rejectionNote,
     }).catch(err => console.warn('PaymentRepository form verify sync error:', err));
 
     // Update student row in Supabase
     StudentRepository.update(targetStudent.id, {
       formPaymentStatus: isVerified ? 'verified' : 'rejected',
+      formPaymentNotes: isVerified ? undefined : rejectionNote,
     }).catch(err => console.warn('StudentRepository form verify sync error:', err));
 
     // Update local records
@@ -184,6 +198,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
           ...r,
           status: (isVerified ? 'verified' : 'rejected') as 'verified' | 'pending' | 'rejected',
           proofUrl: r.proofUrl || targetStudent.formPaymentProofUrl,
+          notes: isVerified ? r.notes : rejectionNote,
         };
       }
       return r;
@@ -198,8 +213,8 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
 
     alert(
       isVerified
-        ? `✓ Pembayaran Formulir untuk ${targetStudent.fullName} Berhasil Diverifikasi Lunas!\n\nFitur Download Formulir (PDF 3 Halaman) pada dashboard calon murid telah DIAKTIFKAN.`
-        : `Status pembayaran untuk ${targetStudent.fullName} diubah menjadi Ditolak.`
+        ? `✓ Pembayaran Formulir untuk ${targetStudent.fullName} Berhasil Diverifikasi (Status: TERVERIFIKASI)!\n\nFitur Download Formulir (PDF 3 Halaman) pada dashboard calon murid telah DIAKTIFKAN.`
+        : `Status pembayaran formulir untuk ${targetStudent.fullName} diubah menjadi DITOLAK.\n\nAlasan: ${rejectionReason}\n\nCalon murid akan melihat alasan penolakan dan dapat mengunggah bukti baru.`
     );
   };
 
@@ -793,6 +808,27 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
                       </td>
                       <td className="p-3 text-center">
                         <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => generatePaymentReceiptPDF(
+                              {
+                                id: r.id,
+                                amount: r.amount || 200000,
+                                payment_type: 'formulir',
+                                payment_date: r.paymentDate,
+                                payment_method: (r as any).paymentMethod || 'Transfer Bank BSI',
+                                status: r.status || 'verified',
+                                verified_by: (r as any).verifiedBy || 'Admin Panitia SPMB',
+                                notes: r.notes,
+                              },
+                              linkedStudent || { registrationNumber: r.registrationNumber, fullName: r.studentName },
+                              schoolInfo || ({} as any)
+                            )}
+                            className="p-1.5 text-teal-600 hover:bg-teal-100 rounded-lg transition-colors cursor-pointer"
+                            title="Cetak / Download Kuitansi Pembayaran Resmi (PDF)"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </button>
                           {isEligibleToDownload && linkedStudent && (
                             <button
                               type="button"
@@ -998,14 +1034,14 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
         isOpen={!!activeProofData}
         onClose={() => setActiveProofData(null)}
         data={activeProofData}
-        onVerify={activeProofData?.status === 'pending' ? (isVerified) => {
+        onVerify={activeProofData?.status === 'pending' || activeProofData?.status === 'rejected' ? (isVerified, rejectionReason) => {
           if (!activeProofData) return;
           const targetStudent = students.find(
             s => s.registrationNumber === activeProofData.regNo ||
             s.fullName.toLowerCase() === activeProofData.studentName.toLowerCase()
           );
           if (targetStudent) {
-            handleVerifyStudentForm(targetStudent.id, isVerified);
+            handleVerifyStudentForm(targetStudent.id, isVerified, rejectionReason);
           }
         } : undefined}
       />

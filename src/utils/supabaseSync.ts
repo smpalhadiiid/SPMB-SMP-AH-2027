@@ -3,7 +3,7 @@ import {
   GasConfig, UserAccount, FormPaymentRecord, BamPaymentRecord,
   ExamQuestion, WebsiteConfig
 } from '../types';
-import { getStudentCategory, getTotalBamCost, calculateBamRemaining, getBamInstallmentType } from './bamPricing';
+import { getStudentCategory, getTotalBamCost, calculateBamRemaining } from './bamPricing';
 import { StudentRepository } from '../repositories/StudentRepository';
 import { UserProfileRepository } from '../repositories/UserProfileRepository';
 import { PaymentRepository } from '../repositories/PaymentRepository';
@@ -248,34 +248,24 @@ export async function performFullSupabaseSync(
       }));
 
     const cloudBamPayments: BamPaymentRecord[] = cloudPayments
-      .filter(p => p.paymentType === 'bam' || (p as any).paymentType === 'daftar_ulang')
-      .map(p => {
-        const student = cloudStudents.find(s => s.id === p.studentId || (s.registrationNumber && s.registrationNumber === p.registrationNumber));
-        const gender = (student?.gender || p.gender || 'Laki-laki') as 'Laki-laki' | 'Perempuan';
-        const isAkhwat = gender === 'Perempuan';
-        const totalCost = isAkhwat ? 6890000 : 6670000;
-        const amt = Number(p.amount || 0);
-        const rem = Math.max(0, totalCost - amt);
-        const installment = (p.status === 'verified' && rem <= 0) ? 'Lunas' : (getBamInstallmentType(totalCost, amt, gender) as any);
-
-        return {
-          id: p.id,
-          transactionNumber: p.id.startsWith('pay_') ? p.id.replace('pay_', 'TRX-BAM-').toUpperCase() : `TRX-BAM-${p.id.slice(-6).toUpperCase()}`,
-          paymentDate: p.paymentDate || p.createdAt.split('T')[0],
-          studentId: p.studentId,
-          studentName: p.studentName,
-          registrationNumber: p.registrationNumber,
-          gender: gender,
-          totalBamCost: totalCost,
-          amountPaid: amt,
-          installmentType: installment,
-          totalPaidToDate: amt,
-          remainingBalance: rem,
-          notes: p.notes,
-          proofUrl: p.proofUrl,
-          createdAt: p.createdAt,
-        };
-      });
+      .filter(p => p.paymentType === 'bam')
+      .map(p => ({
+        id: p.id,
+        transactionNumber: p.id.replace('pay_', 'TRX-BAM-').toUpperCase(),
+        paymentDate: p.paymentDate || p.createdAt.split('T')[0],
+        studentId: p.studentId,
+        studentName: p.studentName,
+        registrationNumber: p.registrationNumber,
+        gender: (p.gender as any) || 'Laki-laki',
+        totalBamCost: getTotalBamCost(getStudentCategory(p)),
+        amountPaid: p.amount,
+        installmentType: 'Lunas' as const,
+        totalPaidToDate: p.amount,
+        remainingBalance: calculateBamRemaining(getTotalBamCost(getStudentCategory(p)), p.amount),
+        notes: p.notes,
+        proofUrl: p.proofUrl,
+        createdAt: p.createdAt,
+      }));
 
     // Simpan ke cache baca lokal murni tanpa memicu mutasi balik ke Supabase
     safeSetItem(KEYS.STUDENTS, JSON.stringify(cloudStudents));

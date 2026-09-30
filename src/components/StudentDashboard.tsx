@@ -10,7 +10,7 @@ import {
 import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule } from '../types';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
-import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
+import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF, generatePaymentReceiptPDF } from '../utils/pdfGenerator';
 import {
   canDownloadStudentForm,
   canStudentDownloadDocuments,
@@ -18,7 +18,8 @@ import {
   canStudentDownloadExamCard,
   hasUploadedPaymentProof,
 } from '../utils/formEligibility';
-import confetti from 'canvas-confetti';
+import { safeConfetti } from '../utils/confettiHelper';
+import { getStudentCredentials, fetchStudentCredentialsFromSupabase } from '../utils/studentCredentials';
 import { getStoredQuestionBank, getStoredTestSchedules, getStoredFormPayments, saveFormPayments, getStoredBamPayments, saveBamPayments } from '../utils/storage';
 import {
   CheckCircle2, Clock, AlertCircle, Download, Upload, CreditCard,
@@ -28,10 +29,14 @@ import {
   ChevronLeft, Flag, SendHorizontal, X, AlertTriangle, Eye, ZoomIn, ZoomOut, RotateCw, Save
 } from 'lucide-react';
 import {
-  compressPaymentProofImage,
+  validateProofFile,
   formatFileSize,
+  uploadPaymentProofToStorage,
+  cleanupOrphanStorageProof,
   downloadPaymentProof,
-  savePaymentProofRecord,
+  downloadPaymentProofFile,
+  getPaymentProofSignedUrl,
+  isPdfProof,
 } from '../utils/paymentProofStorage';
 import {
   BAM_CONFIG,
@@ -129,15 +134,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [motherJob, setMotherJob] = useState(studentData.motherJob || '');
   const [motherPhone, setMotherPhone] = useState(studentData.motherPhone || '');
 
-  // Proof URLs & BAM Payment details
+  // Proof URLs & BAM Payment details (Supabase Storage integration)
   const [formPaymentProof, setFormPaymentProof] = useState(studentData.formPaymentProofUrl || '');
+  const [formProofFileObj, setFormProofFileObj] = useState<File | null>(null);
+  const [isUploadingFormProof, setIsUploadingFormProof] = useState(false);
+  const [formUploadSuccessMsg, setFormUploadSuccessMsg] = useState('');
   const [formProofMeta, setFormProofMeta] = useState<{
     fileName: string;
     fileSize: number;
+    fileType: string;
     isCompressing: boolean;
   }>({
     fileName: studentData.formPaymentProofUrl ? 'bukti_transfer_formulir.jpg' : '',
     fileSize: 0,
+    fileType: 'image/jpeg',
     isCompressing: false,
   });
   const [showFormImageModal, setShowFormImageModal] = useState(false);
@@ -145,13 +155,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [formRotate, setFormRotate] = useState(0);
 
   const [initialPaymentProof, setInitialPaymentProof] = useState(studentData.initialPaymentProofUrl || '');
+  const [bamProofFileObj, setBamProofFileObj] = useState<File | null>(null);
+  const [isUploadingBamProof, setIsUploadingBamProof] = useState(false);
+  const [bamUploadSuccessMsg, setBamUploadSuccessMsg] = useState('');
   const [bamProofMeta, setBamProofMeta] = useState<{
     fileName: string;
     fileSize: number;
+    fileType: string;
     isCompressing: boolean;
   }>({
     fileName: studentData.initialPaymentProofUrl ? 'bukti_transfer_bam.jpg' : '',
     fileSize: 0,
+    fileType: 'image/jpeg',
     isCompressing: false,
   });
   const [initialPaymentDateInput, setInitialPaymentDateInput] = useState(studentData.initialPaymentDate || new Date().toISOString().split('T')[0]);
@@ -168,16 +183,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
-
-  const safeConfetti = (opts: any) => {
-    try {
-      if (typeof confetti === 'function') {
-        confetti(opts);
-      }
-    } catch (e) {
-      console.warn('Confetti error:', e);
-    }
-  };
 
   // Celebrate with confetti if Passed
   useEffect(() => {
@@ -335,6 +340,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const [showRetakeConfirmModal, setShowRetakeConfirmModal] = useState(false);
 
+  // Muat kredensial akun terpusat dari Supabase saat dashboard murid terbuka
+  useEffect(() => {
+    fetchStudentCredentialsFromSupabase().catch(() => {});
+  }, []);
+
   const handleDownloadExamCard = () => {
     if (!canDownloadExamCard) {
       alert(
@@ -344,20 +354,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     try {
       const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
-      const creds = {
-        username:
-          currentUser?.username ||
-          (currentUser?.email ? currentUser.email.split('@')[0] : '') ||
-          sessionStorage.getItem('spmb_last_student_username') ||
-          studentData.registrationNumber ||
-          'siswa',
-        password:
-          currentUser?.password ||
-          sessionStorage.getItem('spmb_last_student_password') ||
+      const storedCred = getStudentCredentials(studentData.id) || getStudentCredentials(studentData.registrationNumber) || getStudentCredentials(studentData.userEmail);
+      const embeddedCred = (studentData.testAnswers as any)?._accountCredentials || (studentData.testAnswers as any)?._credentials;
+
+      const candidateUsername = (
+        studentData.username ||
+        studentData.examUsername ||
+        embeddedCred?.username ||
+        storedCred?.username ||
+        currentUser?.username ||
+        (typeof window !== 'undefined' ? (
+          localStorage.getItem(`spmb_user_${studentData.id}`) ||
+          localStorage.getItem(`spmb_user_${studentData.registrationNumber}`) ||
+          localStorage.getItem(`spmb_user_${studentData.userEmail?.toLowerCase()}`) ||
+          ''
+        ) : '') ||
+        sessionStorage.getItem('spmb_last_student_username') ||
+        (studentData.userEmail ? studentData.userEmail.split('@')[0] : '') ||
+        studentData.registrationNumber ||
+        'siswa'
+      ).trim();
+
+      const candidatePassword = (
+        studentData.password ||
+        studentData.examPassword ||
+        embeddedCred?.password ||
+        storedCred?.password ||
+        currentUser?.password ||
+        (typeof window !== 'undefined' ? (
           localStorage.getItem(`spmb_cred_${studentData.id}`) ||
-          localStorage.getItem(`spmb_cred_${studentData.userEmail}`) ||
           localStorage.getItem(`spmb_cred_${studentData.registrationNumber}`) ||
-          'siswa123',
+          localStorage.getItem(`spmb_cred_${studentData.userEmail?.toLowerCase()}`) ||
+          localStorage.getItem(`spmb_cred_${candidateUsername.toLowerCase()}`) ||
+          ''
+        ) : '') ||
+        sessionStorage.getItem('spmb_last_student_password') ||
+        'siswa123'
+      ).trim();
+
+      const creds = {
+        username: candidateUsername,
+        password: candidatePassword,
       };
       generateExamCardPDF(studentData, schoolInfo, activeSched, creds);
     } catch (err: any) {
@@ -591,122 +628,147 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
-  // Specialized Upload & Auto-compress untuk Bukti Pembayaran Formulir
-  const handleFormProofFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload & Validasi Bukti Transfer Formulir (Supabase Storage)
+  const handleFormProofFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setFormProofMeta(prev => ({ ...prev, isCompressing: true }));
-    try {
-      const res = await compressPaymentProofImage(file);
-      setFormPaymentProof(res.dataUrl);
-      setFormProofMeta({
-        fileName: res.fileName,
-        fileSize: res.fileSize,
-        isCompressing: false,
-      });
-    } catch (err) {
-      console.warn('Kompresi bukti formulir fallback:', err);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormPaymentProof(reader.result as string);
-        setFormProofMeta({
-          fileName: file.name,
-          fileSize: file.size,
-          isCompressing: false,
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Specialized Upload & Auto-compress untuk Bukti Pembayaran BAM
-  const handleBamProofFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setBamProofMeta(prev => ({ ...prev, isCompressing: true }));
-    try {
-      const res = await compressPaymentProofImage(file);
-      setInitialPaymentProof(res.dataUrl);
-      setBamProofMeta({
-        fileName: res.fileName,
-        fileSize: res.fileSize,
-        isCompressing: false,
-      });
-    } catch (err) {
-      console.warn('Kompresi bukti BAM fallback:', err);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setInitialPaymentProof(reader.result as string);
-        setBamProofMeta({
-          fileName: file.name,
-          fileSize: file.size,
-          isCompressing: false,
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Handle Form Payment Upload (Tahap 3)
-  const handleUploadFormPayment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formPaymentProof) {
-      alert('Silakan unggah atau pilih foto bukti transfer terlebih dahulu.');
+    // 1. Validasi Keamanan Berkas: Maksimal 5 MB, Format: JPG, PNG, WEBP, PDF
+    const val = validateProofFile(file);
+    if (!val.valid) {
+      alert(val.error);
+      e.target.value = '';
       return;
     }
 
-    const regNo = studentData.registrationNumber || `SPMB202700${Math.floor(1000 + Math.random() * 9000)}`;
+    setFormProofFileObj(file);
+    const objectUrl = URL.createObjectURL(file);
+    setFormPaymentProof(objectUrl);
+    setFormProofMeta({
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || 'image/jpeg',
+      isCompressing: false,
+    });
+    setFormUploadSuccessMsg('');
+  };
 
+  // Upload & Validasi Bukti Transfer BAM (Supabase Storage)
+  const handleBamProofFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // 1. Validasi Keamanan Berkas: Maksimal 5 MB, Format: JPG, PNG, WEBP, PDF
+    const val = validateProofFile(file);
+    if (!val.valid) {
+      alert(val.error);
+      e.target.value = '';
+      return;
+    }
+
+    setBamProofFileObj(file);
+    const objectUrl = URL.createObjectURL(file);
+    setInitialPaymentProof(objectUrl);
+    setBamProofMeta({
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || 'image/jpeg',
+      isCompressing: false,
+    });
+    setBamUploadSuccessMsg('');
+  };
+
+  // Handle Form Payment Upload (Tahap 3 - Supabase Storage & Database Transaction)
+  const handleUploadFormPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formProofFileObj && !formPaymentProof) {
+      alert('Silakan pilih berkas bukti transfer terlebih dahulu.');
+      return;
+    }
+
+    if (!studentData.id) {
+      alert('Sesi siswa tidak valid. Silakan login kembali.');
+      return;
+    }
+
+    setIsUploadingFormProof(true);
+    setFormUploadSuccessMsg('');
+
+    const regNo = studentData.registrationNumber || `SPMB202700${Math.floor(1000 + Math.random() * 9000)}`;
+    const paymentId = `pay_form_${studentData.id}_${Date.now()}`;
+
+    let storagePath = formPaymentProof;
+    let fileName = formProofMeta.fileName || 'bukti_transfer_formulir.jpg';
+    let fileType = formProofMeta.fileType || 'image/jpeg';
+    let fileSize = formProofMeta.fileSize || 0;
+    let uploadedAt = new Date().toISOString();
+
+    // 1. Upload ke Supabase Storage (Bucket 'payment-proofs')
+    if (formProofFileObj) {
+      const uploadRes = await uploadPaymentProofToStorage(formProofFileObj, studentData.id, paymentId);
+      if (!uploadRes.success || !uploadRes.metadata) {
+        alert(uploadRes.error || 'Gagal mengunggah bukti transfer ke Supabase Storage.');
+        setIsUploadingFormProof(false);
+        return;
+      }
+      storagePath = uploadRes.metadata.storagePath;
+      fileName = uploadRes.metadata.fileName;
+      fileType = uploadRes.metadata.fileType;
+      fileSize = uploadRes.metadata.fileSize;
+      uploadedAt = uploadRes.metadata.uploadedAt;
+    }
+
+    // 2. Simpan referensi dan metadata ke database public.payments
+    const { data: createdPayment, error: dbErr } = await PaymentRepository.create({
+      id: paymentId,
+      studentId: studentData.id,
+      registrationNumber: regNo,
+      studentName: studentData.fullName,
+      gender: studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+      paymentType: 'form',
+      amount: studentData.formPaymentAmount || 200000,
+      status: 'pending', // Upload bukti != verifikasi. Status awal wajib MENUNGGU VERIFIKASI
+      proofUrl: storagePath,
+      proofStoragePath: storagePath,
+      proofFileName: fileName,
+      proofFileType: fileType,
+      proofFileSize: fileSize,
+      proofUploadedAt: uploadedAt,
+      paymentDate: new Date().toISOString().split('T')[0],
+      notes: 'Upload Bukti Formulir Calon Murid (Menunggu Verifikasi Admin)',
+    });
+
+    if (dbErr) {
+      // Transaction Safety: Cleanup file Storage yang gagal direferensikan
+      if (formProofFileObj && storagePath) {
+        await cleanupOrphanStorageProof(storagePath);
+      }
+      alert('Gagal menyimpan catatan bukti ke database Supabase: ' + dbErr.message);
+      setIsUploadingFormProof(false);
+      return;
+    }
+
+    // 3. Update status siswa (status pembayaran tetap MENUNGGU VERIFIKASI)
     const updated: StudentData = {
       ...studentData,
       registrationNumber: regNo,
-      formPaymentProofUrl: formPaymentProof,
+      formPaymentProofUrl: storagePath,
       formPaymentDate: new Date().toISOString().split('T')[0],
-      formPaymentStatus: 'verified', // Status Pembayaran LUNAS
+      formPaymentStatus: 'pending', // MENUNGGU VERIFIKASI
+      isFormVerified: false,
+      isFormVerifiedByAdmin: false,
+      formPaymentNotes: 'Bukti transfer terunggah. Menunggu verifikasi Panitia Admin.',
       status: studentData.status === 'pending_payment' || studentData.status === 'draft' || studentData.status === 'verifying_payment' ? 'filling_form' : studentData.status,
     };
 
     onUpdateStudentData(updated);
 
-    // 1. Simpan ke sistem arsip bukti transfer database
-    savePaymentProofRecord({
-      id: `proof_form_${studentData.id}_${Date.now()}`,
-      studentId: studentData.id,
-      registrationNumber: regNo,
-      studentName: studentData.fullName,
-      paymentType: 'form',
-      fileName: formProofMeta.fileName || `Bukti_Formulir_${studentData.fullName.replace(/\s+/g, '_')}.jpg`,
-      fileSize: formProofMeta.fileSize || 120000,
-      fileType: 'image/jpeg',
-      dataUrl: formPaymentProof,
-      uploadedAt: new Date().toISOString(),
-      amount: studentData.formPaymentAmount || 200000,
-      status: 'verified',
-      gender: studentData.gender,
-      notes: 'Bukti Pembayaran Formulir Pendaftaran (Tersimpan di Database & Terverifikasi)',
-    }).catch(err => console.warn('savePaymentProofRecord form:', err));
-
-    // 2. Sinkronkan langsung ke daftar Form Payment Admin & Supabase
+    // Sinkronkan ke form payments admin cache jika perlu
     try {
-      PaymentRepository.create({
-        studentId: studentData.id,
-        studentName: studentData.fullName,
-        registrationNumber: regNo,
-        gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
-        paymentType: 'form',
-        amount: studentData.formPaymentAmount || 200000,
-        paymentDate: new Date().toISOString().split('T')[0],
-        proofUrl: formPaymentProof,
-        status: 'verified',
-        notes: 'Upload Bukti Formulir Calon Murid (Siap Diperiksa Admin)',
-      }).catch(err => console.warn('PaymentRepository.create form:', err));
-
       const existingFormPayments = getStoredFormPayments();
       const updatedFormPayments = [
         {
-          id: `fpay_${studentData.id}_${Date.now()}`,
+          id: paymentId,
           transactionNumber: `TRX-FORM-${regNo.slice(-6)}`,
           paymentDate: new Date().toISOString().split('T')[0],
           studentId: studentData.id,
@@ -715,9 +777,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki') as 'Laki-laki' | 'Perempuan',
           amount: studentData.formPaymentAmount || 200000,
           category: 'Internal' as const,
-          proofUrl: formPaymentProof,
-          status: 'verified' as const,
-          notes: 'Upload Bukti Formulir Calon Murid (Siap Diperiksa Admin)',
+          proofUrl: storagePath,
+          status: 'pending' as const,
+          notes: 'Upload Bukti Formulir Calon Murid (Menunggu Verifikasi Admin)',
           createdAt: new Date().toISOString(),
         },
         ...existingFormPayments.filter(f => f.studentId !== studentData.id),
@@ -727,19 +789,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       console.warn('saveFormPayments sync error:', e);
     }
 
+    setIsUploadingFormProof(false);
+    setFormProofFileObj(null);
+    setFormUploadSuccessMsg('✓ Bukti transfer berhasil disimpan.');
+
     safeConfetti({
-      particleCount: 100,
-      spread: 80,
+      particleCount: 80,
+      spread: 70,
       origin: { y: 0.5 }
     });
 
     alert(
-      '🎉 Data Bukti Transfer Pembayaran Formulir Berhasil Disimpan di Database!\n\nStatus Pembayaran: LUNAS ✅\nNomor Pendaftaran: ' +
+      '✓ Bukti transfer berhasil disimpan.\n\nStatus Pembayaran: MENUNGGU VERIFIKASI ⏳\nNomor Pendaftaran: ' +
         regNo +
-        '\n\n1. Menu Isi Data & Berkas sekarang telah AKTIF dan siap diisi.\n2. Fitur Download Kartu Ujian sekarang telah AKTIF dan siap diunduh/dicetak.'
+        '\n\nBukti transfer telah tersimpan aman di Supabase Storage. Panitia Admin akan segera memeriksa dan memverifikasi pembayaran Anda.'
     );
     
-    // Switch directly to the active form tab
+    // Switch to form tab
     setActiveTab('form');
   };
 
@@ -798,67 +864,96 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }, 600);
   };
 
-  // Handle Re-registration Initial Payment Upload (Tahap 10)
-  const handleUploadInitialPayment = (e: React.FormEvent) => {
+  // Handle Re-registration Initial Payment Upload (Tahap 10 - Supabase Storage & Database Transaction)
+  const handleUploadInitialPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!initialPaymentProof) {
-      alert('Silakan unggah atau pilih foto bukti transfer Biaya Awal Masuk (BAM) terlebih dahulu!');
+    if (!bamProofFileObj && !initialPaymentProof) {
+      alert('Silakan pilih berkas bukti transfer Biaya Awal Masuk (BAM) terlebih dahulu!');
       return;
     }
+
+    if (!studentData.id) {
+      alert('Sesi siswa tidak valid. Silakan login kembali.');
+      return;
+    }
+
+    setIsUploadingBamProof(true);
+    setBamUploadSuccessMsg('');
 
     const category = getStudentCategory(studentData);
     const totalCost = getTotalBamCost(category);
     const amountToSave = Number(initialPaymentAmountInput) || totalCost;
+    const paymentId = `pay_bam_${studentData.id}_${Date.now()}`;
 
+    let storagePath = initialPaymentProof;
+    let fileName = bamProofMeta.fileName || 'bukti_transfer_bam.jpg';
+    let fileType = bamProofMeta.fileType || 'image/jpeg';
+    let fileSize = bamProofMeta.fileSize || 0;
+    let uploadedAt = new Date().toISOString();
+
+    // 1. Upload file ke Supabase Storage (Bucket 'payment-proofs')
+    if (bamProofFileObj) {
+      const uploadRes = await uploadPaymentProofToStorage(bamProofFileObj, studentData.id, paymentId);
+      if (!uploadRes.success || !uploadRes.metadata) {
+        alert(uploadRes.error || 'Gagal mengunggah bukti BAM ke Supabase Storage.');
+        setIsUploadingBamProof(false);
+        return;
+      }
+      storagePath = uploadRes.metadata.storagePath;
+      fileName = uploadRes.metadata.fileName;
+      fileType = uploadRes.metadata.fileType;
+      fileSize = uploadRes.metadata.fileSize;
+      uploadedAt = uploadRes.metadata.uploadedAt;
+    }
+
+    // 2. Simpan referensi dan metadata ke database Supabase public.payments
+    const { error: dbErr } = await PaymentRepository.create({
+      id: paymentId,
+      studentId: studentData.id,
+      studentName: studentData.fullName,
+      registrationNumber: studentData.registrationNumber || 'REG-SPMB',
+      gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
+      paymentType: 'bam',
+      amount: amountToSave,
+      paymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
+      proofUrl: storagePath,
+      proofStoragePath: storagePath,
+      proofFileName: fileName,
+      proofFileType: fileType,
+      proofFileSize: fileSize,
+      proofUploadedAt: uploadedAt,
+      status: 'pending', // Upload bukti != verifikasi. Status awal wajib MENUNGGU VERIFIKASI
+      notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
+    });
+
+    if (dbErr) {
+      // Transaction Safety: Cleanup file Storage yang gagal direferensikan
+      if (bamProofFileObj && storagePath) {
+        await cleanupOrphanStorageProof(storagePath);
+      }
+      alert('Gagal menyimpan catatan bukti BAM ke database Supabase: ' + dbErr.message);
+      setIsUploadingBamProof(false);
+      return;
+    }
+
+    // 3. Update status siswa
     const updated: StudentData = {
       ...studentData,
-      initialPaymentProofUrl: initialPaymentProof,
+      initialPaymentProofUrl: storagePath,
       initialPaymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
       initialPaymentAmount: amountToSave,
-      initialPaymentStatus: 'pending',
+      initialPaymentStatus: 'pending', // MENUNGGU VERIFIKASI
       initialPaymentNotes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
       status: 're_registration_paid',
     };
 
     onUpdateStudentData(updated);
 
-    // 1. Simpan ke sistem arsip bukti transfer database
-    savePaymentProofRecord({
-      id: `proof_bam_${studentData.id}_${Date.now()}`,
-      studentId: studentData.id,
-      registrationNumber: studentData.registrationNumber || 'REG-SPMB',
-      studentName: studentData.fullName,
-      paymentType: 'bam',
-      fileName: bamProofMeta.fileName || `Bukti_BAM_${studentData.fullName.replace(/\s+/g, '_')}.jpg`,
-      fileSize: bamProofMeta.fileSize || 180000,
-      fileType: 'image/jpeg',
-      dataUrl: initialPaymentProof,
-      uploadedAt: new Date().toISOString(),
-      amount: amountToSave,
-      status: 'pending',
-      gender: studentData.gender,
-      notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
-    }).catch(err => console.warn('savePaymentProofRecord BAM:', err));
-
-    // 2. Sinkronkan langsung ke daftar BAM Payment Admin & Supabase
     try {
-      PaymentRepository.create({
-        studentId: studentData.id,
-        studentName: studentData.fullName,
-        registrationNumber: studentData.registrationNumber || 'REG-SPMB',
-        gender: (studentData.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
-        paymentType: 'bam',
-        amount: amountToSave,
-        paymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
-        proofUrl: initialPaymentProof,
-        status: 'pending',
-        notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
-      }).catch(err => console.warn('PaymentRepository.create BAM:', err));
-
       const existingBamPayments = getStoredBamPayments();
       const updatedBamPayments = [
         {
-          id: `bampay_${studentData.id}_${Date.now()}`,
+          id: paymentId,
           transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
           paymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
           studentId: studentData.id,
@@ -870,7 +965,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           installmentType: initialPaymentTypeInput,
           totalPaidToDate: amountToSave,
           remainingBalance: calculateBamRemaining(totalCost, amountToSave),
-          proofUrl: initialPaymentProof,
+          proofUrl: storagePath,
+          status: 'pending' as const,
           notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
           createdAt: new Date().toISOString(),
         },
@@ -881,13 +977,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       console.warn('saveBamPayments sync error:', e);
     }
 
+    setIsUploadingBamProof(false);
+    setBamProofFileObj(null);
+    setBamUploadSuccessMsg('✓ Bukti transfer berhasil disimpan.');
+
     safeConfetti({
-      particleCount: 120,
-      spread: 80,
+      particleCount: 100,
+      spread: 75,
       origin: { y: 0.5 }
     });
 
-    alert('🎉 Data Bukti Transfer BAM Berhasil Disimpan di Database!\n\nStatus Pembayaran: MENUNGGU VERIFIKASI ADMIN ⏳\nNominal: Rp ' + amountToSave.toLocaleString('id-ID') + '\n\nBukti transfer Biaya Awal Masuk telah tersimpan aman dan terkirim ke Panitia SPMB SMP Al-Hadiid Cileungsi.');
+    alert('✓ Bukti transfer berhasil disimpan.\n\nStatus Pembayaran: MENUNGGU VERIFIKASI ⏳\nNominal: Rp ' + amountToSave.toLocaleString('id-ID') + '\n\nBukti transfer Biaya Awal Masuk telah tersimpan aman di Supabase Storage dan sedang menunggu pemeriksaan Panitia SPMB.');
   };
 
   // Check if student has completed & submitted the full form
@@ -1511,168 +1611,213 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="text-sm font-bold text-slate-900">Upload Bukti Transfer Pembayaran Formulir</div>
 
                 <form onSubmit={handleUploadFormPayment} className="space-y-4 text-xs">
+                  {/* Rejection Alert Banner jika bukti ditolak oleh Admin */}
+                  {(studentData.formPaymentStatus === 'rejected' || (studentData.formPaymentNotes && studentData.formPaymentNotes.includes('Ditolak'))) && (
+                    <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 space-y-1 animate-in fade-in">
+                      <div className="flex items-center gap-2 font-bold text-xs text-rose-900">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>Bukti Pembayaran Ditolak oleh Panitia Admin</span>
+                      </div>
+                      <p className="text-[11px] text-rose-800">
+                        <span className="font-semibold">Catatan / Alasan:</span>{' '}
+                        <span className="italic">{studentData.formPaymentNotes || 'Bukti transfer tidak memenuhi syarat / buram.'}</span>
+                      </p>
+                      <p className="text-[10px] text-rose-600 pt-0.5">
+                        Silakan pilih dan upload ulang foto/file bukti transfer yang jelas di bawah ini. Histori pendaftaran Anda tetap aman.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Success Upload Banner */}
+                  {formUploadSuccessMsg && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{formUploadSuccessMsg} (Status: MENUNGGU VERIFIKASI)</span>
+                    </div>
+                  )}
+
                   {/* File Upload Selector / Dropzone */}
                   <div className="space-y-2">
                     <label className="block font-semibold text-slate-700">
-                      Upload Foto Bukti Transfer (Rp 200.000)
+                      Pilih Berkas Bukti Transfer (Rp 200.000)
                     </label>
                     <div className="border-2 border-dashed border-slate-300 hover:border-blue-500 transition-colors rounded-2xl p-4 bg-white text-center relative group cursor-pointer">
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/jpeg,image/png,image/webp,application/pdf"
                         onChange={handleFormProofFile}
                         className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                        disabled={isUploadingFormProof}
                       />
                       <div className="flex flex-col items-center gap-2">
                         <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-                          {formProofMeta.isCompressing ? (
+                          {isUploadingFormProof ? (
                             <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
                           ) : (
                             <Upload className="w-5 h-5" />
                           )}
                         </div>
                         <div className="text-xs font-semibold text-slate-700">
-                          {formProofMeta.isCompressing ? 'Sedang mengoptimalkan & menyimpan foto bukti...' : 'Pilih File Foto Bukti Pembayaran'}
+                          {isUploadingFormProof ? 'Sedang Mengunggah Berkas ke Supabase Storage...' : 'Pilih File Bukti Transfer (JPG, PNG, WEBP, atau PDF)'}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          Klik di sini untuk unggah foto dari HP/Komputer (JPG, PNG, WEBP)
+                          Maksimal 5 MB • Disimpan secara permanen & aman di Supabase Storage
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Image Preview & Storage Details if uploaded */}
+                  {/* Image/PDF Preview & File Metadata Details */}
                   {formPaymentProof && (
                     <div className="p-3.5 bg-white rounded-xl border border-blue-200 space-y-3 shadow-xs">
                       <div className="flex items-center justify-between text-[11px] font-bold text-slate-800 border-b border-slate-100 pb-2">
                         <span className="flex items-center gap-1.5 text-blue-800">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          <span>Bukti Transfer Formulir Tersimpan:</span>
+                          <span>Pratinjau Berkas Bukti Transfer:</span>
                         </span>
                         <button
                           type="button"
                           onClick={() => {
                             setFormPaymentProof('');
-                            setFormProofMeta({ fileName: '', fileSize: 0, isCompressing: false });
+                            setFormProofFileObj(null);
+                            setFormProofMeta({ fileName: '', fileSize: 0, fileType: 'image/jpeg', isCompressing: false });
+                            setFormUploadSuccessMsg('');
                           }}
                           className="text-rose-600 hover:underline text-[10px] cursor-pointer"
                         >
-                          Hapus / Ganti
+                          Ganti File
                         </button>
                       </div>
 
-                      {/* File Info Badge */}
-                      <div className="flex items-center justify-between bg-slate-50 px-3 py-1.5 rounded-lg text-[10px] text-slate-600">
-                        <span className="truncate max-w-[200px] font-mono font-medium">
-                          📄 {formProofMeta.fileName || 'bukti_transfer_formulir.jpg'}
-                        </span>
-                        {formProofMeta.fileSize > 0 && (
-                          <span className="font-bold text-blue-700 shrink-0">
-                            {formatFileSize(formProofMeta.fileSize)}
+                      {/* File Metadata Info */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg text-[10px] text-slate-600 font-medium">
+                        <div className="truncate">
+                          <span className="text-slate-400 block text-[9px] uppercase font-bold">Nama File</span>
+                          <span className="font-mono text-slate-800 truncate block">
+                            {formProofMeta.fileName || 'bukti_transfer.jpg'}
                           </span>
-                        )}
-                      </div>
-
-                      <div className="max-h-48 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-1 relative group">
-                        <img
-                          src={formPaymentProof}
-                          alt="Bukti Transfer"
-                          className="max-h-44 object-contain rounded"
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setShowFormImageModal(true)}
-                            className="px-2.5 py-1 bg-white text-slate-900 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
-                          >
-                            <Eye className="w-3.5 h-3.5 text-blue-600" />
-                            <span>Perbesar</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
-                            className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Unduh</span>
-                          </button>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[9px] uppercase font-bold">Ukuran File</span>
+                          <span className="font-bold text-blue-700">
+                            {formatFileSize(formProofMeta.fileSize || 0)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[9px] uppercase font-bold">Tipe File</span>
+                          <span className="font-mono text-slate-800">
+                            {formProofMeta.fileType || 'image/jpeg'}
+                          </span>
                         </div>
                       </div>
 
-                      {/* Actions underneath preview */}
-                      <div className="flex items-center justify-between gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setShowFormImageModal(true)}
-                          className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Perbesar Foto Bukti</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
-                          className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Unduh File Bukti</span>
-                        </button>
-                      </div>
+                      {/* Preview Viewer (Image / PDF) */}
+                      {isPdfProof(formPaymentProof, formProofMeta.fileType || formProofMeta.fileName) ? (
+                        <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center space-y-2">
+                          <FileText className="w-12 h-12 text-rose-500 mx-auto" />
+                          <div className="font-bold text-xs text-slate-800">
+                            Dokumen PDF Bukti Transfer Siap Diupload
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-mono">
+                            {formProofMeta.fileName || 'dokumen_bukti.pdf'}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="max-h-52 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-1 relative group">
+                          <img
+                            src={formPaymentProof}
+                            alt="Pratinjau Bukti Transfer"
+                            className="max-h-48 object-contain rounded"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowFormImageModal(true)}
+                              className="px-2.5 py-1 bg-white text-slate-900 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Perbesar</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
+                              className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Unduh</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-
-                  {/* URL input option */}
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      Atau Masukkan Link/URL Gambar (Opsional):
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="https://..."
-                      value={formPaymentProof}
-                      onChange={(e) => setFormPaymentProof(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormPaymentProof('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=60')}
-                      className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-colors"
-                    >
-                      <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Gunakan Simulasi Bukti Transfer Demo</span>
-                    </button>
-                  </div>
 
                   {/* Status Indicator Card */}
                   <div className={`p-4 rounded-xl border text-xs ${
                     studentData.formPaymentStatus === 'verified'
                       ? 'bg-blue-50/80 border-blue-200 text-blue-900'
-                      : 'bg-amber-50/80 border-amber-200 text-amber-900'
+                      : studentData.formPaymentStatus === 'rejected'
+                      ? 'bg-rose-50/80 border-rose-200 text-rose-900'
+                      : studentData.formPaymentProofUrl || !!formPaymentProof
+                      ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                      : 'bg-slate-50 border-slate-200 text-slate-700'
                   }`}>
                     <div className="font-semibold text-slate-700">Status Pembayaran Formulir:</div>
                     <div className="font-extrabold text-sm uppercase mt-0.5 flex items-center gap-1.5">
                       {studentData.formPaymentStatus === 'verified' ? (
                         <>
-                          <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                          <span className="text-blue-700">LUNAS & DIVERIFIKASI ✓</span>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span className="text-emerald-700">TERVERIFIKASI (LUNAS) ✓</span>
+                        </>
+                      ) : studentData.formPaymentStatus === 'rejected' ? (
+                        <>
+                          <AlertCircle className="w-4 h-4 text-rose-600" />
+                          <span className="text-rose-700">DITOLAK ✕ (Silakan Upload Ulang)</span>
+                        </>
+                      ) : studentData.formPaymentProofUrl ? (
+                        <>
+                          <Clock className="w-4 h-4 text-amber-600" />
+                          <span className="text-amber-700">MENUNGGU VERIFIKASI ⏳</span>
                         </>
                       ) : (
                         <>
-                          <Clock className="w-4 h-4 text-amber-600" />
-                          <span className="text-amber-700">BELUM LUNAS</span>
+                          <Clock className="w-4 h-4 text-slate-400" />
+                          <span className="text-slate-600">BELUM UPLOAD BUKTI</span>
                         </>
                       )}
                     </div>
+
                     {studentData.formPaymentStatus === 'verified' || !!studentData.formPaymentProofUrl ? (
-                      <div className="space-y-3 mt-3 pt-3 border-t border-blue-200">
-                        <div className="text-[11px] text-blue-800 font-medium">
-                          🎉 Bukti transfer telah terunggah! Menu <b>Isi Data & Berkas</b> telah <b>AKTIF</b> dan fitur <b>Download Kartu Ujian</b> siap dicetak.
+                      <div className="space-y-3 mt-3 pt-3 border-t border-slate-200/80">
+                        <div className="text-[11px] text-slate-700 font-medium">
+                          {studentData.formPaymentStatus === 'verified'
+                            ? '✓ Pembayaran formulir telah diverifikasi oleh Admin Panitia. Formulir pendaftaran resmi siap dicetak/didownload.'
+                            : '⏳ Bukti transfer telah terunggah ke Supabase Storage. Panitia sedang memverifikasi bukti Anda. Anda dapat melanjutkan pengisian data formulir.'}
                         </div>
                         <div className="flex flex-wrap gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              generatePaymentReceiptPDF(
+                                {
+                                  id: `PAY-FORM-${studentData.registrationNumber || studentData.id}`,
+                                  amount: schoolInfo.formFee || 200000,
+                                  payment_type: 'formulir',
+                                  payment_date: studentData.createdAt,
+                                  payment_method: 'Transfer Bank Syariah Indonesia (BSI)',
+                                  status: studentData.formPaymentStatus || 'verified',
+                                  verified_by: 'Panitia Keuangan SPMB',
+                                },
+                                studentData,
+                                schoolInfo
+                              );
+                            }}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5 text-amber-300" />
+                            <span>Download Kuitansi Bayar (PDF)</span>
+                          </button>
                           <button
                             type="button"
                             onClick={handleDownloadExamCard}
@@ -1694,17 +1839,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
                     ) : (
                       <div className="text-[11px] text-amber-800 mt-2">
-                        Silakan unggah bukti transfer dan klik tombol di bawah untuk mengonfirmasi pembayaran dan mengaktifkan formulir serta Kartu Ujian.
+                        Silakan unggah foto/scan bukti transfer dan klik tombol di bawah untuk mengirimkan bukti transfer ke database dan Panitia Admin.
                       </div>
                     )}
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-xs"
+                    disabled={isUploadingFormProof}
+                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-400 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-xs cursor-pointer active:scale-98"
                   >
-                    <Upload className="w-4 h-4" />
-                    <span>Upload & Konfirmasi Lunas Sekarang</span>
+                    {isUploadingFormProof ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                        <span>Menyimpan Bukti ke Supabase Storage...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4" />
+                        <span>Upload Bukti Transfer Formulir (Rp 200.000)</span>
+                      </>
+                    )}
                   </button>
                 </form>
               </div>
@@ -2940,42 +3095,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Cost Itemization Breakdown */}
                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
                     {(() => {
-                      const isAkhwat = studentData.gender === 'Perempuan';
-                      const itemsToRender = (costBreakdowns && costBreakdowns.length >= 10) ? costBreakdowns : BAM_BREAKDOWN_ITEMS;
-                      const calculatedTotal = itemsToRender.reduce((acc: number, curr: any) => {
-                        const val = isAkhwat ? (curr.amountAkhwat ?? curr.amount ?? 0) : (curr.amountIkhwan ?? curr.amount ?? 0);
-                        return acc + Number(val);
-                      }, 0);
+                      const category = getStudentCategory(studentData);
+                      const totalBam = getTotalBamCost(category);
+                      const lunasDiscounted = category === 'Internal' ? BAM_CONFIG.totalInternalLunas : BAM_CONFIG.totalExternalLunas;
 
                       return (
                         <>
                           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                             <div>
                               <div className="text-sm font-bold text-slate-900">Rincian Komponen Biaya Awal Masuk (BAM):</div>
-                              <div className="text-[11px] text-slate-500">Sesuai Brosur & Kebijakan SPMB SMP Al-Hadiid (Landing Page)</div>
+                              <div className="text-[11px] text-slate-500">Sesuai Brosur & Kebijakan SPMB SMP Al-Hadiid</div>
                             </div>
                             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
-                              isAkhwat
-                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                              category === 'Internal'
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             }`}>
-                              Kategori Santri: {isAkhwat ? 'Akhwat (Putri)' : 'Ikhwan (Putra)'}
+                              Kategori: {category === 'Internal' ? 'Al-Hadiid (Internal)' : 'Umum (Eksternal)'}
                             </span>
                           </div>
 
                           <div className="space-y-2 text-xs">
-                            {itemsToRender.map((item: any, idx: number) => {
-                              const amount = isAkhwat
-                                ? Number(item.amountAkhwat ?? item.amount ?? 0)
-                                : Number(item.amountIkhwan ?? item.amount ?? 0);
-                              const title = item.title || item.name;
-                              const desc = item.description || item.notes || '';
-                              const period = item.period || 'Sekali';
+                            {BAM_BREAKDOWN_ITEMS.map((item) => {
+                              const amount = category === 'Internal' ? item.amountInternal : item.amountExternal;
                               return (
-                                <div key={item.id || idx} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between items-center hover:border-slate-300 transition-colors">
+                                <div key={item.id} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between items-center hover:border-slate-300 transition-colors">
                                   <div className="pr-2">
-                                    <div className="font-bold text-slate-900">{title}</div>
-                                    <div className="text-slate-500 text-[10px]">{desc} ({period})</div>
+                                    <div className="font-bold text-slate-900">{item.name}</div>
+                                    <div className="text-slate-500 text-[10px]">{item.notes} ({item.period})</div>
                                   </div>
                                   <div className="font-bold font-mono text-emerald-800 whitespace-nowrap ml-2">
                                     Rp {amount.toLocaleString('id-ID')}
@@ -2987,13 +3134,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             {/* Total Banner */}
                             <div className="p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center mt-3 shadow-sm">
                               <div>
-                                <span className="font-bold uppercase text-xs block">
-                                  Total Biaya Awal Masuk ({isAkhwat ? 'Akhwat / Putri' : 'Ikhwan / Putra'}):
-                                </span>
-                                <span className="text-[10px] text-slate-400">Total standar sesuai SK Biaya Pendidikan</span>
+                                <span className="font-bold uppercase text-xs block">Total Biaya Awal Masuk ({category}):</span>
+                                <span className="text-[10px] text-slate-400">Belum termasuk potongan diskon lunas</span>
                               </div>
                               <span className="text-xl font-black font-mono text-amber-300">
-                                Rp {calculatedTotal.toLocaleString('id-ID')}
+                                Rp {totalBam.toLocaleString('id-ID')}
                               </span>
                             </div>
 
@@ -3001,9 +3146,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-[11px] flex items-start gap-2">
                               <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                               <div>
-                                <span className="font-bold">Opsi Pembayaran Lunas Langsung:</span>
+                                <span className="font-bold">Potongan Khusus Pelunasan Sekaligus (100%):</span>
                                 <p className="text-emerald-800 mt-0.5">
-                                  Calon santri dapat melunasi BAM saat daftar ulang sebesar <span className="font-bold font-mono">Rp {calculatedTotal.toLocaleString('id-ID')}</span> (Bebas tagihan lanjutan) atau mencicil dalam 3 tahapan.
+                                  Bagi calon santri yang melunasi BAM saat daftar ulang berhak mendapatkan potongan <span className="font-bold underline">Rp 500.000</span> sehingga total biaya menjadi <span className="font-bold font-mono">Rp {lunasDiscounted.toLocaleString('id-ID')}</span>.
                                 </p>
                               </div>
                             </div>
@@ -3016,9 +3161,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                 {BAM_INSTALLMENT_STEPS.map((step) => {
-                                  const stepAmount = isAkhwat
-                                    ? (step.amountAkhwat || step.amountExternal)
-                                    : (step.amountIkhwan || step.amountInternal);
+                                  const stepAmount = category === 'Internal' ? step.amountInternal : step.amountExternal;
                                   return (
                                     <div key={step.step} className="p-2.5 bg-white rounded-xl border border-slate-200 text-[11px]">
                                       <div className="font-bold text-slate-800">{step.title}</div>
@@ -3051,99 +3194,149 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </p>
                     </div>
                     <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
-                      Format: Gambar / Foto
+                      Maksimal 5 MB
                     </span>
                   </div>
 
                   <form onSubmit={handleUploadInitialPayment} className="space-y-4 text-xs">
+                    {/* Rejection Alert Banner jika bukti BAM ditolak oleh Admin */}
+                    {(studentData.initialPaymentStatus === 'rejected' || (studentData.initialPaymentNotes && studentData.initialPaymentNotes.includes('Ditolak'))) && (
+                      <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 space-y-1 animate-in fade-in">
+                        <div className="flex items-center gap-2 font-bold text-xs text-rose-900">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>Bukti Transfer BAM Ditolak oleh Panitia Admin</span>
+                        </div>
+                        <p className="text-[11px] text-rose-800">
+                          <span className="font-semibold">Alasan Penolakan:</span>{' '}
+                          <span className="italic">{studentData.initialPaymentNotes || 'Bukti transfer tidak memenuhi syarat / buram.'}</span>
+                        </p>
+                        <p className="text-[10px] text-rose-600 pt-0.5">
+                          Silakan pilih dan upload ulang foto/berkas bukti transfer BAM yang jelas di bawah ini.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Success Upload Banner */}
+                    {bamUploadSuccessMsg && (
+                      <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{bamUploadSuccessMsg} (Status: MENUNGGU VERIFIKASI)</span>
+                      </div>
+                    )}
+
                     {/* File Dropzone Selector */}
                     <div className="space-y-2">
                       <label className="block font-bold text-slate-800">
-                        1. Pilih / Drag Foto Bukti Transfer BAM <span className="text-rose-500">*</span>
+                        1. Pilih / Unggah Berkas Bukti Transfer BAM <span className="text-rose-500">*</span>
                       </label>
                       <div className="border-2 border-dashed border-slate-300 hover:border-emerald-500 transition-colors rounded-2xl p-5 bg-white text-center relative group cursor-pointer">
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/jpeg,image/png,image/webp,application/pdf"
                           onChange={handleBamProofFile}
                           className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                          disabled={isUploadingBamProof}
                         />
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-inner">
-                            {bamProofMeta.isCompressing ? (
+                            {isUploadingBamProof ? (
                               <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
                             ) : (
                               <Upload className="w-6 h-6 animate-pulse" />
                             )}
                           </div>
                           <div className="text-xs font-bold text-slate-800">
-                            {bamProofMeta.isCompressing ? 'Sedang memproses & mengompresi foto bukti BAM...' : 'Klik di sini untuk Memilih Foto Bukti Transfer BAM'}
+                            {isUploadingBamProof ? 'Sedang Menyimpan Berkas ke Supabase Storage...' : 'Klik di sini untuk Memilih Berkas Bukti Transfer BAM'}
                           </div>
                           <div className="text-[10px] text-slate-400">
-                            Mendukung foto dari Galeri HP / Komputer (JPG, PNG, WEBP)
+                            Mendukung JPG, PNG, WEBP, atau PDF (Maks. 5 MB) • Disimpan Aman di Supabase Storage
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Image Preview Box */}
+                    {/* Image / PDF Preview Box */}
                     {initialPaymentProof && (
                       <div className="p-4 bg-white rounded-2xl border border-emerald-200 space-y-3 shadow-sm">
                         <div className="flex items-center justify-between text-xs font-bold text-slate-800 border-b border-emerald-100 pb-2">
                           <span className="flex items-center gap-1.5 text-emerald-700">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>Foto Bukti Transfer BAM Tersimpan:</span>
+                            <span>Pratinjau Berkas Bukti Transfer BAM:</span>
                           </span>
                           <button
                             type="button"
                             onClick={() => {
                               setInitialPaymentProof('');
-                              setBamProofMeta({ fileName: '', fileSize: 0, isCompressing: false });
+                              setBamProofFileObj(null);
+                              setBamProofMeta({ fileName: '', fileSize: 0, fileType: 'image/jpeg', isCompressing: false });
+                              setBamUploadSuccessMsg('');
                             }}
                             className="text-rose-600 hover:underline text-[11px] font-bold cursor-pointer"
                           >
-                            Hapus / Ganti
+                            Ganti File
                           </button>
                         </div>
 
-                        {/* File Info Badge */}
-                        <div className="flex items-center justify-between bg-emerald-50/50 px-3 py-1.5 rounded-lg text-[10px] text-slate-600">
-                          <span className="truncate max-w-[200px] font-mono font-medium text-emerald-900">
-                            📄 {bamProofMeta.fileName || 'bukti_transfer_bam.jpg'}
-                          </span>
-                          {bamProofMeta.fileSize > 0 && (
-                            <span className="font-bold text-emerald-700 shrink-0">
-                              {formatFileSize(bamProofMeta.fileSize)}
+                        {/* File Metadata Info Badge */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-emerald-50/50 p-2.5 rounded-lg text-[10px] text-slate-600 font-medium">
+                          <div className="truncate">
+                            <span className="text-slate-400 block text-[9px] uppercase font-bold">Nama File</span>
+                            <span className="font-mono text-emerald-900 truncate block">
+                              {bamProofMeta.fileName || 'bukti_transfer_bam.jpg'}
                             </span>
-                          )}
-                        </div>
-
-                        <div className="max-h-56 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-2 relative group">
-                          <img
-                            src={initialPaymentProof}
-                            alt="Bukti Transfer BAM"
-                            className="max-h-52 object-contain rounded-lg"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setShowBamImageModal(true)}
-                              className="px-3 py-1.5 bg-slate-900 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-amber-300" />
-                              <span>Pratinjau Full</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
-                              className="px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              <span>Unduh</span>
-                            </button>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px] uppercase font-bold">Ukuran File</span>
+                            <span className="font-bold text-emerald-700">
+                              {formatFileSize(bamProofMeta.fileSize || 0)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px] uppercase font-bold">Tipe File</span>
+                            <span className="font-mono text-slate-800">
+                              {bamProofMeta.fileType || 'image/jpeg'}
+                            </span>
                           </div>
                         </div>
+
+                        {isPdfProof(initialPaymentProof, bamProofMeta.fileType || bamProofMeta.fileName) ? (
+                          <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center space-y-2">
+                            <FileText className="w-12 h-12 text-rose-500 mx-auto" />
+                            <div className="font-bold text-xs text-slate-800">
+                              Dokumen PDF Bukti Transfer BAM Siap Diupload
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono">
+                              {bamProofMeta.fileName || 'dokumen_bukti_bam.pdf'}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="max-h-56 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-2 relative group">
+                            <img
+                              src={initialPaymentProof}
+                              alt="Bukti Transfer BAM"
+                              className="max-h-52 object-contain rounded-lg"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowBamImageModal(true)}
+                                className="px-3 py-1.5 bg-slate-900 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-amber-300" />
+                                <span>Pratinjau Full</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
+                                className="px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Unduh</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Actions below preview */}
                         <div className="space-y-2 pt-1">
@@ -3213,13 +3406,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <label className="block font-bold text-slate-700">
                             4. Nominal Transfer (Rp) <span className="text-rose-500">*</span>
                           </label>
-                          <span className="text-[10px] text-slate-500">
-                            Target BAM ({studentData.gender === 'Perempuan' ? 'Akhwat' : 'Ikhwan'}): <span className="font-bold font-mono text-emerald-700">Rp {totalBamCost.toLocaleString('id-ID')}</span>
-                          </span>
+                          {(() => {
+                            const category = getStudentCategory(studentData);
+                            return (
+                              <span className="text-[10px] text-slate-500">
+                                Target BAM: <span className="font-bold font-mono text-emerald-700">Rp {getTotalBamCost(category).toLocaleString('id-ID')}</span>
+                              </span>
+                            );
+                          })()}
                         </div>
                         <input
                           type="number"
-                          placeholder={`Contoh: ${totalBamCost} (Lunas) / 3500000 (Tahap 1)`}
+                          placeholder={(() => {
+                            const category = getStudentCategory(studentData);
+                            return `Contoh: ${category === 'Internal' ? '10500000 (Lunas) / 5000000 (Tahap 1)' : '11500000 (Lunas) / 6000000 (Tahap 1)'}`;
+                          })()}
                           value={initialPaymentAmountInput}
                           onChange={(e) => setInitialPaymentAmountInput(e.target.value)}
                           className="w-full p-2.5 rounded-xl border border-emerald-300 bg-emerald-50/50 font-extrabold text-emerald-900 focus:ring-2 focus:ring-emerald-500"
@@ -3228,16 +3429,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                       {/* Quick Nominal Presets */}
                       {(() => {
-                        const isAkhwat = studentData.gender === 'Perempuan';
-                        const lunasAmount = totalBamCost;
-                        const tahap1 = 3500000;
-                        const tahap2 = 2000000;
-                        const tahap3 = isAkhwat ? 1390000 : 1170000;
+                        const category = getStudentCategory(studentData);
+                        const lunasAmount = category === 'Internal' ? BAM_CONFIG.totalInternalLunas : BAM_CONFIG.totalExternalLunas;
+                        const tahap1 = category === 'Internal' ? BAM_INSTALLMENT_STEPS[0].amountInternal : BAM_INSTALLMENT_STEPS[0].amountExternal;
+                        const tahap2 = category === 'Internal' ? BAM_INSTALLMENT_STEPS[1].amountInternal : BAM_INSTALLMENT_STEPS[1].amountExternal;
+                        const tahap3 = category === 'Internal' ? BAM_INSTALLMENT_STEPS[2].amountInternal : BAM_INSTALLMENT_STEPS[2].amountExternal;
 
                         return (
                           <div className="bg-slate-100/80 p-2.5 rounded-xl border border-slate-200">
                             <div className="text-[10px] font-bold text-slate-600 mb-1.5 flex items-center gap-1">
-                              <span>⚡ Pilih Cepat Nominal ({isAkhwat ? 'Akhwat / Putri' : 'Ikhwan / Putra'}):</span>
+                              <span>⚡ Pilih Cepat Nominal ({category}):</span>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                               <button
@@ -3341,16 +3542,52 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <span className="text-rose-700 font-extrabold">❌ BELUM DIBAYAR</span>
                         )}
                       </div>
+                      {studentData.initialPaymentStatus === 'verified' && (
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              generatePaymentReceiptPDF(
+                                {
+                                  id: `PAY-BAM-${studentData.registrationNumber || studentData.id}`,
+                                  amount: studentData.initialPaymentAmount || 11000000,
+                                  payment_type: 'daftar_ulang',
+                                  payment_date: studentData.initialPaymentDate || new Date().toISOString(),
+                                  payment_method: 'Transfer Bank Syariah Indonesia (BSI)',
+                                  status: 'verified',
+                                  verified_by: 'Panitia Keuangan SPMB',
+                                },
+                                studentData,
+                                schoolInfo
+                              );
+                            }}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5 text-amber-300" />
+                            <span>Download Kuitansi Pembayaran BAM (PDF)</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Submit Button */}
                     <button
                       id="btn-save-student-bam-main"
                       type="submit"
-                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      disabled={isUploadingBamProof}
+                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-400 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                     >
-                      <Save className="w-4 h-4 text-emerald-200" />
-                      <span>Simpan Data BAM yang Diupload</span>
+                      {isUploadingBamProof ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                          <span>Menyimpan Bukti BAM ke Supabase Storage...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4 text-emerald-200" />
+                          <span>Upload Bukti Transfer BAM</span>
+                        </>
+                      )}
                     </button>
                   </form>
                 </div>

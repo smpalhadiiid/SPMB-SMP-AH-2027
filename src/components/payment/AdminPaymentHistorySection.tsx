@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { StudentData } from '../../types';
 import { PaymentRepository, PaymentItem } from '../../repositories/PaymentRepository';
 import { exportToExcel } from '../../utils/excelExporter';
-import { generateReportPDF } from '../../utils/pdfGenerator';
+import { generateReportPDF, generatePaymentReceiptPDF } from '../../utils/pdfGenerator';
 import { getStudentCategory, getTotalBamCost } from '../../utils/bamPricing';
 import {
   Users, Search, Download, FileSpreadsheet, FileText,
@@ -918,6 +918,31 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                     </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1.5">
+                        {/* Print Official Payment Receipt */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            generatePaymentReceiptPDF(
+                              {
+                                id: p.id,
+                                amount: p.amount,
+                                payment_type: p.paymentType,
+                                payment_date: p.paymentDate || p.createdAt,
+                                payment_method: p.paymentMethod || p.bankName || 'Transfer Bank BSI',
+                                status: p.status,
+                                verified_by: p.verifiedBy || 'Admin Panitia SPMB',
+                                notes: p.notes,
+                              },
+                              { registrationNumber: p.registrationNumber, fullName: p.studentName },
+                              ({} as any)
+                            );
+                          }}
+                          className="p-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 rounded-lg transition-colors cursor-pointer"
+                          title="Cetak Kuitansi / Bukti Pembayaran Resmi (PDF)"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                        </button>
+
                         {/* Quick verify/reject buttons */}
                         {p.status !== 'verified' && (
                           <button
@@ -1042,7 +1067,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                       const val = e.target.value as any;
                       setFormPaymentType(val);
                       if (val === 'form') setFormAmount(200000);
-                      else if (val === 'bam') setFormAmount(formGender === 'Perempuan' ? 6890000 : 6670000);
+                      else if (val === 'bam') setFormAmount(11000000);
                     }}
                     className="w-full p-2.5 border border-slate-300 rounded-xl font-semibold bg-white"
                   >
@@ -1059,9 +1084,6 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                     onChange={e => {
                       const val = e.target.value as any;
                       setFormGender(val);
-                      if (formPaymentType === 'bam') {
-                        setFormAmount(val === 'Perempuan' ? 6890000 : 6670000);
-                      }
                     }}
                     className="w-full p-2.5 border border-slate-300 rounded-xl font-semibold bg-white"
                   >

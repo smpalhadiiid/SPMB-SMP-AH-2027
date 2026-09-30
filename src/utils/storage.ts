@@ -138,18 +138,7 @@ export function getStoredCostBreakdown(): CostBreakdown[] {
   }
   try {
     const parsed = JSON.parse(data);
-    if (!Array.isArray(parsed) || parsed.length < 10) {
-      safeSetItem(KEYS.COST_BREAKDOWN, JSON.stringify(initialCostBreakdowns));
-      return initialCostBreakdowns;
-    }
-    // Pastikan setiap item memiliki amountIkhwan dan amountAkhwat terdefinisi
-    const enriched = parsed.map((item, idx) => ({
-      ...item,
-      amountIkhwan: item.amountIkhwan !== undefined ? Number(item.amountIkhwan) : (initialCostBreakdowns[idx]?.amountIkhwan || item.amount),
-      amountAkhwat: item.amountAkhwat !== undefined ? Number(item.amountAkhwat) : (initialCostBreakdowns[idx]?.amountAkhwat || item.amount),
-      amount: item.amountIkhwan !== undefined ? Number(item.amountIkhwan) : item.amount,
-    }));
-    return enriched;
+    return Array.isArray(parsed) ? parsed : initialCostBreakdowns;
   } catch {
     return initialCostBreakdowns;
   }

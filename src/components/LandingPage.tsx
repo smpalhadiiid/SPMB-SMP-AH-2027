@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { SchoolInfo, CostBreakdown, TestSchedule, WebsiteConfig, UserAccount, UserRole } from '../types';
-import { initialCostBreakdowns } from '../data/initialData';
 import { 
   Sparkles, CheckCircle2, Award, BookOpen, ShieldCheck, Download, Video,
   MessageSquare, ChevronRight, HelpCircle, GraduationCap, MapPin, 
@@ -70,10 +69,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     showFaqSection: websiteConfig?.showFaqSection ?? true,
   });
 
-  const effectiveCostItems = costBreakdowns && costBreakdowns.length >= 10 ? costBreakdowns : initialCostBreakdowns;
-  const totalBamIkhwan = effectiveCostItems.reduce((acc, curr) => acc + (curr.amountIkhwan ?? curr.amount ?? 0), 0);
-  const totalBamAkhwat = effectiveCostItems.reduce((acc, curr) => acc + (curr.amountAkhwat ?? curr.amount ?? 0), 0);
-  const totalCosts = totalBamIkhwan;
+  const totalCosts = costBreakdowns.reduce((acc, curr) => acc + curr.amount, 0);
 
   const handleSaveQuickSettings = (e: React.FormEvent) => {
     e.preventDefault();
@@ -572,15 +568,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
                   <div className="bg-emerald-950/80 border border-emerald-500/40 p-4 rounded-xl text-center min-w-[150px]">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">Total Biaya Ikhwan</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">
-                      Rp {totalBamIkhwan.toLocaleString('id-ID')}
-                    </div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.670.000</div>
                   </div>
                   <div className="bg-emerald-950/80 border border-emerald-500/40 p-4 rounded-xl text-center min-w-[150px]">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300">Total Biaya Akhwat</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">
-                      Rp {totalBamAkhwat.toLocaleString('id-ID')}
-                    </div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-white mt-0.5">Rp 6.890.000</div>
                   </div>
                 </div>
               </div>
@@ -621,26 +613,33 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-slate-800">
-                      {effectiveCostItems.map((item, idx) => {
-                        const ikhwanCost = Number(item.amountIkhwan ?? item.amount ?? 0);
-                        const akhwatCost = Number(item.amountAkhwat ?? item.amount ?? 0);
-                        const isDiff = ikhwanCost !== akhwatCost;
-                        return (
-                          <tr key={item.id || idx} className={`hover:bg-emerald-50/50 transition-colors ${isDiff ? 'bg-amber-50/60 font-medium' : ''}`}>
-                            <td className="py-3 px-4 text-center font-bold text-slate-500">{idx + 1}</td>
-                            <td className="py-3 px-4 font-semibold text-slate-900">{item.title}</td>
-                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
-                              Rp {ikhwanCost.toLocaleString('id-ID')}
-                            </td>
-                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
-                              Rp {akhwatCost.toLocaleString('id-ID')}
-                            </td>
-                            <td className="py-3 px-4 text-center text-slate-600 font-medium">
-                              {item.period || 'Sekali'}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {[
+                        { no: 1, name: 'Dana Awal Pendidikan (DAP)', ikhwan: 4250000, akhwat: 4250000, ket: 'Sekali' },
+                        { no: 2, name: 'Dana Praktik Komputer', ikhwan: 150000, akhwat: 150000, ket: 'Per Tahun' },
+                        { no: 3, name: 'Dana Praktik IPA', ikhwan: 100000, akhwat: 100000, ket: 'Per Tahun' },
+                        { no: 4, name: 'Perlengkapan / Seragam (Paket)*', ikhwan: 700000, akhwat: 920000, ket: 'Sekali', highlight: true },
+                        { no: 5, name: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', ikhwan: 425000, akhwat: 425000, ket: 'Per Bulan' },
+                        { no: 6, name: 'Tabungan Wajib', ikhwan: 25000, akhwat: 25000, ket: 'Per Bulan' },
+                        { no: 7, name: 'MPLS / MOS', ikhwan: 100000, akhwat: 100000, ket: 'Sekali' },
+                        { no: 8, name: 'Dana Sosial', ikhwan: 25000, akhwat: 25000, ket: 'Per Tahun' },
+                        { no: 9, name: 'Penilaian Akhir Semester (PAS)', ikhwan: 220000, akhwat: 220000, ket: 'Per Tahun' },
+                        { no: 10, name: 'Penilaian Akhir Tahun (PAT)', ikhwan: 225000, akhwat: 225000, ket: 'Per Tahun' },
+                        { no: 11, name: 'Kegiatan Ekstrakurikuler / AMBAP', ikhwan: 125000, akhwat: 125000, ket: 'Per Tahun' },
+                        { no: 12, name: 'Biaya Dauroh (Kegiatan Pesantren)', ikhwan: 120000, akhwat: 120000, ket: 'Per Tahun' },
+                        { no: 13, name: 'Biaya Cetak (Raport, Foto, Name Tag, Kalender)', ikhwan: 205000, akhwat: 205000, ket: 'Per Tahun' },
+                      ].map((row) => (
+                        <tr key={row.no} className={`hover:bg-emerald-50/50 transition-colors ${row.highlight ? 'bg-amber-50/60 font-medium' : ''}`}>
+                          <td className="py-3 px-4 text-center font-bold text-slate-500">{row.no}</td>
+                          <td className="py-3 px-4 font-semibold text-slate-900">{row.name}</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                            Rp {row.ikhwan.toLocaleString('id-ID')}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                            Rp {row.akhwat.toLocaleString('id-ID')}
+                          </td>
+                          <td className="py-3 px-4 text-center text-slate-600 font-medium">{row.ket}</td>
+                        </tr>
+                      ))}
                     </tbody>
                     <tfoot>
                       <tr className="bg-emerald-900 text-white font-extrabold text-xs sm:text-sm">
@@ -648,10 +647,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                           TOTAL BIAYA AWAL MASUK (BAM):
                         </td>
                         <td className="py-4 px-4 text-right font-mono text-amber-300 text-base">
-                          Rp {totalBamIkhwan.toLocaleString('id-ID')}
+                          Rp 6.670.000
                         </td>
                         <td className="py-4 px-4 text-right font-mono text-amber-300 text-base">
-                          Rp {totalBamAkhwat.toLocaleString('id-ID')}
+                          Rp 6.890.000
                         </td>
                         <td className="py-4 px-4 text-center text-emerald-200 font-normal text-xs">Awal Masuk</td>
                       </tr>

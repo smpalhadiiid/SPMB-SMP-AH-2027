@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion, BamPaymentRecord, BamInstallmentType } from '../types';
 import { exportToExcel } from '../utils/excelExporter';
 import { generateReportPDF, generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
+import { getStudentCredentials, fetchStudentCredentialsFromSupabase } from '../utils/studentCredentials';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import {
   canDownloadStudentForm,
@@ -24,7 +25,7 @@ import {
   Palette, HardDrive, RotateCcw, AlertTriangle, Layers, EyeOff,
   CheckSquare, Square, RefreshCcw, FileCode, Archive, ShieldCheck,
   HelpCircle, FileJson, Calendar, BookOpen, PlusCircle, CheckSquare2, LayoutDashboard, Image as ImageIcon, Lock, GraduationCap,
-  MessageCircle
+  MessageCircle, Key
 } from 'lucide-react';
 import { SupabaseBadge } from './SupabaseBadge';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
@@ -105,7 +106,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
 
   const ALL_SUPPORTED_ADMIN_TABS = [
-    'overview', 'user_management', 'account_settings', 'applicants', 'payment_form',
+    'overview', 'user_management', 'account_settings', 'default_credentials', 'applicants', 'payment_form',
     'payment_initial', 'payment_history', 'scores', 'announcements', 'quotas',
     'placement', 'filled_classes', 'question_bank', 'gas_sync', 'settings',
     'website_settings', 'database_management', 'cbt_dashboard', 'cbt_kategori',
@@ -202,14 +203,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [announcementSearch, setAnnouncementSearch] = useState<string>('');
 
   // BAM Verification form state (Tahap 8 Alur SPMB: Verifikasi Bukti & Input Nominal ke Tabel Pembayaran)
-  const [bamVerifyNominal, setBamVerifyNominal] = useState<number>(6670000);
+  const [bamVerifyNominal, setBamVerifyNominal] = useState<number>(11000000);
   const [bamVerifyDate, setBamVerifyDate] = useState<string>('');
   const [bamVerifyType, setBamVerifyType] = useState<BamInstallmentType>('Lunas');
   const [bamVerifyNotes, setBamVerifyNotes] = useState<string>('');
 
   React.useEffect(() => {
     if (selectedStudent) {
-      const defaultNominal = selectedStudent.initialPaymentAmount || getTotalBamCost(selectedStudent);
+      const category = getStudentCategory(selectedStudent);
+      const defaultNominal = selectedStudent.initialPaymentAmount || getTotalBamCost(category);
       setBamVerifyNominal(defaultNominal);
       setBamVerifyDate(selectedStudent.initialPaymentDate || new Date().toISOString().split('T')[0]);
       setBamVerifyType('Lunas');
@@ -411,6 +413,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setTimeout(() => setDbSuccessMsg(''), 6000);
   };
 
+  // Muat kredensial akun terpusat dari Supabase saat dashboard admin terbuka
+  useEffect(() => {
+    fetchStudentCredentialsFromSupabase().catch(() => {});
+  }, []);
+
   // State & Handler for Form PDF Download
   const [downloadSuccessMsg, setDownloadSuccessMsg] = useState<string>('');
 
@@ -428,21 +435,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleDownloadExamCard = (student: StudentData) => {
     try {
       const activeSched = testSchedules?.find(s => s.isOnlineActive === true) || testSchedules?.[0];
-      const creds = {
-        username:
-          (student as any).username ||
-          (student as any).examUsername ||
+      const storedCred = getStudentCredentials(student.id) || getStudentCredentials(student.registrationNumber) || getStudentCredentials(student.userEmail);
+      const embeddedCred = (student.testAnswers as any)?._accountCredentials || (student.testAnswers as any)?._credentials;
+
+      const candidateUsername = (
+        student.username ||
+        student.examUsername ||
+        embeddedCred?.username ||
+        storedCred?.username ||
+        (typeof window !== 'undefined' ? (
           localStorage.getItem(`spmb_user_${student.id}`) ||
-          (student.userEmail ? student.userEmail.split('@')[0] : '') ||
-          student.registrationNumber ||
-          'siswa',
-        password:
-          (student as any).password ||
-          (student as any).examPassword ||
+          localStorage.getItem(`spmb_user_${student.registrationNumber}`) ||
+          localStorage.getItem(`spmb_user_${student.userEmail?.toLowerCase()}`) ||
+          ''
+        ) : '') ||
+        (student.userEmail ? student.userEmail.split('@')[0] : '') ||
+        student.registrationNumber ||
+        'siswa'
+      ).trim();
+
+      const candidatePassword = (
+        student.password ||
+        student.examPassword ||
+        embeddedCred?.password ||
+        storedCred?.password ||
+        (typeof window !== 'undefined' ? (
           localStorage.getItem(`spmb_cred_${student.id}`) ||
-          localStorage.getItem(`spmb_cred_${student.userEmail}`) ||
           localStorage.getItem(`spmb_cred_${student.registrationNumber}`) ||
-          'siswa123',
+          localStorage.getItem(`spmb_cred_${student.userEmail?.toLowerCase()}`) ||
+          localStorage.getItem(`spmb_cred_${candidateUsername.toLowerCase()}`) ||
+          ''
+        ) : '') ||
+        'siswa123'
+      ).trim();
+
+      const creds = {
+        username: candidateUsername,
+        password: candidatePassword,
       };
       generateExamCardPDF(student, schoolInfo, activeSched, creds);
       setDownloadSuccessMsg(`✓ Berhasil mengunduh Kartu Ujian: ${student.fullName} (${student.registrationNumber || 'No-Reg'})`);
@@ -1469,17 +1498,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
 
           {currentUser?.role === 'super_admin' && (
-            <button
-              onClick={() => setActiveTab('account_settings')}
-              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
-                activeTab === 'account_settings'
-                  ? 'bg-amber-600 text-white shadow-sm font-bold ring-2 ring-amber-500/30'
-                  : 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 font-semibold'
-              }`}
-            >
-              <Lock className="w-4 h-4 text-amber-600" />
-              <span>Pengaturan Hak Akses Akun (Super Admin)</span>
-            </button>
+            <>
+              <button
+                onClick={() => setActiveTab('account_settings')}
+                className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                  activeTab === 'account_settings'
+                    ? 'bg-amber-600 text-white shadow-sm font-bold ring-2 ring-amber-500/30'
+                    : 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 font-semibold'
+                }`}
+              >
+                <Lock className="w-4 h-4 text-amber-600" />
+                <span>Pengaturan Hak Akses Akun</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('default_credentials')}
+                className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                  activeTab === 'default_credentials'
+                    ? 'bg-amber-600 text-white shadow-sm font-bold ring-2 ring-amber-500/30'
+                    : 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 font-semibold'
+                }`}
+              >
+                <Key className="w-4 h-4 text-amber-600" />
+                <span>Ubah Login Default</span>
+              </button>
+            </>
           )}
         </div>
 
@@ -4485,6 +4528,16 @@ Kunci: B`}
         {activeTab === 'account_settings' && (
           <AccountSettingsSection
             currentUser={currentUser}
+            initialTab="accounts"
+            onRefreshData={onRefreshAllData}
+          />
+        )}
+
+        {/* TAB: DEFAULT CREDENTIALS (SUPER ADMIN) */}
+        {activeTab === 'default_credentials' && (
+          <AccountSettingsSection
+            currentUser={currentUser}
+            initialTab="default_credentials"
             onRefreshData={onRefreshAllData}
           />
         )}
@@ -4496,6 +4549,7 @@ Kunci: B`}
             students={students}
             onUpdateStudents={onUpdateStudents}
             onRefreshAllData={onRefreshAllData}
+            onNavigateToDefaultCredentials={() => setActiveTab('default_credentials')}
           />
         )}
 
@@ -5198,10 +5252,10 @@ Kunci: B`}
                               value={bamVerifyNominal}
                               onChange={(e) => setBamVerifyNominal(Number(e.target.value))}
                               className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 font-mono"
-                              placeholder={selectedStudent ? getTotalBamCost(selectedStudent).toString() : '6670000'}
+                              placeholder={selectedStudent ? getTotalBamCost(getStudentCategory(selectedStudent)).toString() : '11000000'}
                             />
                             <span className="text-[10px] text-slate-400">
-                              Standar {selectedStudent?.gender === 'Perempuan' ? 'Akhwat (Putri): Rp 6.890.000' : 'Ikhwan (Putra): Rp 6.670.000'}
+                              Standar {selectedStudent && getStudentCategory(selectedStudent) === 'Internal' ? 'Al-Hadiid (Internal): Rp 11.000.000' : 'Umum (Eksternal): Rp 12.000.000'}
                             </span>
                           </div>
                           <div>

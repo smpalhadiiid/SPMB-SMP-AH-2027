@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import confetti from 'canvas-confetti';
+import { safeConfetti } from '../../utils/confettiHelper';
 import {
   Clock, CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight, HelpCircle,
   FileCheck2, User, Sparkles, Send, RefreshCw, Award, BookOpen, Layers, Check, Download
@@ -406,15 +406,11 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
     setExamSession({ ...sessionToSubmit, remainingTimeSeconds: 0, isCompleted: true });
 
     // Trigger celebration confetti
-    try {
-      confetti({
-        particleCount: 150,
-        spread: 90,
-        origin: { y: 0.6 },
-      });
-    } catch (confettiErr) {
-      console.warn('[CbtPesertaPortal] Confetti effect warning:', confettiErr);
-    }
+    safeConfetti({
+      particleCount: 150,
+      spread: 90,
+      origin: { y: 0.6 },
+    });
 
     setShowFinishedAlert(true);
     refetchHasil();

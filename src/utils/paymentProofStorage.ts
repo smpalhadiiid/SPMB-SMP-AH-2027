@@ -1,30 +1,48 @@
-import { supabase, isSupabaseConfigured } from './supabaseClient';
-import { PaymentRepository } from '../repositories/PaymentRepository';
+// =====================================================================
+// src/utils/paymentProofStorage.ts
+// Modul Penyimpanan Bukti Transfer SPMB ke Supabase Storage & Metadata DB
+// =====================================================================
 
-export interface StoredPaymentProof {
-  id: string;
-  studentId: string;
-  registrationNumber: string;
-  studentName: string;
-  paymentType: 'form' | 'bam';
-  fileName: string;
-  fileSize: number; // in bytes
-  fileType: string;
-  dataUrl: string; // Base64 data URI or public Supabase URL
-  uploadedAt: string; // ISO date string
-  amount: number;
-  status: 'unpaid' | 'pending' | 'verified' | 'rejected';
-  notes?: string;
-  gender?: 'Laki-laki' | 'Perempuan';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
+
+export const PAYMENT_PROOFS_BUCKET = 'payment-proofs';
+export const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+export const ALLOWED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+];
+
+export const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
+
+export interface ProofFileValidationResult {
+  valid: boolean;
+  error?: string;
 }
 
-const STORAGE_KEY = 'spmb_stored_payment_proofs';
+export interface PaymentProofMetadata {
+  storagePath: string; // payment-proofs/{student_id}/{payment_id}/{timestamp}_{safe_filename}
+  fileName: string;
+  fileType: string;
+  fileSize: number; // in bytes
+  uploadedAt: string; // ISO date string
+}
+
+export interface UploadProofResult {
+  success: boolean;
+  metadata?: PaymentProofMetadata;
+  error?: string;
+}
+
+export type StoredPaymentProof = PaymentProofMetadata;
 
 /**
  * Format bytes ke format yang mudah dibaca (KB / MB)
  */
 export function formatFileSize(bytes: number): string {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || bytes <= 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -32,259 +50,309 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * Kompresi gambar bukti transfer di sisi browser (Client-Side Canvas Compression).
- * Mengurangi ukuran foto kamera HP (biasanya 3-10MB) menjadi 100-250KB
- * dengan tetap menjaga ketajaman teks resi transfer / mutasi bank.
+ * Validasi ketat keamanan file bukti transfer:
+ * - Ukuran maksimal 5 MB
+ * - Format hanya: JPG, PNG, WEBP, PDF
  */
-export async function compressPaymentProofImage(
-  file: File,
-  maxDimension = 1280,
-  quality = 0.82
-): Promise<{
-  dataUrl: string;
-  fileName: string;
-  fileSize: number;
-  originalSize: number;
-  fileType: string;
-}> {
-  const originalSize = file.size;
-  const fileName = file.name || `bukti_transfer_${Date.now()}.jpg`;
-  const fileType = file.type || 'image/jpeg';
-
-  // Jika bukan gambar (misal dokumen PDF), baca langsung sebagai dataUrl
-  if (!file.type.startsWith('image/')) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        resolve({
-          dataUrl: result,
-          fileName,
-          fileSize: originalSize,
-          originalSize,
-          fileType,
-        });
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
+export function validateProofFile(file: File): ProofFileValidationResult {
+  if (!file) {
+    return { valid: false, error: 'Silakan pilih file bukti transfer terlebih dahulu.' };
   }
 
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
+  // 1. Validasi Ukuran File (Maksimal 5 MB)
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    return { valid: false, error: 'Bukti transfer maksimal 5 MB.' };
+  }
 
-        // Resize proporsional jika lebih besar dari maxDimension
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
-        }
+  // 2. Validasi Tipe MIME
+  const mimeType = (file.type || '').toLowerCase();
+  const rawFileName = (file.name || '').toLowerCase();
+  const hasValidExtension = ALLOWED_EXTENSIONS.some((ext) => rawFileName.endsWith(ext));
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          // Fallback ke dataUrl awal jika canvas context tidak tersedia
-          resolve({
-            dataUrl: event.target?.result as string,
-            fileName,
-            fileSize: originalSize,
-            originalSize,
-            fileType,
-          });
-          return;
-        }
-
-        // Aktifkan bilinear image smoothing untuk hasil teks struk tajam
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Pilih format JPEG atau WebP
-        const targetFormat = 'image/jpeg';
-        const compressedDataUrl = canvas.toDataURL(targetFormat, quality);
-
-        // Hitung perkiraan ukuran dalam bytes dari base64 string
-        const base64Length = compressedDataUrl.length - (compressedDataUrl.indexOf(',') + 1);
-        const approxSize = Math.round((base64Length * 3) / 4);
-
-        resolve({
-          dataUrl: compressedDataUrl,
-          fileName: fileName.replace(/\.[^/.]+$/, '') + '.jpg',
-          fileSize: approxSize,
-          originalSize,
-          fileType: targetFormat,
-        });
-      };
-
-      img.onerror = () => {
-        // Fallback jika decode gambar gagal
-        resolve({
-          dataUrl: event.target?.result as string,
-          fileName,
-          fileSize: originalSize,
-          originalSize,
-          fileType,
-        });
-      };
-
-      img.src = event.target?.result as string;
+  if (!ALLOWED_MIME_TYPES.includes(mimeType) && !hasValidExtension) {
+    return {
+      valid: false,
+      error: 'Format file tidak didukung. Silakan gunakan JPG, PNG, WEBP, atau PDF.',
     };
+  }
 
-    reader.onerror = () => {
-      resolve({
-        dataUrl: '',
-        fileName,
-        fileSize: 0,
-        originalSize,
-        fileType,
-      });
-    };
-
-    reader.readAsDataURL(file);
-  });
+  return { valid: true };
 }
 
 /**
- * Mencoba mengunggah file bukti ke Supabase Storage bucket 'payment-proofs' jika tersedia.
- * Jika bucket belum dibuat atau anon key tidak memiliki permission, fungsi ini mengembalikan null
- * tanpa throw error sehingga sistem beralih secara mulus ke dataUrl terkompresi.
+ * Membuat nama file yang aman (sanitized) tanpa karakter khusus berbahaya
  */
-export async function uploadToSupabaseStorageIfAvailable(
-  fileDataUrl: string,
-  fileName: string,
-  folder: 'form' | 'bam' = 'form'
-): Promise<string | null> {
-  if (!isSupabaseConfigured()) return null;
+export function sanitizeFileName(originalName: string): string {
+  const parts = originalName.split('.');
+  const extension = parts.length > 1 ? `.${parts.pop()!.toLowerCase()}` : '.jpg';
+  const baseName = parts.join('_').replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${baseName.slice(0, 50)}${extension}`;
+}
+
+/**
+ * Menghasilkan timestamp string dengan format YYYYMMDD_HHmmss
+ */
+export function generateTimestampPrefix(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+}
+
+/**
+ * Memeriksa apakah suatu URL atau file merupakan dokumen PDF
+ */
+export function isPdfProof(urlOrPath: string, fileType?: string): boolean {
+  if (fileType && fileType.toLowerCase().includes('pdf')) return true;
+  if (!urlOrPath) return false;
+  const lower = urlOrPath.toLowerCase();
+  return lower.includes('.pdf') || lower.startsWith('data:application/pdf');
+}
+
+/**
+ * Membersihkan path Supabase Storage agar siap digunakan oleh SDK
+ * Mengubah "payment-proofs/student-01/pay-01/file.jpg" menjadi "student-01/pay-01/file.jpg"
+ */
+export function extractBucketPath(fullPathOrUrl: string): string {
+  if (!fullPathOrUrl) return '';
+  let clean = fullPathOrUrl.trim();
+  // Hapus awalan bucket name jika ada
+  if (clean.startsWith('payment-proofs/')) {
+    clean = clean.replace('payment-proofs/', '');
+  } else if (clean.startsWith('/payment-proofs/')) {
+    clean = clean.replace('/payment-proofs/', '');
+  }
+  // Hapus query params jika ada
+  if (clean.includes('?')) {
+    clean = clean.split('?')[0];
+  }
+  return clean;
+}
+
+/**
+ * UPLOAD BUKTI TRANSFER KE SUPABASE STORAGE
+ * Menyimpan file secara langsung ke private bucket 'payment-proofs'
+ * dengan struktur path:
+ * payment-proofs/{student_id}/{payment_id}/{timestamp}_{safe_filename}
+ */
+export async function uploadPaymentProofToStorage(
+  file: File,
+  studentId: string,
+  paymentId: string
+): Promise<UploadProofResult> {
+  // 1. Validasi Keamanan File
+  const validation = validateProofFile(file);
+  if (!validation.valid) {
+    return { success: false, error: validation.error };
+  }
+
+  if (!studentId || !paymentId) {
+    return { success: false, error: 'Identitas siswa atau transaksi pembayaran tidak valid.' };
+  }
+
+  // 2. Format Path Aman
+  const timestamp = generateTimestampPrefix();
+  const safeName = sanitizeFileName(file.name || 'bukti_transfer.jpg');
+  // Path di dalam bucket payment-proofs
+  const innerPath = `${studentId}/${paymentId}/${timestamp}_${safeName}`;
+  const fullStoragePath = `payment-proofs/${innerPath}`;
+
+  if (!isSupabaseConfigured()) {
+    return {
+      success: false,
+      error: 'Koneksi ke Supabase belum terkonfigurasi. Pastikan koneksi internet aktif.',
+    };
+  }
 
   try {
-    // Ubah dataUrl ke Blob
-    const response = await fetch(fileDataUrl);
-    const blob = await response.blob();
-    const cleanFileName = `${folder}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-
-    const { data, error } = await supabase.storage
-      .from('payment-proofs')
-      .upload(cleanFileName, blob, {
+    // 3. Upload File Langsung (Binary/Blob) ke Supabase Storage (bukan base64)
+    const { data, error: uploadErr } = await supabase.storage
+      .from(PAYMENT_PROOFS_BUCKET)
+      .upload(innerPath, file, {
         cacheControl: '3600',
         upsert: true,
+        contentType: file.type || 'image/jpeg',
       });
 
-    if (error) {
-      // Bucket belum ada atau RLS storage belum diset, gunakan inline dataUrl
-      return null;
-    }
-
-    if (data?.path) {
-      const { data: publicUrlData } = supabase.storage
-        .from('payment-proofs')
-        .getPublicUrl(data.path);
-
-      if (publicUrlData?.publicUrl) {
-        return publicUrlData.publicUrl;
+    if (uploadErr) {
+      console.error('Supabase Storage Upload Error:', uploadErr);
+      // Deteksi error spesifik Supabase
+      if (uploadErr.message?.toLowerCase().includes('bucket not found')) {
+        return {
+          success: false,
+          error:
+            'Bucket storage "payment-proofs" belum ditemukan di Supabase. Silakan jalankan migrasi database di Supabase SQL Editor.',
+        };
       }
+      if (uploadErr.message?.toLowerCase().includes('violates row-level security')) {
+        return {
+          success: false,
+          error: 'Izin akses upload ditolak oleh Row-Level Security (RLS) Supabase Storage.',
+        };
+      }
+      return {
+        success: false,
+        error: `Gagal mengunggah bukti ke Supabase Storage: ${uploadErr.message}`,
+      };
     }
+
+    const savedPath = data?.path ? `payment-proofs/${data.path}` : fullStoragePath;
+
+    // 4. Return Metadata File untuk disimpan ke Database
+    const metadata: PaymentProofMetadata = {
+      storagePath: savedPath,
+      fileName: safeName,
+      fileType: file.type || 'image/jpeg',
+      fileSize: file.size,
+      uploadedAt: new Date().toISOString(),
+    };
+
+    return {
+      success: true,
+      metadata,
+    };
+  } catch (err: any) {
+    console.error('Unhandled upload error:', err);
+    return {
+      success: false,
+      error: `Terjadi kendala saat mengunggah file: ${err?.message || 'Koneksi terputus'}`,
+    };
+  }
+}
+
+/**
+ * TRANSACTION SAFETY: CLEANUP FILE STORAGE JIKA SIMPAN KE DB GAGAL
+ * Jika file storage berhasil diupload namun penulisan ke database gagal,
+ * fungsi ini menghapus file yang tidak memiliki referensi (orphan).
+ */
+export async function cleanupOrphanStorageProof(storagePath: string): Promise<void> {
+  if (!storagePath || !isSupabaseConfigured()) return;
+  try {
+    const cleanPath = extractBucketPath(storagePath);
+    if (!cleanPath) return;
+    await supabase.storage.from(PAYMENT_PROOFS_BUCKET).remove([cleanPath]);
+    console.info(`[Transaction Safety] File orphan berhasil dibersihkan dari Storage: ${cleanPath}`);
   } catch (err) {
-    console.warn('Supabase storage upload optional fallback:', err);
-  }
-
-  return null;
-}
-
-/**
- * Mengambil seluruh riwayat data bukti transfer pembayaran yang tersimpan di cache lokal
- */
-export function getStoredPaymentProofs(): StoredPaymentProof[] {
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const data = window.localStorage.getItem(STORAGE_KEY);
-      if (data) {
-        return JSON.parse(data) as StoredPaymentProof[];
-      }
-    }
-  } catch (e) {
-    console.warn('Gagal membaca stored payment proofs:', e);
-  }
-  return [];
-}
-
-/**
- * Menyimpan data bukti pembayaran ke penyimpanan lokal dan menyinkronkan ke Supabase
- */
-export async function savePaymentProofRecord(proof: StoredPaymentProof): Promise<StoredPaymentProof> {
-  try {
-    // 1. Simpan ke local cache
-    const existing = getStoredPaymentProofs();
-    const filtered = existing.filter(
-      (p) => !(p.studentId === proof.studentId && p.paymentType === proof.paymentType)
-    );
-    const updated = [proof, ...filtered];
-
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated.slice(0, 50)));
-      }
-    } catch (quotaErr) {
-      console.warn('LocalStorage quota reached when saving proof, fallback in-memory:', quotaErr);
-    }
-
-    // 2. Sinkronkan ke Supabase `public.payments`
-    try {
-      await PaymentRepository.create({
-        studentId: proof.studentId,
-        registrationNumber: proof.registrationNumber,
-        studentName: proof.studentName,
-        paymentType: proof.paymentType,
-        amount: proof.amount,
-        status: proof.status,
-        paymentMethod: 'Transfer Bank',
-        bankName: 'BSI',
-        proofUrl: proof.dataUrl,
-        paymentDate: proof.uploadedAt,
-        notes: proof.notes || `Bukti ${proof.paymentType === 'form' ? 'Formulir' : 'BAM'} (${proof.fileName}, ${formatFileSize(proof.fileSize)})`,
-      });
-    } catch (dbErr) {
-      console.warn('Sinkronisasi PaymentRepository bukti upload error:', dbErr);
-    }
-
-    return proof;
-  } catch (err) {
-    console.error('Error in savePaymentProofRecord:', err);
-    return proof;
+    console.warn('[Transaction Safety] Gagal membersihkan orphan storage file:', err);
   }
 }
 
 /**
- * Trigger download gambar bukti pembayaran langsung ke perangkat pengguna
+ * MENAMPILKAN BUKTI TRANSFER MENGGUNAKAN SIGNED URL
+ * Karena bucket bersifat PRIVATE, admin dan siswa mengakses bukti menggunakan
+ * temporary signed URL dari Supabase Storage (berlaku default 1 jam / 3600 detik).
  */
-export function downloadPaymentProof(dataUrl: string, defaultFileName: string): void {
+export async function getPaymentProofSignedUrl(
+  pathOrUrl: string,
+  expiresInSeconds = 3600
+): Promise<{ url: string | null; error?: string }> {
+  if (!pathOrUrl) {
+    return { url: null, error: 'Path bukti transfer tidak ditemukan.' };
+  }
+
+  // Jika sudah berupa dataUrl lokal (legacy preview) atau URL http eksternal publik
+  if (pathOrUrl.startsWith('data:') || pathOrUrl.startsWith('blob:')) {
+    return { url: pathOrUrl };
+  }
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+    return { url: pathOrUrl };
+  }
+
+  if (!isSupabaseConfigured()) {
+    return { url: null, error: 'Koneksi Supabase belum terkonfigurasi.' };
+  }
+
   try {
-    if (!dataUrl) {
+    const cleanPath = extractBucketPath(pathOrUrl);
+    if (!cleanPath) {
+      return { url: null, error: 'Format path storage tidak valid.' };
+    }
+
+    const { data, error } = await supabase.storage
+      .from(PAYMENT_PROOFS_BUCKET)
+      .createSignedUrl(cleanPath, expiresInSeconds);
+
+    if (error || !data?.signedUrl) {
+      console.warn('Gagal membuat signed URL bukti transfer:', error);
+      return {
+        url: null,
+        error: error?.message || 'Gagal menghasilkan URL bukti transfer dari storage privat.',
+      };
+    }
+
+    return { url: data.signedUrl };
+  } catch (err: any) {
+    console.error('Error saat mengambil signed URL:', err);
+    return { url: null, error: err?.message || 'Terjadi kesalahan sistem.' };
+  }
+}
+
+/**
+ * DOWNLOAD BUKTI PEMBAYARAN KE PERANGKAT PENGGUNA
+ * Mengunduh file gambar atau PDF secara aman menggunakan Signed URL.
+ */
+export async function downloadPaymentProofFile(
+  pathOrUrl: string,
+  defaultFileName = 'Bukti_Transfer.jpg'
+): Promise<void> {
+  try {
+    if (!pathOrUrl) {
       alert('File bukti pembayaran tidak tersedia untuk diunduh.');
       return;
     }
 
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = defaultFileName || `Bukti_Transfer_${Date.now()}.jpg`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    let downloadUrl = pathOrUrl;
+
+    // Jika berupa path storage, dapatkan signed URL terlebih dahulu
+    if (!pathOrUrl.startsWith('data:') && !pathOrUrl.startsWith('http')) {
+      const { url, error } = await getPaymentProofSignedUrl(pathOrUrl, 300);
+      if (error || !url) {
+        alert(`Gagal menyiapkan link unduh bukti transfer: ${error || 'Unknown error'}`);
+        return;
+      }
+      downloadUrl = url;
+    }
+
+    // Trigger download melalui fetch blob jika dimungkinkan untuk memaksa nama file
+    try {
+      const response = await fetch(downloadUrl);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = defaultFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      // Fallback jika fetch terhalang CORS
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = defaultFileName;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   } catch (err) {
-    console.error('Download error:', err);
-    // Fallback buka di tab baru jika download gagal
-    window.open(dataUrl, '_blank');
+    console.error('Download proof error:', err);
+    alert('Terjadi kesalahan saat mengunduh berkas bukti pembayaran.');
   }
+}
+
+// =====================================================================
+// BACKWARD COMPATIBILITY HELPER UNTUK SISTEM LAMA (JIKA ADA KOMPONEN IMPORT)
+// =====================================================================
+export function downloadPaymentProof(dataUrlOrPath: string, defaultFileName: string): void {
+  downloadPaymentProofFile(dataUrlOrPath, defaultFileName);
+}
+
+export function getStoredPaymentProofs(): any[] {
+  return [];
 }

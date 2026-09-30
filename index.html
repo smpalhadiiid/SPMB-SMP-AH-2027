@@ -9,14 +9,42 @@
     <meta property="og:title" content="SPMB SMPS Al-Hadiid Cileungsi" />
     <meta property="og:description" content="Sistem Penerimaan Murid Baru Online SMP Al-Hadiid Cileungsi" />
     <script>
+      // Canvas and prototype defensive guards for iframe sandboxes
+      try {
+        if (typeof HTMLCanvasElement !== 'undefined' && !HTMLCanvasElement.prototype.getBoundingClientRect) {
+          HTMLCanvasElement.prototype.getBoundingClientRect = function() {
+            return {
+              top: 0, left: 0, right: this.width || 0, bottom: this.height || 0,
+              width: this.width || 0, height: this.height || 0, x: 0, y: 0, toJSON: function() {}
+            };
+          };
+        }
+      } catch (e) {}
+
       // Prevent unhandled promise rejections and script errors from bubbling to outer iframe
       window.addEventListener('unhandledrejection', function(event) {
-        console.warn('[Global Unhandled Rejection Caught]:', event.reason);
+        var reasonStr = (event && (event.reason?.message || event.reason || '')) + '';
+        console.warn('[Global Unhandled Rejection Caught]:', reasonStr);
+        if (reasonStr.indexOf('getBoundingClientRect') !== -1 || reasonStr.indexOf('canvas') !== -1) {
+          if (event.preventDefault) event.preventDefault();
+          return;
+        }
         if (event.preventDefault) event.preventDefault();
       });
       window.addEventListener('error', function(event) {
-        console.warn('[Global Error Caught]:', event.message || event);
+        var errStr = (event && (event.message || event.error?.message || '')) + '';
+        console.warn('[Global Error Caught]:', errStr);
+        if (errStr.indexOf('getBoundingClientRect') !== -1 || errStr.indexOf('canvas') !== -1) {
+          if (event.preventDefault) event.preventDefault();
+          return true;
+        }
       });
+      window.onerror = function(msg) {
+        var str = (msg || '') + '';
+        if (str.indexOf('getBoundingClientRect') !== -1) {
+          return true;
+        }
+      };
 
       // Sandbox safety for alert, confirm, prompt, open in iframe
       try {

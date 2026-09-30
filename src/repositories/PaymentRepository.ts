@@ -18,7 +18,13 @@ export interface PaymentItem {
   bankName?: string;
   accountNumber?: string;
   senderName?: string;
-  proofUrl?: string;
+  proofUrl?: string; // Menyimpan storage path atau URL
+  proofStoragePath?: string;
+  proofFileName?: string;
+  proofFileType?: string;
+  proofFileSize?: number;
+  proofUploadedAt?: string;
+  rejectionReason?: string;
   paymentDate?: string;
   verifiedBy?: string;
   verifiedAt?: string;
@@ -27,13 +33,10 @@ export interface PaymentItem {
   updatedAt?: string;
 }
 
-export function isValidUuid(val?: string | null): boolean {
-  if (!val) return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
-}
-
 export function mapRowToPayment(row: any): PaymentItem {
   const pType = (row.payment_type === 'daftar_ulang' || row.payment_type === 'bam') ? 'bam' : 'form';
+  const rawPath = row.proof_storage_path || row.proof_url || undefined;
+  
   return {
     id: row.id,
     studentId: row.student_id,
@@ -47,7 +50,13 @@ export function mapRowToPayment(row: any): PaymentItem {
     bankName: row.bank_name || undefined,
     accountNumber: row.account_number || undefined,
     senderName: row.sender_name || undefined,
-    proofUrl: row.proof_url || undefined,
+    proofUrl: row.proof_url || row.proof_storage_path || undefined,
+    proofStoragePath: rawPath,
+    proofFileName: row.proof_file_name || undefined,
+    proofFileType: row.proof_file_type || undefined,
+    proofFileSize: row.proof_file_size ? Number(row.proof_file_size) : undefined,
+    proofUploadedAt: row.proof_uploaded_at || undefined,
+    rejectionReason: row.rejection_reason || undefined,
     paymentDate: row.payment_date || undefined,
     verifiedBy: row.verified_by || undefined,
     verifiedAt: row.verified_at || undefined,
@@ -128,6 +137,19 @@ export const PaymentRepository = {
   },
 
   /**
+   * Mengambil pembayaran spesifik berdasarkan id
+   */
+  async getById(id: string): Promise<{ data: PaymentItem | null; error: Error | null }> {
+    try {
+      const { data, error } = await supabase.from('payments').select('*').eq('id', id).maybeSingle();
+      if (error) return { data: null, error: new Error(error.message) };
+      return { data: data ? mapRowToPayment(data) : null, error: null };
+    } catch (err: any) {
+      return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  },
+
+  /**
    * Mengirim pembayaran baru (INSERT) ke tabel public.payments
    */
   async create(payment: Partial<PaymentItem>): Promise<{ data: PaymentItem | null; error: Error | null }> {
@@ -145,102 +167,165 @@ export const PaymentRepository = {
         amount: payment.amount,
         status: payment.status || 'pending',
         payment_method: payment.paymentMethod || 'manual_transfer',
-        bank_name: payment.bankName,
+        bank_name: payment.bankName || 'BSI',
         account_number: payment.accountNumber,
         sender_name: payment.senderName,
-        proof_url: payment.proofUrl,
+        proof_url: payment.proofStoragePath || payment.proofUrl,
         payment_date: payment.paymentDate || new Date().toISOString(),
         notes: payment.notes,
         created_at: new Date().toISOString(),
       };
 
-      if (payment.id && isValidUuid(payment.id)) {
+      if (payment.id) {
         row.id = payment.id;
       }
       if (payment.status === 'verified') {
         row.verified_at = payment.verifiedAt || new Date().toISOString();
         row.verified_by = payment.verifiedBy || 'Admin Panitia';
       }
-
-      const { data, error } = await supabase.from('payments').insert(row).select().single();
-      if (error) {
-        return { data: null, error: new Error(error.message) };
+      if (payment.rejectionReason) {
+        row.rejection_reason = payment.rejectionReason;
       }
 
-      // Sync student status in Supabase students table
-      if (payment.studentId) {
+      // Metadata tambahan bukti transfer (jika kolom tersedia)
+      const extendedRow = { ...row };
+      if (payment.proofStoragePath) extendedRow.proof_storage_path = payment.proofStoragePath;
+      if (payment.proofFileName) extendedRow.proof_file_name = payment.proofFileName;
+      if (payment.proofFileType) extendedRow.proof_file_type = payment.proofFileType;
+      if (payment.proofFileSize) extendedRow.proof_file_size = payment.proofFileSize;
+      if (payment.proofUploadedAt) extendedRow.proof_uploaded_at = payment.proofUploadedAt;
+
+      let insertedData: any = null;
+      const { data, error } = await supabase.from('payments').insert(extendedRow).select().single();
+      
+      if (error) {
+        // Jika kolom metadata belum ada di schema cache, coba insert dengan kolom dasar row
+        if (error.message.includes('column') || error.message.includes('schema cache')) {
+          const { data: retryData, error: retryErr } = await supabase.from('payments').insert(row).select().single();
+          if (retryErr) {
+            return { data: null, error: new Error(retryErr.message) };
+          }
+          insertedData = retryData;
+        } else {
+          return { data: null, error: new Error(error.message) };
+        }
+      } else {
+        insertedData = data;
+      }
+
+      // Sinkronisasi status siswa jika diperlukan
+      if (payment.studentId && payment.status === 'verified') {
         if (dbPaymentType === 'formulir') {
-          if (payment.status === 'verified') {
-            await supabase.from('students').update({
-              is_form_verified: true,
-              form_payment_status: 'verified',
-              form_payment_amount: payment.amount || 200000,
-              form_payment_proof_url: payment.proofUrl || null,
-              updated_at: new Date().toISOString(),
-            }).eq('id', payment.studentId);
-          }
+          await supabase.from('students').update({
+            is_form_verified: true,
+            is_form_verified_by_admin: true,
+            form_payment_status: 'verified',
+            form_payment_amount: payment.amount || 200000,
+            form_payment_proof_url: payment.proofStoragePath || payment.proofUrl || null,
+          }).eq('id', payment.studentId);
         } else if (dbPaymentType === 'daftar_ulang') {
-          const studentUpdates: Record<string, any> = {
-            initial_payment_amount: payment.amount || 0,
-            initial_payment_status: payment.status || 'pending',
-            updated_at: new Date().toISOString(),
-          };
-          if (payment.proofUrl) studentUpdates.initial_payment_proof_url = payment.proofUrl;
-          if (payment.paymentDate) studentUpdates.initial_payment_date = payment.paymentDate;
-          if (payment.notes) studentUpdates.initial_payment_notes = payment.notes;
-          if (payment.status === 'verified') {
-            studentUpdates.status = 're_registered';
-          }
-          await supabase.from('students').update(studentUpdates).eq('id', payment.studentId);
+          await supabase.from('students').update({
+            initial_payment_status: 'verified',
+            initial_payment_amount: payment.amount || 8500000,
+            initial_payment_proof_url: payment.proofStoragePath || payment.proofUrl || null,
+          }).eq('id', payment.studentId);
         }
       }
 
-      return { data: mapRowToPayment(data), error: null };
+      return { data: mapRowToPayment(insertedData), error: null };
     } catch (err: any) {
       return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
     }
   },
 
   /**
-   * Verifikasi pembayaran secara aman menggunakan RPC Supabase
+   * Verifikasi atau Penolakan pembayaran secara aman
+   * Jika ditolak, p_rejection_reason WAJIB diisi sesuai aturan SOP SPMB.
    */
   async verifyThroughSecureFunction(
     paymentId: string,
     status: 'verified' | 'rejected' | 'pending',
-    notes?: string
+    notes?: string,
+    rejectionReason?: string
   ): Promise<{ success: boolean; error: Error | null }> {
     try {
-      // 1. Coba panggil RPC rpc_verify_payment jika paymentId adalah UUID valid
-      if (isValidUuid(paymentId)) {
-        const { error: rpcError } = await supabase.rpc('rpc_verify_payment', {
+      if (status === 'rejected' && (!rejectionReason || !rejectionReason.trim())) {
+        return {
+          success: false,
+          error: new Error('Alasan penolakan wajib diisi ketika menolak bukti pembayaran.'),
+        };
+      }
+
+      // 1. Coba panggil RPC rpc_verify_payment jika tersedia
+      try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('rpc_verify_payment', {
           p_payment_id: paymentId,
           p_status: status,
           p_notes: notes || null,
+          p_rejection_reason: rejectionReason || null,
         });
 
-        if (!rpcError) {
+        if (!rpcError && rpcData?.success) {
           return { success: true, error: null };
+        }
+      } catch (rpcErr) {
+        console.warn('RPC rpc_verify_payment fallback to direct update:', rpcErr);
+      }
+
+      // 2. Direct update fallback
+      const payload: Record<string, any> = {
+        status,
+        notes: notes || (status === 'rejected' ? `Ditolak: ${rejectionReason}` : undefined),
+        verified_by: status === 'verified' ? 'Admin Panitia' : undefined,
+        verified_at: status === 'verified' ? new Date().toISOString() : undefined,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Coba masukkan rejection_reason jika kolom ada
+      if (status === 'rejected' && rejectionReason) {
+        payload.rejection_reason = rejectionReason;
+      }
+
+      const { data: updatedPayment, error: updateErr } = await supabase
+        .from('payments')
+        .update(payload)
+        .eq('id', paymentId)
+        .select()
+        .maybeSingle();
+
+      if (updateErr) {
+        // Fallback jika rejection_reason belum ada di schema
+        if (updateErr.message.includes('rejection_reason')) {
+          delete payload.rejection_reason;
+          payload.notes = `Ditolak: ${rejectionReason}`;
+          const { error: retryErr } = await supabase
+            .from('payments')
+            .update(payload)
+            .eq('id', paymentId);
+          if (retryErr) {
+            return { success: false, error: new Error(retryErr.message) };
+          }
+        } else {
+          return { success: false, error: new Error(updateErr.message) };
         }
       }
 
-      // 2. Fallback direct update jika RPC belum ter-apply atau paymentId bukan UUID
-      const query = isValidUuid(paymentId)
-        ? supabase.from('payments').update({
-            status,
-            notes,
-            verified_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }).eq('id', paymentId)
-        : supabase.from('payments').update({
-            status,
-            notes,
-            verified_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }).eq('student_id', paymentId).in('payment_type', ['daftar_ulang', 'bam']);
-
-      const { error: updateErr } = await query;
-      if (updateErr) {
-        return { success: false, error: new Error(updateErr.message) };
+      // 3. Sinkronkan status ke tabel students
+      if (updatedPayment?.student_id) {
+        const isForm = updatedPayment.payment_type === 'formulir' || updatedPayment.payment_type === 'form';
+        if (isForm) {
+          await supabase.from('students').update({
+            form_payment_status: status,
+            is_form_verified: status === 'verified',
+            is_form_verified_by_admin: status === 'verified',
+            form_payment_notes: status === 'rejected' ? `Ditolak: ${rejectionReason}` : undefined,
+          }).eq('id', updatedPayment.student_id);
+        } else {
+          await supabase.from('students').update({
+            initial_payment_status: status,
+            initial_payment_notes: status === 'rejected' ? `Ditolak: ${rejectionReason}` : undefined,
+          }).eq('id', updatedPayment.student_id);
+        }
       }
 
       return { success: true, error: null };
@@ -262,6 +347,12 @@ export const PaymentRepository = {
       if (updates.accountNumber !== undefined) payload.account_number = updates.accountNumber;
       if (updates.senderName !== undefined) payload.sender_name = updates.senderName;
       if (updates.proofUrl !== undefined) payload.proof_url = updates.proofUrl;
+      if (updates.proofStoragePath !== undefined) payload.proof_storage_path = updates.proofStoragePath;
+      if (updates.proofFileName !== undefined) payload.proof_file_name = updates.proofFileName;
+      if (updates.proofFileType !== undefined) payload.proof_file_type = updates.proofFileType;
+      if (updates.proofFileSize !== undefined) payload.proof_file_size = updates.proofFileSize;
+      if (updates.proofUploadedAt !== undefined) payload.proof_uploaded_at = updates.proofUploadedAt;
+      if (updates.rejectionReason !== undefined) payload.rejection_reason = updates.rejectionReason;
       if (updates.paymentDate !== undefined) {
         payload.payment_date = updates.paymentDate && updates.paymentDate.trim() ? updates.paymentDate.trim() : null;
       }
@@ -271,69 +362,63 @@ export const PaymentRepository = {
       }
       if (updates.notes !== undefined) payload.notes = updates.notes;
 
-      let data: any = null;
-      let error: any = null;
-
-      if (isValidUuid(id)) {
-        const res = await supabase
-          .from('payments')
-          .update(payload)
-          .eq('id', id)
-          .select()
-          .maybeSingle();
-        data = res.data;
-        error = res.error;
-      } else if (updates.studentId) {
-        const res = await supabase
-          .from('payments')
-          .update(payload)
-          .eq('student_id', updates.studentId)
-          .in('payment_type', ['daftar_ulang', 'bam'])
-          .select()
-          .maybeSingle();
-        data = res.data;
-        error = res.error;
-      } else {
-        // Fallback: look for payment by notes or other fields
-        const res = await supabase
-          .from('payments')
-          .update(payload)
-          .eq('id', id)
-          .select()
-          .maybeSingle();
-        data = res.data;
-        error = res.error;
-      }
+      let resultData: any = null;
+      const { data, error } = await supabase
+        .from('payments')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .maybeSingle();
 
       if (error) {
-        return { data: null, error: new Error(error.message) };
+        // Fallback jika ada kolom metadata yang belum terpasang di database
+        if (error.message.includes('column') || error.message.includes('schema cache')) {
+          delete payload.proof_storage_path;
+          delete payload.proof_file_name;
+          delete payload.proof_file_type;
+          delete payload.proof_file_size;
+          delete payload.proof_uploaded_at;
+          delete payload.rejection_reason;
+
+          const { data: retryData, error: retryErr } = await supabase
+            .from('payments')
+            .update(payload)
+            .eq('id', id)
+            .select()
+            .maybeSingle();
+
+          if (retryErr) {
+            return { data: null, error: new Error(retryErr.message) };
+          }
+          resultData = retryData;
+        } else {
+          return { data: null, error: new Error(error.message) };
+        }
+      } else {
+        resultData = data;
       }
 
-      // Sync student status if status or amount changed
-      const targetStudentId = updates.studentId || data?.student_id;
-      if (targetStudentId) {
-        const isBAM = !data || data.payment_type === 'daftar_ulang' || data.payment_type === 'bam' || updates.paymentType === 'bam';
-        if (isBAM) {
-          const studentUpdates: Record<string, any> = { updated_at: new Date().toISOString() };
-          if (updates.status !== undefined) studentUpdates.initial_payment_status = updates.status;
-          if (updates.amount !== undefined) studentUpdates.initial_payment_amount = updates.amount;
-          if (updates.notes !== undefined) studentUpdates.initial_payment_notes = updates.notes;
-          if (updates.proofUrl !== undefined) studentUpdates.initial_payment_proof_url = updates.proofUrl;
-          if (updates.paymentDate !== undefined) studentUpdates.initial_payment_date = updates.paymentDate;
-          if (updates.status === 'verified') {
-            studentUpdates.status = 're_registered';
-          }
-          await supabase.from('students').update(studentUpdates).eq('id', targetStudentId);
-        } else if (updates.status) {
+      if (!resultData) {
+        return { data: null, error: new Error('Pembayaran tidak ditemukan atau sudah dihapus.') };
+      }
+
+      // Sync status siswa jika status pembayaran berubah
+      if (updates.status && resultData.student_id) {
+        const isForm = resultData.payment_type === 'formulir' || resultData.payment_type === 'form';
+        if (isForm) {
           await supabase.from('students').update({
             form_payment_status: updates.status,
             is_form_verified: updates.status === 'verified',
-            updated_at: new Date().toISOString(),
-          }).eq('id', targetStudentId);
+            is_form_verified_by_admin: updates.status === 'verified',
+          }).eq('id', resultData.student_id);
+        } else {
+          await supabase.from('students').update({
+            initial_payment_status: updates.status,
+          }).eq('id', resultData.student_id);
         }
       }
 
-      return { data: data ? mapRowToPayment(data) : null, error: null };
+      return { data: mapRowToPayment(resultData), error: null };
     } catch (err: any) {
       return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
     }
@@ -344,21 +429,11 @@ export const PaymentRepository = {
    */
   async remove(id: string): Promise<{ success: boolean; error: Error | null }> {
     try {
-      let existing: any = null;
-      if (isValidUuid(id)) {
-        const { data } = await supabase.from('payments').select('*').eq('id', id).maybeSingle();
-        existing = data;
-        const { error } = await supabase.from('payments').delete().eq('id', id);
-        if (error) {
-          return { success: false, error: new Error(error.message) };
-        }
-      } else {
-        // Fallback jika id bukan uuid: coba cari by student_id
-        const { data } = await supabase.from('payments').select('*').eq('student_id', id).maybeSingle();
-        existing = data;
-        if (existing?.id) {
-          await supabase.from('payments').delete().eq('id', existing.id);
-        }
+      const { data: existing } = await supabase.from('payments').select('*').eq('id', id).maybeSingle();
+
+      const { error } = await supabase.from('payments').delete().eq('id', id);
+      if (error) {
+        return { success: false, error: new Error(error.message) };
       }
 
       if (existing && existing.student_id) {
@@ -367,15 +442,11 @@ export const PaymentRepository = {
           await supabase.from('students').update({
             form_payment_status: 'unpaid',
             is_form_verified: false,
-            updated_at: new Date().toISOString(),
+            is_form_verified_by_admin: false,
           }).eq('id', existing.student_id);
         } else {
           await supabase.from('students').update({
             initial_payment_status: 'unpaid',
-            initial_payment_amount: 0,
-            initial_payment_proof_url: null,
-            initial_payment_notes: null,
-            updated_at: new Date().toISOString(),
           }).eq('id', existing.student_id);
         }
       }

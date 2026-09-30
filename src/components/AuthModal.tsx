@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { UserAccount, UserRole } from '../types';
 import { saveUserToDb, setCurrentUser } from '../utils/storage';
 import { signUpWithSupabase, signInWithSupabase } from '../utils/supabaseClient';
+import { getDefaultCredentials, fetchDefaultCredentialsFromSupabase, DefaultCredentialsConfig } from '../utils/defaultCredentials';
+import { saveStudentAccountCredentials } from '../utils/studentCredentials';
 import {
   LogIn, UserPlus, X, Lock, Mail, Phone, User, CheckCircle2,
   GraduationCap, ShieldAlert, ShieldCheck, Eye, EyeOff, HelpCircle,
@@ -24,6 +26,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [selectedRole, setSelectedRole] = useState<UserRole>('student');
+  const [defaultsConfig, setDefaultsConfig] = useState<DefaultCredentialsConfig>(() => getDefaultCredentials());
 
   useEffect(() => {
     if (isOpen) {
@@ -33,6 +36,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
       setErrorMsg('');
       setSuccessMsg('');
+      // Ambil kredensial default terkini yang disetel Super Admin dari Supabase
+      fetchDefaultCredentialsFromSupabase().then(res => {
+        if (res) setDefaultsConfig(res);
+      }).catch(() => {});
     }
   }, [isOpen, initialMode]);
 
@@ -111,9 +118,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       });
     } else {
-      const roleLabel = selectedRole === 'super_admin' ? 'Super Admin' : selectedRole === 'admin' ? 'Panitia Admin' : 'Kepala Sekolah';
-      const defaultUser = selectedRole === 'super_admin' ? 'superadmin' : selectedRole === 'admin' ? 'admin' : 'kepsek';
-      const defaultEmail = selectedRole === 'super_admin' ? 'superadmin@alhadiid.sch.id' : selectedRole === 'admin' ? 'admin@alhadiid.sch.id' : 'kepsek@alhadiid.sch.id';
+      const activeRoleConfig = selectedRole === 'super_admin'
+        ? defaultsConfig.super_admin
+        : selectedRole === 'admin'
+        ? defaultsConfig.admin
+        : defaultsConfig.kepsek;
+
+      const roleLabel = activeRoleConfig.roleLabel;
+      const defaultUser = activeRoleConfig.defaultUsername;
+      const defaultEmail = activeRoleConfig.defaultEmail;
+      const defaultPass = activeRoleConfig.defaultPassword;
 
       Swal.fire({
         title: 'Login Gagal',
@@ -128,10 +142,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 12px;">
               <strong>🛡️ Kredensial Resmi Akun ${roleLabel}:</strong><br/>
               Username: <code style="color: #2563eb; font-weight: bold;">${defaultUser}</code> (atau <code>${defaultEmail}</code>)<br/>
-              Password: <code style="color: #2563eb; font-weight: bold;">admin123</code>
+              Password: <code style="color: #2563eb; font-weight: bold;">${defaultPass}</code>
             </div>
             <p style="color: #64748b; font-size: 11px;">
-              * Fitur buat akun mandiri hanya disediakan untuk Calon Murid. Akun Pengelola dibuat dan dikelola oleh Super Admin.
+              * Kredensial default ini dapat diubah sewaktu-waktu oleh Super Admin melalui Pengaturan Akun Pengguna.
             </p>
           </div>
         `,
@@ -151,7 +165,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }).then((result) => {
         if (result.isDismissed && result.dismiss === Swal.DismissReason.cancel) {
           setEmail(defaultUser);
-          setAdminPassword('admin123');
+          setAdminPassword(defaultPass);
           setErrorMsg('');
         }
       });
@@ -196,16 +210,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     const newUser = res.userAccount;
-    // Simpan kredensial login aktif calon murid agar otomatis masuk ke Kartu Ujian
+    // Simpan kredensial login aktif calon murid agar otomatis masuk ke Kartu Ujian & sinkron ke Supabase
     try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('spmb_last_student_username', trimmedUsername);
-        sessionStorage.setItem('spmb_last_student_password', trimmedPassword);
-        localStorage.setItem(`spmb_cred_${newUser.id}`, trimmedPassword);
-        localStorage.setItem(`spmb_cred_${trimmedEmail}`, trimmedPassword);
-        localStorage.setItem(`spmb_cred_${trimmedUsername}`, trimmedPassword);
-        localStorage.setItem(`spmb_user_${newUser.id}`, trimmedUsername);
-      }
+      await saveStudentAccountCredentials({
+        studentId: newUser.id,
+        registrationNumber: newUser.registrationNumber || '',
+        userEmail: trimmedEmail,
+        fullName: trimmedFullName,
+        username: trimmedUsername,
+        password: trimmedPassword,
+      });
     } catch {}
 
     newUser.username = trimmedUsername;
@@ -282,16 +296,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           return;
         }
 
-        // Simpan kredensial login aktif calon murid agar otomatis masuk ke Kartu Ujian
+        // Simpan kredensial login aktif calon murid agar otomatis masuk ke Kartu Ujian & sinkron ke Supabase
         try {
-          if (typeof window !== 'undefined') {
-            sessionStorage.setItem('spmb_last_student_username', trimmedUsername);
-            sessionStorage.setItem('spmb_last_student_password', trimmedPassword);
-            localStorage.setItem(`spmb_cred_${activeUserSession.id}`, trimmedPassword);
-            localStorage.setItem(`spmb_cred_${activeUserSession.email}`, trimmedPassword);
-            localStorage.setItem(`spmb_cred_${trimmedUsername}`, trimmedPassword);
-            localStorage.setItem(`spmb_user_${activeUserSession.id}`, trimmedUsername);
-          }
+          await saveStudentAccountCredentials({
+            studentId: activeUserSession.id,
+            registrationNumber: activeUserSession.registrationNumber || '',
+            userEmail: activeUserSession.email,
+            fullName: activeUserSession.name,
+            username: trimmedUsername,
+            password: trimmedPassword,
+          });
         } catch {}
 
         activeUserSession.username = trimmedUsername;
@@ -638,16 +652,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 {/* Quick Demo Fill Pill */}
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50/80 border border-blue-100 text-[11px] text-blue-900">
                   <div className="flex items-center gap-1.5 truncate">
-                    <span className="font-bold">💡 Contoh Akun:</span>
-                    <span className="font-mono text-blue-700">afrah</span>
+                    <span className="font-bold">💡 Akun Demo:</span>
+                    <span className="font-mono text-blue-700 font-semibold">{defaultsConfig.student.defaultUsername}</span>
                     <span className="text-slate-400">|</span>
-                    <span className="text-slate-600">Pass: <code className="font-bold text-blue-700">siswa123</code></span>
+                    <span className="text-slate-600">Pass: <code className="font-bold text-blue-700">{defaultsConfig.student.defaultPassword}</code></span>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
-                      setStudentUsername('afrah');
-                      setStudentPassword('siswa123');
+                      setStudentUsername(defaultsConfig.student.defaultUsername);
+                      setStudentPassword(defaultsConfig.student.defaultPassword);
                       setErrorMsg('');
                     }}
                     className="ml-2 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all"
@@ -725,38 +739,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               /* Admin & Kepsek Login - Email & Password */
               <>
                 {/* Quick Credential Helper Pill */}
-                <div className={`flex items-center justify-between p-2.5 rounded-xl border text-[11px] ${
-                  selectedRole === 'super_admin'
-                    ? 'bg-amber-50/80 border-amber-200 text-amber-900'
-                    : 'bg-blue-50/80 border-blue-100 text-blue-900'
-                }`}>
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className="font-bold">
-                      {selectedRole === 'super_admin' ? '🔑 Akun Default:' : selectedRole === 'admin' ? '🛡️ Akun Panitia:' : '🎓 Akun Kepsek:'}
-                    </span>
-                    <span className="font-mono font-semibold">
-                      {selectedRole === 'super_admin' ? 'superadmin' : selectedRole === 'admin' ? 'admin' : 'kepsek'}
-                    </span>
-                    <span className="text-slate-400">|</span>
-                    <span className="text-slate-600">Pass: <code className="font-bold">admin123</code></span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const defUser = selectedRole === 'super_admin' ? 'superadmin' : selectedRole === 'admin' ? 'admin' : 'kepsek';
-                      setEmail(defUser);
-                      setAdminPassword('admin123');
-                      setErrorMsg('');
-                    }}
-                    className={`ml-2 px-2.5 py-1 rounded-lg text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all ${
+                {(() => {
+                  const activeRoleConfig = selectedRole === 'super_admin'
+                    ? defaultsConfig.super_admin
+                    : selectedRole === 'admin'
+                    ? defaultsConfig.admin
+                    : defaultsConfig.kepsek;
+
+                  return (
+                    <div className={`flex items-center justify-between p-2.5 rounded-xl border text-[11px] ${
                       selectedRole === 'super_admin'
-                        ? 'bg-amber-600 hover:bg-amber-700'
-                        : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
-                  >
-                    Gunakan
-                  </button>
-                </div>
+                        ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                        : 'bg-blue-50/80 border-blue-100 text-blue-900'
+                    }`}>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="font-bold">
+                          {selectedRole === 'super_admin' ? '🔑 Akun Default:' : selectedRole === 'admin' ? '🛡️ Akun Panitia:' : '🎓 Akun Kepsek:'}
+                        </span>
+                        <span className="font-mono font-semibold">
+                          {activeRoleConfig.defaultUsername}
+                        </span>
+                        <span className="text-slate-400">|</span>
+                        <span className="text-slate-600">Pass: <code className="font-bold">{activeRoleConfig.defaultPassword}</code></span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmail(activeRoleConfig.defaultUsername);
+                          setAdminPassword(activeRoleConfig.defaultPassword);
+                          setErrorMsg('');
+                        }}
+                        className={`ml-2 px-2.5 py-1 rounded-lg text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all ${
+                          selectedRole === 'super_admin'
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                      >
+                        Gunakan
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">

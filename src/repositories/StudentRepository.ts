@@ -5,6 +5,7 @@
 
 import { supabase } from '../utils/supabaseClient';
 import { StudentData, AdmissionStatus } from '../types';
+import { fetchStudentCredentialsFromSupabase, saveStudentAccountCredentials, getStudentCredentials } from '../utils/studentCredentials';
 
 export const VALID_STUDENT_DB_COLUMNS = new Set([
   'id',
@@ -51,6 +52,9 @@ export const VALID_STUDENT_DB_COLUMNS = new Set([
   'report_card_url',
   'kip_url',
   'certificate_url',
+  'test_answers',
+  'is_test_active',
+  'test_submitted',
   'test_schedule_date',
   'test_location',
   'diagnostic_score',
@@ -70,12 +74,68 @@ export const VALID_STUDENT_DB_COLUMNS = new Set([
   'mpls_info'
 ]);
 
-export function mapRowToStudent(row: any): StudentData {
+export function mapRowToStudent(
+  row: any,
+  credsMap?: Record<string, any>,
+  userMap?: Map<string, any>
+): StudentData {
+  const embeddedCred = (row.test_answers && typeof row.test_answers === 'object')
+    ? (row.test_answers._accountCredentials || row.test_answers._credentials)
+    : undefined;
+
+  const storedCred = credsMap
+    ? (credsMap[row.id] || (row.registration_number ? credsMap[row.registration_number] : null) || (row.user_email ? credsMap[row.user_email.toLowerCase()] : null))
+    : (getStudentCredentials(row.id) || getStudentCredentials(row.registration_number) || getStudentCredentials(row.user_email));
+
+  const matchedUser = userMap
+    ? (userMap.get(row.id) || (row.registration_number ? userMap.get(row.registration_number) : null) || (row.user_email ? userMap.get(row.user_email.toLowerCase()) : null))
+    : null;
+
+  const candidateUsername = (
+    embeddedCred?.username ||
+    storedCred?.username ||
+    matchedUser?.username ||
+    (typeof window !== 'undefined' ? (
+      localStorage.getItem(`spmb_user_${row.id}`) ||
+      localStorage.getItem(`spmb_user_${row.registration_number}`) ||
+      localStorage.getItem(`spmb_user_${row.user_email?.toLowerCase()}`) ||
+      ''
+    ) : '') ||
+    (row.user_email ? row.user_email.split('@')[0] : '') ||
+    row.registration_number ||
+    'siswa'
+  ).trim();
+
+  const candidatePassword = (
+    embeddedCred?.password ||
+    storedCred?.password ||
+    (typeof window !== 'undefined' ? (
+      localStorage.getItem(`spmb_cred_${row.id}`) ||
+      localStorage.getItem(`spmb_cred_${row.registration_number}`) ||
+      localStorage.getItem(`spmb_cred_${row.user_email?.toLowerCase()}`) ||
+      localStorage.getItem(`spmb_cred_${candidateUsername.toLowerCase()}`) ||
+      ''
+    ) : '') ||
+    'siswa123'
+  ).trim();
+
+  const testAnswersObj = (typeof row.test_answers === 'object' && row.test_answers) ? { ...row.test_answers } : {};
+  if (candidateUsername || candidatePassword) {
+    testAnswersObj._accountCredentials = {
+      username: candidateUsername,
+      password: candidatePassword,
+    };
+  }
+
   return {
     id: row.id,
     registrationNumber: row.registration_number,
     status: (row.status || 'draft') as AdmissionStatus,
     userEmail: row.user_email || '',
+    username: candidateUsername,
+    password: candidatePassword,
+    examUsername: candidateUsername,
+    examPassword: candidatePassword,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at,
     version: row.version ?? 1,
@@ -151,7 +211,7 @@ export function mapRowToStudent(row: any): StudentData {
       row.status === 'test_completed' ||
       (row.final_score !== null && row.final_score !== undefined)
     ),
-    testAnswers: typeof row.test_answers === 'object' && row.test_answers ? row.test_answers : {},
+    testAnswers: testAnswersObj,
     testScheduleDate: row.test_schedule_date || undefined,
     testLocation: row.test_location || undefined,
     diagnosticScore: row.diagnostic_score !== null && row.diagnostic_score !== undefined ? Number(row.diagnostic_score) : undefined,
@@ -354,6 +414,19 @@ export function mapStudentToRow(s: Partial<StudentData>): Record<string, any> {
   if (s.firstDayDate !== undefined) row.first_day_date = sanitizeDate(s.firstDayDate);
   if (s.mplsInfo !== undefined) row.mpls_info = s.mplsInfo;
 
+  const testAnswersObj = typeof s.testAnswers === 'object' && s.testAnswers ? { ...s.testAnswers } : {};
+  if (s.username || s.password) {
+    testAnswersObj._accountCredentials = {
+      username: s.username || testAnswersObj._accountCredentials?.username,
+      password: s.password || testAnswersObj._accountCredentials?.password,
+    };
+  }
+  if (Object.keys(testAnswersObj).length > 0) {
+    row.test_answers = testAnswersObj;
+  }
+  if (s.isTestActive !== undefined) row.is_test_active = Boolean(s.isTestActive);
+  if (s.testSubmitted !== undefined) row.test_submitted = Boolean(s.testSubmitted);
+
   row.updated_at = new Date().toISOString();
 
   // Filter hanya kolom yang benar-benar ada di tabel public.students Supabase
@@ -504,8 +577,30 @@ export const StudentRepository = {
         console.warn('Hasil ujian fetch error:', hErr);
       }
 
+      // Load student credentials & users map to ensure credentials match initial registration
+      let credsMap: Record<string, any> = {};
+      try {
+        credsMap = await fetchStudentCredentialsFromSupabase();
+      } catch (cErr) {
+        console.warn('StudentRepository.list credsMap notice:', cErr);
+      }
+
+      const userMap = new Map<string, any>();
+      try {
+        const { data: dbUsers } = await supabase.from('users').select('id, username, email, registration_number');
+        if (dbUsers && dbUsers.length > 0) {
+          dbUsers.forEach((u: any) => {
+            if (u.id) userMap.set(u.id, u);
+            if (u.registration_number) userMap.set(u.registration_number, u);
+            if (u.email) userMap.set(u.email.toLowerCase(), u);
+          });
+        }
+      } catch (uErr) {
+        console.warn('StudentRepository.list users notice:', uErr);
+      }
+
       const mapped = (data || []).map(row => {
-        const s = mapRowToStudent(row);
+        const s = mapRowToStudent(row, credsMap, userMap);
         const hu = hasilMap.get(s.id);
         return mergeHasilUjianIntoStudent(s, hu);
       });
@@ -666,6 +761,18 @@ export const StudentRepository = {
         }
         return { data: null, error: new Error(error.message) };
       }
+
+      if (payload.username || payload.password) {
+        saveStudentAccountCredentials({
+          studentId: row.id,
+          registrationNumber: row.registration_number || '',
+          userEmail: row.user_email || '',
+          fullName: row.full_name || '',
+          username: payload.username || '',
+          password: payload.password || '',
+        }).catch(() => {});
+      }
+
       const mapped = mapRowToStudent(data);
       mapped.version = 1;
       return { data: mapped, error: null };
@@ -738,6 +845,30 @@ export const StudentRepository = {
       delete row.created_at;
       delete row.version;
       row.updated_at = new Date().toISOString();
+
+      // Preserve existing _accountCredentials in test_answers if present on serverRecord
+      const serverAnswers = typeof serverRecord.test_answers === 'object' && serverRecord.test_answers ? serverRecord.test_answers : {};
+      const newAnswers = row.test_answers || (typeof updates.testAnswers === 'object' && updates.testAnswers ? { ...updates.testAnswers } : { ...serverAnswers });
+      
+      const effectiveUsername = updates.username || (newAnswers as any)?._accountCredentials?.username || (serverAnswers as any)?._accountCredentials?.username;
+      const effectivePassword = updates.password || (newAnswers as any)?._accountCredentials?.password || (serverAnswers as any)?._accountCredentials?.password;
+
+      if (effectiveUsername || effectivePassword) {
+        newAnswers._accountCredentials = {
+          username: effectiveUsername || (newAnswers as any)?._accountCredentials?.username,
+          password: effectivePassword || (newAnswers as any)?._accountCredentials?.password,
+        };
+        row.test_answers = newAnswers;
+
+        saveStudentAccountCredentials({
+          studentId: id,
+          registrationNumber: updates.registrationNumber || serverRecord.registration_number || '',
+          userEmail: updates.userEmail || serverRecord.user_email || '',
+          fullName: updates.fullName || serverRecord.full_name || '',
+          username: effectiveUsername || '',
+          password: effectivePassword || '',
+        }).catch(() => {});
+      }
 
       const { data, error } = await supabase
         .from('students')

@@ -2,8 +2,10 @@ import { createClient } from '@supabase/supabase-js';
 import {
   StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule,
   GasConfig, UserAccount, UserRole, FormPaymentRecord, BamPaymentRecord,
-  BamInstallmentType, ExamQuestion, WebsiteConfig
+  ExamQuestion, WebsiteConfig, BamInstallmentType
 } from '../types';
+import { getDefaultCredentials } from './defaultCredentials';
+import { fetchStudentCredentialsFromSupabase, saveStudentAccountCredentials } from './studentCredentials';
 
 /**
  * Sanitasi URL Supabase untuk membersihkan trailing path (/rest/v1) atau teks ekstra
@@ -311,6 +313,26 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
       return [];
     }
 
+    // Query users table & stored student credentials to ensure account credentials match initial registration
+    const userMap = new Map<string, any>();
+    try {
+      const { data: dbUsers } = await supabase.from('users').select('id, username, email, registration_number');
+      if (dbUsers && dbUsers.length > 0) {
+        dbUsers.forEach((u: any) => {
+          if (u.id) userMap.set(u.id, u);
+          if (u.registration_number) userMap.set(u.registration_number, u);
+          if (u.email) userMap.set(u.email.toLowerCase(), u);
+        });
+      }
+    } catch (uErr) {
+      console.warn('fetchStudentsFromSupabase users notice:', uErr);
+    }
+
+    let credsMap: Record<string, any> = {};
+    try {
+      credsMap = await fetchStudentCredentialsFromSupabase();
+    } catch {}
+
     // Query hasil_ujian to ensure exam scores inputted in Supabase are reflected in student data
     const hasilMap = new Map<string, any>();
     try {
@@ -344,11 +366,40 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
         studentStatus = 'passed';
       }
 
+      // Kredensial akun resmi yang dibuat calon murid saat pendaftaran pertama kali
+      const matchedUser = userMap.get(row.id) || (row.registration_number ? userMap.get(row.registration_number) : null) || (row.user_email ? userMap.get(row.user_email.toLowerCase()) : null);
+      const storedCred = credsMap[row.id] || (row.registration_number ? credsMap[row.registration_number] : null) || (row.user_email ? credsMap[row.user_email.toLowerCase()] : null);
+      const embeddedCred = row.test_answers?._accountCredentials || row.test_answers?._credentials;
+
+      const studentUsername = (
+        embeddedCred?.username ||
+        storedCred?.username ||
+        matchedUser?.username ||
+        (typeof window !== 'undefined' ? localStorage.getItem(`spmb_user_${row.id}`) : '') ||
+        (row.user_email ? row.user_email.split('@')[0] : '') ||
+        row.registration_number ||
+        'siswa'
+      ).trim();
+
+      const studentPassword = (
+        embeddedCred?.password ||
+        storedCred?.password ||
+        (typeof window !== 'undefined' ? localStorage.getItem(`spmb_cred_${row.id}`) : '') ||
+        (typeof window !== 'undefined' ? localStorage.getItem(`spmb_cred_${row.registration_number}`) : '') ||
+        (typeof window !== 'undefined' ? localStorage.getItem(`spmb_cred_${row.user_email?.toLowerCase()}`) : '') ||
+        (typeof window !== 'undefined' ? localStorage.getItem(`spmb_cred_${studentUsername.toLowerCase()}`) : '') ||
+        'siswa123'
+      ).trim();
+
       return {
         id: row.id,
         registrationNumber: row.registration_number,
         status: studentStatus,
         userEmail: row.user_email,
+        username: studentUsername,
+        password: studentPassword,
+        examUsername: studentUsername,
+        examPassword: studentPassword,
         createdAt: row.created_at,
         version: row.version ?? 1,
         isFormVerified: !!(row.is_form_verified || row.form_payment_status === 'verified'),
@@ -592,66 +643,36 @@ export async function fetchFormPaymentsFromSupabase(): Promise<FormPaymentRecord
 export async function syncBamPaymentsToSupabase(records: BamPaymentRecord[]): Promise<void> {
   if (!records || records.length === 0) return;
 
-  const isUuid = (val?: string | null) =>
-    Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val));
-
   try {
+    const paymentRows = records.map(r => ({
+      id: r.id || `pay_bam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      student_id: r.studentId,
+      registration_number: r.registrationNumber,
+      student_name: r.studentName,
+      payment_type: 'daftar_ulang',
+      amount: Number(r.amountPaid || 0),
+      status: 'verified',
+      payment_method: 'manual_transfer',
+      proof_url: r.proofUrl || null,
+      notes: r.notes || '',
+      created_at: r.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+
+    // Simpan ke tabel relasional tunggal public.payments
+    await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+
+    // Perbarui nominal BAM siswa
     for (const r of records) {
-      if (!r.studentId && !r.registrationNumber) continue;
-
-      const amt = Number(r.amountPaid || 0);
-      const isLunas = r.installmentType === 'Lunas' || (r.remainingBalance !== undefined && r.remainingBalance <= 0);
-      const status = isLunas ? 'verified' : (amt > 0 ? 'pending' : 'pending');
-
-      const paymentPayload: Record<string, any> = {
-        student_id: r.studentId,
-        registration_number: r.registrationNumber,
-        student_name: r.studentName,
-        payment_type: 'daftar_ulang',
-        amount: amt,
-        status: status,
-        payment_method: 'manual_transfer',
-        proof_url: r.proofUrl || null,
-        notes: r.notes || '',
-        payment_date: r.paymentDate ? (r.paymentDate.includes('T') ? r.paymentDate : `${r.paymentDate}T00:00:00Z`) : new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      if (isUuid(r.id)) {
-        paymentPayload.id = r.id;
-        await supabase.from('payments').upsert(paymentPayload, { onConflict: 'id' });
-      } else {
-        // Cek apakah pembayaran BAM sudah ada untuk student_id ini di tabel payments
-        const { data: existing } = await supabase
-          .from('payments')
-          .select('id')
-          .eq('student_id', r.studentId)
-          .in('payment_type', ['daftar_ulang', 'bam'])
-          .maybeSingle();
-
-        if (existing?.id) {
-          await supabase.from('payments').update(paymentPayload).eq('id', existing.id);
-        } else {
-          paymentPayload.created_at = r.createdAt || new Date().toISOString();
-          await supabase.from('payments').insert(paymentPayload);
-        }
-      }
-
-      // Perbarui status dan nominal BAM santri di tabel students
-      if (r.studentId) {
-        const studentUpdates: Record<string, any> = {
-          initial_payment_amount: amt,
-          initial_payment_status: status,
-          updated_at: new Date().toISOString(),
-        };
-        if (r.proofUrl) studentUpdates.initial_payment_proof_url = r.proofUrl;
-        if (r.paymentDate) studentUpdates.initial_payment_date = r.paymentDate;
-        if (r.notes) studentUpdates.initial_payment_notes = r.notes;
-        if (isLunas) studentUpdates.status = 're_registered';
-
+      if (r.studentId && r.amountPaid > 0) {
         await supabase
           .from('students')
-          .update(studentUpdates)
+          .update({
+            initial_payment_amount: Number(r.amountPaid),
+            initial_payment_status: 'verified',
+            initial_payment_proof_url: r.proofUrl || null,
+            updated_at: new Date().toISOString(),
+          })
           .eq('id', r.studentId);
       }
     }
@@ -663,40 +684,26 @@ export async function syncBamPaymentsToSupabase(records: BamPaymentRecord[]): Pr
 export async function fetchBamPaymentsFromSupabase(): Promise<BamPaymentRecord[] | null> {
   try {
     // Single Source of Truth: Ambil langsung dari tabel relasional public.payments
-    let { data: dbData, error } = await supabase
+    const { data: dbData, error } = await supabase
       .from('payments')
-      .select('*, student:students(gender)')
+      .select('*')
       .in('payment_type', ['daftar_ulang', 'bam'])
       .order('created_at', { ascending: false });
 
-    if (error) {
-      // Fallback tanpa alias join jika relasi berbeda
-      const fallback = await supabase
-        .from('payments')
-        .select('*')
-        .in('payment_type', ['daftar_ulang', 'bam'])
-        .order('created_at', { ascending: false });
-      dbData = fallback.data;
-      error = fallback.error;
-    }
-
     if (!error && dbData && dbData.length > 0) {
       const mapped: BamPaymentRecord[] = dbData.map((row: any) => {
-        const studentGender = row.student?.gender || row.gender;
-        const isAkhwat = studentGender === 'Perempuan' || studentGender === 'akhwat';
-        const defaultCost = isAkhwat ? 6890000 : 6670000;
-        const cost = Number(row.total_bam_cost || row.total_cost || defaultCost);
+        const cost = Number(row.total_bam_cost || row.total_cost || 11000000);
         const amt = Number(row.amount || 0);
         const remaining = Math.max(0, cost - amt);
         const installment = (row.installment_type || (amt >= cost ? 'Lunas' : (amt > 0 ? 'Cicilan 1' : 'Belum Bayar'))) as BamInstallmentType;
         return {
           id: row.id,
-          transactionNumber: row.transaction_number || (row.id ? `TRX-BAM-${String(row.id).slice(-6).toUpperCase()}` : 'TRX-BAM'),
+          transactionNumber: row.transaction_number || row.id.replace('pay_', 'TRX-BAM-').toUpperCase(),
           registrationNumber: row.registration_number,
           studentId: row.student_id,
           studentName: row.student_name,
-          gender: isAkhwat ? 'Perempuan' : 'Laki-laki',
-          paymentDate: row.payment_date ? row.payment_date.split('T')[0] : (row.created_at?.split('T')[0] || new Date().toISOString().split('T')[0]),
+          gender: row.gender || 'Laki-laki',
+          paymentDate: row.payment_date || row.created_at?.split('T')[0],
           totalBamCost: cost,
           amountPaid: amt,
           installmentType: installment,
@@ -888,6 +895,14 @@ export async function hashPassword(plain: string): Promise<string> {
  */
 export async function verifyPassword(plain: string, storedHash?: string, role?: string): Promise<boolean> {
   if (!plain) return false;
+
+  // Cek kecocokan password default dinamis yang dikonfigurasi Super Admin
+  const dynamicDefaults = getDefaultCredentials();
+  if (role && (role in dynamicDefaults)) {
+    const roleDef = dynamicDefaults[role as keyof typeof dynamicDefaults];
+    if (roleDef && plain === roleDef.defaultPassword) return true;
+  }
+
   if (!storedHash) {
     if ((role === 'admin' || role === 'super_admin' || role === 'kepsek') &&
         (plain === 'admin123' || plain === 'superadmin123' || plain === 'spmb2027')) return true;
@@ -1027,7 +1042,7 @@ export async function signUpWithSupabase(params: {
       };
     }
 
-    // 4. Jika role calon murid, simpan record pendaftaran awal ke public.students
+    // 4. Jika role calon murid, simpan record pendaftaran awal ke public.students beserta kredensial akun
     if (params.role === 'student') {
       const { error: studentErr } = await supabase.from('students').upsert({
         id: userId,
@@ -1038,12 +1053,32 @@ export async function signUpWithSupabase(params: {
         status: 'draft',
         form_payment_amount: 200000,
         form_payment_status: 'unpaid',
+        test_answers: {
+          _accountCredentials: {
+            username: cleanUsername,
+            password: cleanPassword,
+          },
+        },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
 
       if (studentErr) {
         console.warn('Upsert public.students notice:', studentErr.message);
+      }
+
+      // Simpan juga ke store kredensial terpusat (spmb_app_state & local caches)
+      try {
+        await saveStudentAccountCredentials({
+          studentId: userId,
+          registrationNumber: regNum || '',
+          userEmail: cleanEmail,
+          fullName: cleanFullName,
+          username: cleanUsername,
+          password: cleanPassword,
+        });
+      } catch (cErr) {
+        console.warn('saveStudentAccountCredentials notice:', cErr);
       }
     }
 
@@ -1137,28 +1172,46 @@ export async function signInWithSupabase(
     // 1. Resolve user profile from authoritative public.users in Supabase
     let dbUser: any = null;
 
-    // Direct check for official administrative accounts (with aliases)
-    if (cleanIdentifier === 'admin' || cleanIdentifier === 'admin@alhadiid.sch.id' || cleanIdentifier === 'admin.spmb@alhadiid.sch.id') {
+    const dynamicDefaults = getDefaultCredentials();
+    const superAdminUser = dynamicDefaults.super_admin.defaultUsername.toLowerCase();
+    const superAdminEmail = dynamicDefaults.super_admin.defaultEmail.toLowerCase();
+    const adminUser = dynamicDefaults.admin.defaultUsername.toLowerCase();
+    const adminEmail = dynamicDefaults.admin.defaultEmail.toLowerCase();
+    const kepsekUser = dynamicDefaults.kepsek.defaultUsername.toLowerCase();
+    const kepsekEmail = dynamicDefaults.kepsek.defaultEmail.toLowerCase();
+    const studentUser = dynamicDefaults.student.defaultUsername.toLowerCase();
+    const studentEmail = dynamicDefaults.student.defaultEmail.toLowerCase();
+
+    // Direct check for official administrative accounts (with dynamic defaults & aliases)
+    if (cleanIdentifier === 'admin' || cleanIdentifier === 'admin@alhadiid.sch.id' || cleanIdentifier === 'admin.spmb@alhadiid.sch.id' || cleanIdentifier === adminUser || cleanIdentifier === adminEmail) {
       const res = await supabase
         .from('users')
         .select('*')
-        .or('username.ilike.admin,email.ilike.admin@alhadiid.sch.id,email.ilike.admin.spmb@alhadiid.sch.id')
+        .or(`id.eq.usr_admin,username.ilike.${adminUser},username.ilike.admin,email.ilike.${adminEmail},email.ilike.admin@alhadiid.sch.id`)
         .limit(1)
         .maybeSingle();
       dbUser = res.data;
-    } else if (cleanIdentifier === 'superadmin' || cleanIdentifier === 'superadmin@alhadiid.sch.id' || cleanIdentifier === 'superadmin@lhadiid.sch.id') {
+    } else if (cleanIdentifier === 'superadmin' || cleanIdentifier === 'superadmin@alhadiid.sch.id' || cleanIdentifier === 'superadmin@lhadiid.sch.id' || cleanIdentifier === superAdminUser || cleanIdentifier === superAdminEmail) {
       const res = await supabase
         .from('users')
         .select('*')
-        .or('username.ilike.superadmin,email.ilike.superadmin@alhadiid.sch.id,email.ilike.superadmin@lhadiid.sch.id')
+        .or(`id.eq.usr_superadmin,username.ilike.${superAdminUser},username.ilike.superadmin,email.ilike.${superAdminEmail},email.ilike.superadmin@alhadiid.sch.id`)
         .limit(1)
         .maybeSingle();
       dbUser = res.data;
-    } else if (cleanIdentifier === 'kepsek' || cleanIdentifier === 'kepsek@alhadiid.sch.id') {
+    } else if (cleanIdentifier === 'kepsek' || cleanIdentifier === 'kepsek@alhadiid.sch.id' || cleanIdentifier === kepsekUser || cleanIdentifier === kepsekEmail) {
       const res = await supabase
         .from('users')
         .select('*')
-        .or('username.ilike.kepsek,email.ilike.kepsek@alhadiid.sch.id')
+        .or(`id.eq.usr_kepsek,username.ilike.${kepsekUser},username.ilike.kepsek,email.ilike.${kepsekEmail},email.ilike.kepsek@alhadiid.sch.id`)
+        .limit(1)
+        .maybeSingle();
+      dbUser = res.data;
+    } else if (cleanIdentifier === 'siswa' || cleanIdentifier === 'siswa@alhadiid.sch.id' || cleanIdentifier === studentUser || cleanIdentifier === studentEmail) {
+      const res = await supabase
+        .from('users')
+        .select('*')
+        .or(`id.eq.usr_student,username.ilike.${studentUser},username.ilike.siswa,email.ilike.${studentEmail},email.ilike.siswa@alhadiid.sch.id`)
         .limit(1)
         .maybeSingle();
       dbUser = res.data;

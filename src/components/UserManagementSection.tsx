@@ -16,6 +16,7 @@ interface UserManagementSectionProps {
   students: StudentData[];
   onUpdateStudents: (updated: StudentData[]) => void;
   onRefreshAllData?: () => void;
+  onNavigateToDefaultCredentials?: () => void;
 }
 
 export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
@@ -23,6 +24,7 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
   students,
   onUpdateStudents,
   onRefreshAllData,
+  onNavigateToDefaultCredentials,
 }) => {
   const [users, setUsers] = useState<UserAccount[]>(() => getUsersDb());
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -401,6 +403,39 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Super Admin Quick Access for Default Credentials */}
+      {currentUser?.role === 'super_admin' && (
+        <div className="bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/70 border border-amber-500/40 rounded-2xl p-4 sm:p-5 text-white shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="p-3 bg-amber-500/20 border border-amber-500/40 rounded-xl text-amber-400 shrink-0">
+              <Key className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-base text-white">Kredensial Login Default SPMB</h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  Super Admin
+                </span>
+              </div>
+              <p className="text-xs text-amber-200/80 mt-0.5">
+                Ubah username dan password login default untuk Super Admin, Panitia Admin, Kepala Sekolah, dan Murid.
+              </p>
+            </div>
+          </div>
+
+          {onNavigateToDefaultCredentials && (
+            <button
+              type="button"
+              onClick={onNavigateToDefaultCredentials}
+              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Key className="w-4 h-4 text-slate-950" />
+              <span>Ubah Username & Password Default</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Notifications */}
       {successMsg && (

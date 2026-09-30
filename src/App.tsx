@@ -17,6 +17,8 @@ import {
 import { supabase, signOutWithSupabase, getAuthUserProfile, syncCostBreakdownToSupabase } from './utils/supabaseClient';
 import { StudentRepository } from './repositories/StudentRepository';
 import { ClassQuotaRepository } from './repositories/ClassQuotaRepository';
+import { fetchStudentCredentialsFromSupabase } from './utils/studentCredentials';
+import { fetchDefaultCredentialsFromSupabase } from './utils/defaultCredentials';
 
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
@@ -253,10 +255,12 @@ export default function App() {
     async function loadData() {
       setIsDataLoading(true);
       try {
-        // Fetch Students & Class Quotas in parallel from Supabase
+        // Fetch Students, Class Quotas, and Credentials in parallel from Supabase
         const [studentRes, quotaRes] = await Promise.all([
           StudentRepository.list(),
           ClassQuotaRepository.list(),
+          fetchStudentCredentialsFromSupabase(),
+          fetchDefaultCredentialsFromSupabase(),
         ]);
 
         if (isMounted) {
@@ -420,13 +424,25 @@ export default function App() {
 
     const userEmailClean = currentUser.email ? currentUser.email.toLowerCase() : '';
     const found = students.find(s => (s.userEmail && userEmailClean && s.userEmail.toLowerCase() === userEmailClean) || (s.id && s.id === currentUser.id));
-    if (found) return found;
+    if (found) {
+      return {
+        ...found,
+        username: found.username || currentUser.username,
+        password: found.password || currentUser.password,
+        examUsername: found.examUsername || found.username || currentUser.username,
+        examPassword: found.examPassword || found.password || currentUser.password,
+      };
+    }
 
     return {
       id: currentUser.id,
       registrationNumber: currentUser.registrationNumber || `SPMB2027${Math.floor(1000 + Math.random() * 9000)}`,
       status: 'draft',
       userEmail: currentUser.email || '',
+      username: currentUser.username,
+      password: currentUser.password,
+      examUsername: currentUser.username,
+      examPassword: currentUser.password,
       createdAt: currentUser.createdAt || new Date().toISOString(),
       fullName: currentUser.name || '',
       phone: currentUser.phone || '',

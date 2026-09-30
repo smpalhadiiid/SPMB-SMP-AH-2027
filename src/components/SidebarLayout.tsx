@@ -5,7 +5,7 @@ import {
   CreditCard, Award, CheckCircle2, School, Clock, LogOut,
   Home, Menu, X, ChevronRight, Sparkles, Bell, User,
   MessageSquare, LayoutDashboard, BarChart3, ChevronDown, Settings,
-  Palette, Database, Calendar, BookOpen, Laptop, Lock, Download
+  Palette, Database, Calendar, BookOpen, Laptop, Lock, Download, Key
 } from 'lucide-react';
 import { SchoolLogo } from './SchoolLogo';
 import { SupabaseBadge } from './SupabaseBadge';
@@ -118,6 +118,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
         { id: 'overview', label: 'Ringkasan & Statistik', icon: LayoutDashboard },
         { id: 'user_management', label: 'Manajemen User & Akun (CRUD)', icon: User },
         { id: 'account_settings', label: 'Pengaturan Akun Pengguna', icon: Lock },
+        { id: 'default_credentials', label: 'Ubah Login Default', icon: Key },
         { id: 'applicants', label: 'Data Seluruh Pendaftar', icon: Users },
         { id: 'payment_form', label: 'Input & Bayar Formulir', icon: CreditCard },
         { id: 'payment_initial', label: 'Biaya Awal Masuk (BAM)', icon: FileText },

@@ -58,6 +58,12 @@ export interface StudentData {
   entryPath?: string; // Jalur Masuk
   selectedProgram?: string; // Program Pilihan
 
+  // Kredensial Akun Calon Murid untuk Kartu Ujian & Login CBT
+  username?: string;
+  password?: string;
+  examUsername?: string;
+  examPassword?: string;
+
   // Step 2: Registrasi
   fullName: string;
   phone: string;

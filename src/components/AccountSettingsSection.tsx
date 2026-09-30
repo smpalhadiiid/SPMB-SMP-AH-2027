@@ -12,26 +12,60 @@ import {
 } from '../utils/supabaseClient';
 import { UserProfileRepository } from '../repositories/UserProfileRepository';
 import {
+  DefaultCredentialsConfig,
+  RoleDefaultCredential,
+  getDefaultCredentials,
+  fetchDefaultCredentialsFromSupabase,
+  saveDefaultCredentialForRole,
+  resetDefaultCredentialToFactory,
+  FACTORY_DEFAULT_CREDENTIALS,
+} from '../utils/defaultCredentials';
+import {
   ShieldCheck, ShieldAlert, Key, Edit, Lock, UserCheck, UserX, RefreshCw,
-  Search, Shield, CheckCircle2, XCircle, AlertCircle, History as HistoryIcon, User, Check, X, Info, Trash2, GraduationCap
+  Search, Shield, CheckCircle2, XCircle, AlertCircle, History as HistoryIcon, User, Check, X, Info, Trash2, GraduationCap,
+  Eye, EyeOff, RotateCcw, Sparkles
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
 interface AccountSettingsSectionProps {
   currentUser: UserAccount;
+  initialTab?: 'accounts' | 'default_credentials' | 'logs';
   onRefreshData?: () => void;
 }
 
 export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
   currentUser,
+  initialTab = 'accounts',
   onRefreshData,
 }) => {
   const [users, setUsers] = useState<UserAccount[]>(() =>
     getUsersDb().filter(u => u.role !== 'student')
   );
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'accounts' | 'logs'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'default_credentials' | 'logs'>(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  // Default credentials state & management
+  const [defaultsConfig, setDefaultsConfig] = useState<DefaultCredentialsConfig>(() => getDefaultCredentials());
+  const [isFetchingDefaults, setIsFetchingDefaults] = useState(false);
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+
+  // Modal Ubah Kredensial Default
+  const [showDefaultModal, setShowDefaultModal] = useState(false);
+  const [targetDefaultRole, setTargetDefaultRole] = useState<'super_admin' | 'admin' | 'kepsek' | 'student' | null>(null);
+  const [formDefaultUsername, setFormDefaultUsername] = useState('');
+  const [formDefaultEmail, setFormDefaultEmail] = useState('');
+  const [formDefaultPassword, setFormDefaultPassword] = useState('');
+  const [formDefaultConfirm, setFormDefaultConfirm] = useState('');
+  const [showDefaultPassInput, setShowDefaultPassInput] = useState(false);
+  const [defaultFormError, setDefaultFormError] = useState('');
+  const [isSavingDefault, setIsSavingDefault] = useState(false);
 
   // Modals
   const [showUsernameModal, setShowUsernameModal] = useState(false);
@@ -53,7 +87,177 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
   useEffect(() => {
     refreshAccountsList();
     loadAuditLogs();
+    loadDefaultCredentials();
   }, []);
+
+  const loadDefaultCredentials = async () => {
+    setIsFetchingDefaults(true);
+    try {
+      const cfg = await fetchDefaultCredentialsFromSupabase();
+      if (cfg) setDefaultsConfig(cfg);
+    } catch (e) {
+      console.warn('loadDefaultCredentials error:', e);
+    } finally {
+      setIsFetchingDefaults(false);
+    }
+  };
+
+  const togglePasswordVisibility = (roleKey: string) => {
+    setRevealedPasswords(prev => ({
+      ...prev,
+      [roleKey]: !prev[roleKey],
+    }));
+  };
+
+  const handleOpenEditDefault = (role: 'super_admin' | 'admin' | 'kepsek' | 'student') => {
+    const item = defaultsConfig[role];
+    setTargetDefaultRole(role);
+    setFormDefaultUsername(item.defaultUsername);
+    setFormDefaultEmail(item.defaultEmail);
+    setFormDefaultPassword(item.defaultPassword);
+    setFormDefaultConfirm(item.defaultPassword);
+    setShowDefaultPassInput(false);
+    setDefaultFormError('');
+    setShowDefaultModal(true);
+  };
+
+  const handleSaveDefault = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetDefaultRole) return;
+    setDefaultFormError('');
+
+    const cleanUsername = formDefaultUsername.trim().toLowerCase();
+    const cleanEmail = formDefaultEmail.trim().toLowerCase();
+    const cleanPass = formDefaultPassword.trim();
+
+    if (!cleanUsername || cleanUsername.length < 3) {
+      setDefaultFormError('Username default minimal 3 karakter!');
+      return;
+    }
+
+    if (!cleanPass || cleanPass.length < 6) {
+      setDefaultFormError('Password default minimal 6 karakter!');
+      return;
+    }
+
+    if (cleanPass !== formDefaultConfirm.trim()) {
+      setDefaultFormError('Konfirmasi password tidak cocok dengan password baru!');
+      return;
+    }
+
+    const roleName = defaultsConfig[targetDefaultRole].roleLabel;
+
+    const confirmRes = await Swal.fire({
+      title: `Simpan Kredensial ${roleName}?`,
+      html: `
+        <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
+          <p style="margin-bottom: 8px;">Perubahan ini akan otomatis memperbarui database dan login cepat:</p>
+          <div style="background-color: #f1f5f9; padding: 10px; border-radius: 10px; margin-bottom: 8px;">
+            <div>👤 <strong>Username Baru:</strong> <code>${cleanUsername}</code></div>
+            <div>📧 <strong>Email Login:</strong> <code>${cleanEmail}</code></div>
+            <div>🔑 <strong>Password Baru:</strong> <code>${cleanPass}</code></div>
+          </div>
+          <p style="color: #059669; font-size: 11px;">
+            ✓ Tersinkronisasi ke <strong>public.users</strong> dan <strong>spmb_app_state</strong> di Supabase.
+          </p>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Ya, Simpan Kredensial',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#2563eb',
+      cancelButtonColor: '#64748b',
+      customClass: { popup: 'rounded-2xl font-sans' },
+    });
+
+    if (!confirmRes.isConfirmed) return;
+
+    setIsSavingDefault(true);
+    const saveRes = await saveDefaultCredentialForRole({
+      adminUser: currentUser,
+      targetRole: targetDefaultRole,
+      newUsername: cleanUsername,
+      newEmail: cleanEmail,
+      newPassword: cleanPass,
+    });
+    setIsSavingDefault(false);
+
+    if (!saveRes.ok) {
+      setDefaultFormError(saveRes.error || 'Gagal menyimpan kredensial default.');
+      return;
+    }
+
+    setShowDefaultModal(false);
+    await loadDefaultCredentials();
+    await refreshAccountsList();
+    await loadAuditLogs();
+    if (onRefreshData) onRefreshData();
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Kredensial Default Berhasil Diubah!',
+      text: `Username dan password default untuk ${roleName} telah diperbarui dan langsung aktif.`,
+      timer: 2500,
+      showConfirmButton: false,
+      customClass: { popup: 'rounded-2xl font-sans' },
+    });
+  };
+
+  const handleResetDefault = async (role: 'super_admin' | 'admin' | 'kepsek' | 'student') => {
+    const factory = FACTORY_DEFAULT_CREDENTIALS[role];
+    const roleName = factory.roleLabel;
+
+    const confirmRes = await Swal.fire({
+      title: `Reset Kredensial ${roleName}?`,
+      html: `
+        <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
+          <p style="margin-bottom: 8px;">Kredensial akan dikembalikan ke setelan awal pabrik:</p>
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 10px;">
+            <div>👤 <strong>Username:</strong> <code>${factory.defaultUsername}</code></div>
+            <div>🔑 <strong>Password:</strong> <code>${factory.defaultPassword}</code></div>
+          </div>
+        </div>
+      `,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Ya, Kembalikan ke Awal',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#d97706',
+      cancelButtonColor: '#64748b',
+      customClass: { popup: 'rounded-2xl font-sans' },
+    });
+
+    if (!confirmRes.isConfirmed) return;
+
+    const res = await resetDefaultCredentialToFactory({
+      adminUser: currentUser,
+      targetRole: role,
+    });
+
+    if (res.ok) {
+      await loadDefaultCredentials();
+      await refreshAccountsList();
+      await loadAuditLogs();
+      if (onRefreshData) onRefreshData();
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Kredensial Dikembalikan ke Default',
+        text: `Kredensial ${roleName} berhasil direset ke username "${factory.defaultUsername}" dan password "${factory.defaultPassword}".`,
+        timer: 2000,
+        showConfirmButton: false,
+        customClass: { popup: 'rounded-2xl font-sans' },
+      });
+    } else {
+      Swal.fire({
+        icon: 'error',
+        title: 'Gagal Reset',
+        text: res.error || 'Terjadi kendala saat mereset kredensial.',
+        customClass: { popup: 'rounded-2xl font-sans' },
+      });
+    }
+  };
 
   const refreshAccountsList = async () => {
     try {
@@ -451,7 +655,7 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700">
+          <div className="flex flex-wrap items-center gap-2 bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700">
             <button
               onClick={() => setActiveTab('accounts')}
               className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
@@ -461,6 +665,16 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
               }`}
             >
               <User className="w-4 h-4" /> Daftar Akun
+            </button>
+            <button
+              onClick={() => setActiveTab('default_credentials')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+                activeTab === 'default_credentials'
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Key className="w-4 h-4" /> Kredensial Login Default
             </button>
             <button
               onClick={() => setActiveTab('logs')}
@@ -683,6 +897,388 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: KREDENSIAL LOGIN DEFAULT */}
+      {activeTab === 'default_credentials' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-400">
+                  <Key className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    Kredensial Login Default SPMB
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60">
+                      Super Admin Only
+                    </span>
+                  </h3>
+                  <p className="text-slate-400 text-xs mt-0.5">
+                    Ubah username, email login, dan password default resmi sistem. Perubahan otomatis disinkronkan ke database Supabase dan langsung berlaku saat login.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 rounded-xl text-xs font-medium">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Tersinkron Database</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadDefaultCredentials}
+                  disabled={isFetchingDefaults}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border border-slate-700 cursor-pointer disabled:opacity-50"
+                  title="Muat ulang dari Supabase"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isFetchingDefaults ? 'animate-spin text-amber-400' : ''}`} />
+                  <span>{isFetchingDefaults ? 'Memuat...' : 'Refresh'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Info callout */}
+            <div className="bg-amber-950/30 border border-amber-500/30 rounded-2xl p-4 text-xs text-amber-200/90 flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-amber-300">
+                  Keamanan & Dampak Perubahan Kredensial Default:
+                </p>
+                <p className="text-amber-200/80 text-[11px] leading-relaxed">
+                  1. Mengubah username atau password di sini akan langsung memperbarui data di tabel <strong>public.users</strong> dan <strong>public.spmb_app_state</strong>.<br/>
+                  2. Tombol bantuan login cepat ("Akun Default") di halaman login murid & pengelola akan otomatis menyesuaikan dengan username dan password baru ini.<br/>
+                  3. Jika sewaktu-waktu dibutuhkan, Anda dapat mengembalikan setelan akun ke setelan awal pabrik menggunakan tombol <strong>Reset Pabrik</strong>.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Role Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* 1. SUPER ADMIN CARD */}
+            {(() => {
+              const item = defaultsConfig.super_admin;
+              const isPassRevealed = !!revealedPasswords['super_admin'];
+              return (
+                <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2.5 bg-amber-500/20 border border-amber-500/40 rounded-xl text-amber-400">
+                          <ShieldAlert className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-white text-base">Super Admin SPMB</div>
+                          <div className="text-[11px] text-amber-400/90 font-medium">Pengelola Utama & Keamanan</div>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-950 border border-amber-500/50 text-amber-300 uppercase">
+                        SUPER ADMIN
+                      </span>
+                    </div>
+
+                    <p className="text-slate-400 text-xs leading-relaxed">
+                      {item.description}
+                    </p>
+
+                    {/* Credential Box */}
+                    <div className="bg-slate-950 border border-slate-800/80 rounded-2xl p-4 space-y-2.5 text-xs font-mono">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Username Default:</span>
+                        <span className="font-bold text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-900/50">
+                          {item.defaultUsername}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Email Login:</span>
+                        <span className="text-slate-300 font-semibold">{item.defaultEmail}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-sans text-[11px]">Password Default:</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/50">
+                            {isPassRevealed ? item.defaultPassword : '••••••••••••'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => togglePasswordVisibility('super_admin')}
+                            className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                            title={isPassRevealed ? 'Sembunyikan Password' : 'Lihat Password'}
+                          >
+                            {isPassRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-5 border-t border-slate-800/80 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditDefault('super_admin')}
+                      className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Ubah Kredensial</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetDefault('super_admin')}
+                      className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-all flex items-center gap-1 cursor-pointer"
+                      title="Kembalikan ke username & password awal pabrik"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 2. PANITIA ADMIN CARD */}
+            {(() => {
+              const item = defaultsConfig.admin;
+              const isPassRevealed = !!revealedPasswords['admin'];
+              return (
+                <div className="bg-slate-900/90 border border-blue-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2.5 bg-blue-600/20 border border-blue-500/40 rounded-xl text-blue-400">
+                          <ShieldCheck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-white text-base">Panitia SPMB</div>
+                          <div className="text-[11px] text-blue-400/90 font-medium">Verifikator Berkas & CBT</div>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-950 border border-blue-500/50 text-blue-300 uppercase">
+                        PANITIA ADMIN
+                      </span>
+                    </div>
+
+                    <p className="text-slate-400 text-xs leading-relaxed">
+                      {item.description}
+                    </p>
+
+                    {/* Credential Box */}
+                    <div className="bg-slate-950 border border-slate-800/80 rounded-2xl p-4 space-y-2.5 text-xs font-mono">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Username Default:</span>
+                        <span className="font-bold text-blue-400 bg-blue-950/60 px-2 py-0.5 rounded border border-blue-900/50">
+                          {item.defaultUsername}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Email Login:</span>
+                        <span className="text-slate-300 font-semibold">{item.defaultEmail}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-sans text-[11px]">Password Default:</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/50">
+                            {isPassRevealed ? item.defaultPassword : '••••••••••••'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => togglePasswordVisibility('admin')}
+                            className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                            title={isPassRevealed ? 'Sembunyikan Password' : 'Lihat Password'}
+                          >
+                            {isPassRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-5 border-t border-slate-800/80 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditDefault('admin')}
+                      className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Ubah Kredensial</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetDefault('admin')}
+                      className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-all flex items-center gap-1 cursor-pointer"
+                      title="Kembalikan ke username & password awal pabrik"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 3. KEPSEK CARD */}
+            {(() => {
+              const item = defaultsConfig.kepsek;
+              const isPassRevealed = !!revealedPasswords['kepsek'];
+              return (
+                <div className="bg-slate-900/90 border border-emerald-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2.5 bg-emerald-600/20 border border-emerald-500/40 rounded-xl text-emerald-400">
+                          <GraduationCap className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-white text-base">Kepala Sekolah</div>
+                          <div className="text-[11px] text-emerald-400/90 font-medium">Peninjau & Supervisi</div>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-950 border border-emerald-500/50 text-emerald-300 uppercase">
+                        KEPALA SEKOLAH
+                      </span>
+                    </div>
+
+                    <p className="text-slate-400 text-xs leading-relaxed">
+                      {item.description}
+                    </p>
+
+                    {/* Credential Box */}
+                    <div className="bg-slate-950 border border-slate-800/80 rounded-2xl p-4 space-y-2.5 text-xs font-mono">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Username Default:</span>
+                        <span className="font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/50">
+                          {item.defaultUsername}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Email Login:</span>
+                        <span className="text-slate-300 font-semibold">{item.defaultEmail}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-sans text-[11px]">Password Default:</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/50">
+                            {isPassRevealed ? item.defaultPassword : '••••••••••••'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => togglePasswordVisibility('kepsek')}
+                            className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                            title={isPassRevealed ? 'Sembunyikan Password' : 'Lihat Password'}
+                          >
+                            {isPassRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-5 border-t border-slate-800/80 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditDefault('kepsek')}
+                      className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Ubah Kredensial</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetDefault('kepsek')}
+                      className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-all flex items-center gap-1 cursor-pointer"
+                      title="Kembalikan ke username & password awal pabrik"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 4. STUDENT DEMO CARD */}
+            {(() => {
+              const item = defaultsConfig.student;
+              const isPassRevealed = !!revealedPasswords['student'];
+              return (
+                <div className="bg-slate-900/90 border border-indigo-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2.5 bg-indigo-600/20 border border-indigo-500/40 rounded-xl text-indigo-400">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-white text-base">Akun Demo Calon Murid</div>
+                          <div className="text-[11px] text-indigo-400/90 font-medium">Preset Percobaan Login Siswa</div>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-950 border border-indigo-500/50 text-indigo-300 uppercase">
+                        CALON MURID
+                      </span>
+                    </div>
+
+                    <p className="text-slate-400 text-xs leading-relaxed">
+                      {item.description}
+                    </p>
+
+                    {/* Credential Box */}
+                    <div className="bg-slate-950 border border-slate-800/80 rounded-2xl p-4 space-y-2.5 text-xs font-mono">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-slate-400 font-sans text-[11px]">Username Default:</span>
+                        <span className="font-bold text-indigo-400 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-900/50">
+                          {item.defaultUsername}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-sans text-[11px]">Password Default:</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/50">
+                            {isPassRevealed ? item.defaultPassword : '••••••••••••'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => togglePasswordVisibility('student')}
+                            className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                            title={isPassRevealed ? 'Sembunyikan Password' : 'Lihat Password'}
+                          >
+                            {isPassRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-5 border-t border-slate-800/80 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditDefault('student')}
+                      className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Ubah Kredensial</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetDefault('student')}
+                      className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-all flex items-center gap-1 cursor-pointer"
+                      title="Kembalikan ke username & password awal pabrik"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

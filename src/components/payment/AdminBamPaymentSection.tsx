@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StudentData, BamPaymentRecord, BamInstallmentType, SchoolInfo, CostBreakdown } from '../../types';
 import { getStoredBamPayments, saveBamPayments, getStoredCostBreakdown, saveCostBreakdown, saveSchoolInfo, getStoredSchoolInfo, getStoredFormPayments } from '../../utils/storage';
-import { initialCostBreakdowns } from '../../data/initialData';
 import { PaymentRepository } from '../../repositories/PaymentRepository';
 import {
   BAM_CONFIG,
@@ -20,9 +19,9 @@ import {
 } from 'lucide-react';
 import { PaymentProofModal, ProofModalData } from './PaymentProofModal';
 import { getStoredPaymentProofs, downloadPaymentProof } from '../../utils/paymentProofStorage';
+import { generatePaymentReceiptPDF } from '../../utils/pdfGenerator';
 import {
   fetchBamPaymentsFromSupabase,
-  fetchCostBreakdownFromSupabase,
   syncSchoolInfoToSupabase,
   syncCostBreakdownToSupabase,
   syncBamPaymentsToSupabase,
@@ -149,8 +148,6 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     saveBamPayments(merged);
   };
 
-  const [isSyncingWithSupabase, setIsSyncingWithSupabase] = useState(false);
-
   // Load from Supabase on mount & synchronize
   useEffect(() => {
     PaymentRepository.list('bam').then(({ data }) => {
@@ -167,47 +164,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         mergeAllBamRecords(cloudData || []);
       });
     });
-
-    // Sinkronkan rincian nominal BAM terbaru dari Supabase
-    fetchCostBreakdownFromSupabase().then(cloudCosts => {
-      if (cloudCosts && Array.isArray(cloudCosts) && cloudCosts.length >= 10) {
-        setCostItems(cloudCosts);
-        saveCostBreakdown(cloudCosts);
-        if (onUpdateCostBreakdowns) {
-          onUpdateCostBreakdowns(cloudCosts);
-        }
-      }
-    }).catch(e => console.warn('Supabase cost breakdown load warning:', e));
   }, [students]);
-
-  // Fungsi sinkronisasi manual langsung ke Supabase
-  const handleManualSupabaseSync = async () => {
-    setIsSyncingWithSupabase(true);
-    try {
-      const [{ data: pData }, cloudData, cloudCosts] = await Promise.all([
-        PaymentRepository.list('bam'),
-        fetchBamPaymentsFromSupabase(),
-        fetchCostBreakdownFromSupabase(),
-      ]);
-
-      const effectivePayments = (pData && pData.length > 0) ? pData : (cloudData || []);
-      mergeAllBamRecords(effectivePayments);
-
-      if (cloudCosts && Array.isArray(cloudCosts) && cloudCosts.length >= 10) {
-        setCostItems(cloudCosts);
-        saveCostBreakdown(cloudCosts);
-        if (onUpdateCostBreakdowns) {
-          onUpdateCostBreakdowns(cloudCosts);
-        }
-      }
-      setSuccessMsg('✓ Berhasil menyinkronkan data transaksi dan struktur nominal BAM dengan Database Supabase!');
-      setTimeout(() => setSuccessMsg(''), 5000);
-    } catch (err: any) {
-      console.warn('Manual Supabase sync error:', err);
-    } finally {
-      setIsSyncingWithSupabase(false);
-    }
-  };
 
   const [showModal, setShowModal] = useState(false);
   const [showOfficialDocModal, setShowOfficialDocModal] = useState(false);
@@ -297,10 +254,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
   // Cost Breakdown Items (Rincian Biaya Awal Masuk) State
   const [costItems, setCostItems] = useState<CostBreakdown[]>(() => propCostBreakdowns || getStoredCostBreakdown());
-  const [activeNominalTab, setActiveNominalTab] = useState<'ikhwan' | 'akhwat' | 'comparison'>('ikhwan');
-  const [isEditingIkhwan, setIsEditingIkhwan] = useState<boolean>(false);
-  const [isEditingAkhwat, setIsEditingAkhwat] = useState<boolean>(false);
-  const [isEditingComparison, setIsEditingComparison] = useState<boolean>(false);
+  const [isEditingNominals, setIsEditingNominals] = useState<boolean>(false);
 
   useEffect(() => {
     if (propCostBreakdowns && propCostBreakdowns.length > 0) {
@@ -317,15 +271,10 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     }
   }, [propSchoolInfo]);
 
-  // Dynamic calculations for Ikhwan & Akhwat totals
-  const totalCalculatedIkhwan = costItems.reduce((acc, curr) => acc + (Number(curr.amountIkhwan ?? curr.amount) || 0), 0);
-  const totalCalculatedAkhwat = costItems.reduce((acc, curr) => acc + (Number(curr.amountAkhwat ?? curr.amount) || 0), 0);
-  const totalCalculatedItemsCost = activeNominalTab === 'akhwat' ? totalCalculatedAkhwat : totalCalculatedIkhwan;
-
   // Quick Edit Nominal Modal State
   const [showQuickNominalModal, setShowQuickNominalModal] = useState(false);
   const [quickTargetRecord, setQuickTargetRecord] = useState<BamPaymentRecord | null>(null);
-  const [quickTotalCost, setQuickTotalCost] = useState<number>(BAM_CONFIG.totalIkhwan);
+  const [quickTotalCost, setQuickTotalCost] = useState<number>(BAM_CONFIG.totalInternal);
   const [quickAmountPaid, setQuickAmountPaid] = useState<number>(0);
   const [quickNotes, setQuickNotes] = useState<string>('');
 
@@ -335,11 +284,14 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [studentName, setStudentName] = useState('');
   const [gender, setGender] = useState<'Laki-laki' | 'Perempuan'>('Laki-laki');
-  const [totalBamCost, setTotalBamCost] = useState<number>(BAM_CONFIG.totalIkhwan);
-  const [amountPaid, setAmountPaid] = useState<number>(3500000);
+  const [totalBamCost, setTotalBamCost] = useState<number>(BAM_CONFIG.totalInternal);
+  const [amountPaid, setAmountPaid] = useState<number>(5000000);
   const [installmentType, setInstallmentType] = useState<BamInstallmentType>('Cicilan 1');
   const [notes, setNotes] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Calculated sum of itemized costs
+  const totalCalculatedItemsCost = costItems.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
 
   // Auto calculate existing total paid for selected student (excluding current record being edited)
   const existingPaid = records
@@ -477,34 +429,15 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     setCostItems(prev => prev.map(item => item.id === id ? { ...item, title: newTitle } : item));
   };
 
-  const handleItemIkhwanChange = (id: string, newAmount: number) => {
-    setCostItems(prev => prev.map(item => item.id === id ? { ...item, amountIkhwan: newAmount, amount: newAmount } : item));
-  };
-
-  const handleItemAkhwatChange = (id: string, newAmount: number) => {
-    setCostItems(prev => prev.map(item => item.id === id ? { ...item, amountAkhwat: newAmount } : item));
-  };
-
-  const handleItemPeriodChange = (id: string, newPeriod: string) => {
-    setCostItems(prev => prev.map(item => item.id === id ? { ...item, period: newPeriod } : item));
-  };
-
-  const handleItemDescriptionChange = (id: string, newDesc: string) => {
-    setCostItems(prev => prev.map(item => item.id === id ? { ...item, description: newDesc } : item));
-  };
-
-  const handleAddCostItem = (targetGender: 'ikhwan' | 'akhwat' | 'both' = 'both') => {
+  const handleAddCostItem = () => {
     const newItem: CostBreakdown = {
       id: `c_${Date.now()}`,
-      title: 'Komponen Biaya Baru',
+      title: 'Biaya Penyesuaian Baru',
       amount: 100000,
-      amountIkhwan: targetGender === 'akhwat' ? 0 : 100000,
-      amountAkhwat: targetGender === 'ikhwan' ? 0 : 100000,
-      period: 'Sekali',
-      description: 'Penyesuaian Biaya Awal Masuk',
+      description: 'Komponen Tambahan BAM',
       isMandatory: true,
     };
-    setCostItems(prev => [...prev, newItem]);
+    setCostItems([...costItems, newItem]);
   };
 
   const handleDeleteCostItem = (id: string) => {
@@ -512,31 +445,14 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     setCostItems(prev => prev.filter(item => item.id !== id));
   };
 
-  const handleSaveCostItems = (targetType: 'ikhwan' | 'akhwat' | 'comparison') => {
+  const handleSaveCostItems = () => {
     saveCostBreakdown(costItems);
     syncCostBreakdownToSupabase(costItems).catch(e => console.warn('syncCostBreakdownToSupabase err:', e));
     if (onUpdateCostBreakdowns) {
       onUpdateCostBreakdowns(costItems);
     }
-    if (targetType === 'ikhwan') setIsEditingIkhwan(false);
-    if (targetType === 'akhwat') setIsEditingAkhwat(false);
-    if (targetType === 'comparison') setIsEditingComparison(false);
-    setSuccessMsg(`✓ Nominal Rincian BAM ${targetType === 'ikhwan' ? 'Ikhwan (Putra)' : targetType === 'akhwat' ? 'Akhwat (Putri)' : 'Ikhwan & Akhwat'} Berhasil Disimpan & Diterapkan!`);
-    setTimeout(() => setSuccessMsg(''), 5000);
-  };
-
-  const handleResetToDefaultNominals = () => {
-    if (!confirm('Kembalikan rincian nominal BAM ke 13 komponen standar resmi Landing Page (Ikhwan Rp 6.670.000 & Akhwat Rp 6.890.000)?')) return;
-    setCostItems(initialCostBreakdowns);
-    saveCostBreakdown(initialCostBreakdowns);
-    syncCostBreakdownToSupabase(initialCostBreakdowns).catch(e => console.warn(e));
-    if (onUpdateCostBreakdowns) {
-      onUpdateCostBreakdowns(initialCostBreakdowns);
-    }
-    setIsEditingIkhwan(false);
-    setIsEditingAkhwat(false);
-    setIsEditingComparison(false);
-    setSuccessMsg('✓ Nominal BAM berhasil direset sesuai standar resmi Landing Page (Ikhwan: Rp 6.670.000 | Akhwat: Rp 6.890.000)!');
+    setIsEditingNominals(false);
+    setSuccessMsg('✓ Nominal Rincian Biaya Awal Masuk (BAM) Berhasil Diperbarui & Disimpan ke Database!');
     setTimeout(() => setSuccessMsg(''), 5000);
   };
 
@@ -548,19 +464,16 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       setStudentName(s.fullName);
       const isAkhwat = s.gender === 'Perempuan';
       setGender(isAkhwat ? 'Perempuan' : 'Laki-laki');
-      const targetCost = isAkhwat ? totalCalculatedAkhwat : totalCalculatedIkhwan;
-      setTotalBamCost(targetCost || getTotalBamCost(s));
-      setAmountPaid(3500000);
+      const category = getStudentCategory(s);
+      const cost = getTotalBamCost(category);
+      setTotalBamCost(cost);
+      setAmountPaid(category === 'Internal' ? 5000000 : 6000000);
       setInstallmentType('Cicilan 1');
     }
   };
 
   const handleGenderChange = (newGender: 'Laki-laki' | 'Perempuan') => {
     setGender(newGender);
-    if (!editingRecordId) {
-      const targetCost = newGender === 'Perempuan' ? totalCalculatedAkhwat : totalCalculatedIkhwan;
-      setTotalBamCost(targetCost || getTotalBamCost(newGender));
-    }
   };
 
   // Open modal for new payment
@@ -571,8 +484,8 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     setSelectedStudentId('');
     setStudentName('');
     setGender('Laki-laki');
-    setTotalBamCost(totalCalculatedIkhwan || BAM_CONFIG.totalIkhwan);
-    setAmountPaid(3500000);
+    setTotalBamCost(BAM_CONFIG.totalInternal);
+    setAmountPaid(5000000);
     setInstallmentType('Cicilan 1');
     setNotes('');
     setShowModal(true);
@@ -761,16 +674,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         }
         return r;
       });
-      setSuccessMsg('✓ Perubahan transaksi Biaya Awal Masuk (BAM) berhasil disimpan ke Database Supabase!');
-
-      PaymentRepository.update(editingRecordId, {
-        studentId: selectedStudentId || undefined,
-        amount: Number(amountPaid) || 0,
-        paymentDate,
-        status: remainingBalanceAfterThis <= 0 || installmentType === 'Lunas' ? 'verified' : 'pending',
-        notes: `${installmentType} - Saldo Sisa: Rp ${remainingBalanceAfterThis.toLocaleString('id-ID')}${notes ? ` | ${notes}` : ''}`,
-        paymentType: 'bam',
-      }).catch(err => console.warn('PaymentRepository.update BAM err:', err));
+      setSuccessMsg('✓ Perubahan transaksi Biaya Awal Masuk (BAM) berhasil disimpan!');
     } else {
       const newRecord: BamPaymentRecord = {
         id: `bampay_${Date.now()}`,
@@ -789,7 +693,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         createdAt: new Date().toISOString(),
       };
       updatedRecords = [newRecord, ...records];
-      setSuccessMsg('✓ Transaksi Biaya Awal Masuk (BAM) berhasil disimpan ke Database Supabase! Sisa saldo otomatis terhitung.');
+      setSuccessMsg('✓ Transaksi Biaya Awal Masuk (BAM) berhasil disimpan! Sisa saldo otomatis terhitung.');
 
       PaymentRepository.create({
         studentId: selectedStudentId || `std_${Date.now()}`,
@@ -802,16 +706,11 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         bankName: 'BSI',
         paymentDate,
         notes: `${installmentType} - Saldo Sisa: Rp ${remainingBalanceAfterThis.toLocaleString('id-ID')}${notes ? ` | ${notes}` : ''}`,
-      }).then(res => {
-        if (res.data?.id) {
-          setRecords(prev => prev.map(rec => rec.id === newRecord.id ? { ...rec, id: res.data!.id } : rec));
-        }
       }).catch(err => console.warn('PaymentRepository BAM create err:', err));
     }
 
     setRecords(updatedRecords);
     saveBamPayments(updatedRecords);
-    syncBamPaymentsToSupabase(updatedRecords).catch(err => console.warn('syncBamPaymentsToSupabase err:', err));
 
     // Update student in main state if linked
     if (selectedStudentId) {
@@ -839,27 +738,10 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
   // Delete transaction
   const handleDeleteRecord = (id: string) => {
     if (confirm('Apakah Anda yakin ingin menghapus transaksi BAM ini? Sisa saldo murid akan dihitung ulang.')) {
-      const target = records.find(r => r.id === id);
       const updated = records.filter(r => r.id !== id);
       setRecords(updated);
       saveBamPayments(updated);
       PaymentRepository.remove(id).catch(err => console.warn('PaymentRepository BAM remove err:', err));
-
-      if (target?.studentId) {
-        const updatedStudents = students.map(s => {
-          if (s.id === target.studentId) {
-            return {
-              ...s,
-              initialPaymentAmount: 0,
-              initialPaymentStatus: 'unpaid' as const,
-              initialPaymentProofUrl: undefined,
-              initialPaymentNotes: undefined,
-            };
-          }
-          return s;
-        });
-        onUpdateStudents(updatedStudents);
-      }
     }
   };
 
@@ -907,35 +789,19 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       {/* Header Banner */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-bold">
-              <Calculator className="w-3.5 h-3.5 text-blue-600" />
-              <span>Sistem Biaya Awal Masuk (BAM) & Pengaturan Nominal</span>
-            </div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-xs font-bold shadow-xs">
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Terkoneksi ke Supabase Database</span>
-            </div>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-bold mb-2">
+            <Calculator className="w-3.5 h-3.5 text-blue-600" />
+            <span>Sistem Biaya Awal Masuk (BAM) & Pengaturan Nominal</span>
           </div>
           <h2 className="text-xl font-extrabold text-slate-900">
             Upload & Pengaturan Biaya Awal Masuk (BAM)
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Unggah brosur resmi rincian biaya, atur nominal komponen biaya, dan edit nominal pembayaran murid secara langsung tersinkron ke database Supabase.
+            Unggah brosur resmi rincian biaya, atur nominal komponen biaya, dan edit nominal pembayaran murid secara langsung.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleManualSupabaseSync}
-            disabled={isSyncingWithSupabase}
-            className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-300 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-            title="Muat ulang dan sinkronkan data BAM langsung dari server database Supabase"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-emerald-700 ${isSyncingWithSupabase ? 'animate-spin' : ''}`} />
-            <span>{isSyncingWithSupabase ? 'Menyinkronkan...' : 'Refresh Supabase'}</span>
-          </button>
           <button
             onClick={() => setShowOfficialDocModal(true)}
             className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-bold text-xs rounded-xl border border-indigo-200 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
@@ -1110,550 +976,111 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
           </div>
         </div>
 
-        {/* CARD 2: TABEL EDIT NOMINAL RINCIAN BIAYA AWAL MASUK (IKHWAN & AKHWAT TERPISAH) */}
+        {/* CARD 2: TABEL EDIT NOMINAL RINCIAN BIAYA AWAL MASUK */}
         <div className="lg:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div>
               <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
                 <Calculator className="w-4 h-4 text-emerald-600" />
                 <span>Rincian & Edit Nominal Biaya Awal Masuk (BAM)</span>
               </h3>
               <p className="text-[11px] text-slate-500">
-                Pemisahan data nominal BAM Santri Ikhwan (Putra) dan Akhwat (Putri) dengan menu edit nominal masing-masing.
+                Sesuaikan nominal biaya komponen secara mandiri untuk perhitungan total BAM.
               </p>
             </div>
 
-            {/* TAB SELECTOR: IKHWAN, AKHWAT, PERBANDINGAN */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setActiveNominalTab('ikhwan')}
-                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  activeNominalTab === 'ikhwan'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span>👦 BAM Ikhwan</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/20">
-                  Rp {(totalCalculatedIkhwan / 1000000).toFixed(2)}Jt
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveNominalTab('akhwat')}
-                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  activeNominalTab === 'akhwat'
-                    ? 'bg-rose-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span>🧕 BAM Akhwat</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/20">
-                  Rp {(totalCalculatedAkhwat / 1000000).toFixed(2)}Jt
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveNominalTab('comparison')}
-                className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
-                  activeNominalTab === 'comparison'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Tabel Perbandingan Ikhwan vs Akhwat"
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Perbandingan</span>
-              </button>
+            <div className="flex items-center gap-2">
+              {isEditingNominals ? (
+                <>
+                  <button
+                    onClick={handleAddCostItem}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Tambah Biaya</span>
+                  </button>
+                  <button
+                    onClick={handleSaveCostItems}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-lg shadow-sm flex items-center gap-1 cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan Nominal</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setIsEditingNominals(true)}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-lg shadow-sm flex items-center gap-1 cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Fitur Edit Nominal</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* VIEW TAB 1: DATA BAM IKHWAN & MENU EDIT NOMINAL IKHWAN */}
-          {activeNominalTab === 'ikhwan' && (
-            <div className="space-y-3 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-blue-50/60 p-3 rounded-xl border border-blue-200">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></span>
-                  <div>
-                    <h4 className="font-extrabold text-blue-950 text-xs flex items-center gap-2">
-                      <span>Menu Pengaturan & Rincian Nominal BAM: Ikhwan (Putra)</span>
-                      <span className="px-2 py-0.5 bg-blue-200 text-blue-900 rounded-full text-[10px] font-mono font-bold">
-                        Standar: Rp 6.670.000
-                      </span>
-                    </h4>
-                    <p className="text-[10px] text-blue-700">
-                      Rincian berlaku untuk seluruh calon murid berjenis kelamin Laki-laki.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {isEditingIkhwan ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleAddCostItem('ikhwan')}
-                        className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-lg border border-slate-300 flex items-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Tambah Item</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSaveCostItems('ikhwan')}
-                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>Simpan Nominal Ikhwan</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingIkhwan(false)}
-                        className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-lg cursor-pointer"
-                      >
-                        Batal
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingIkhwan(true)}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-blue-200" />
-                        <span>Edit Nominal BAM Ikhwan</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleResetToDefaultNominals}
-                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                        title="Reset ke Standar Landing Page"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Reset Standar</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto max-h-[300px] overflow-y-auto border border-slate-200 rounded-xl">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 border-b font-bold text-slate-700 sticky top-0 bg-slate-100 z-10">
-                      <th className="p-2 text-center w-10">No</th>
-                      <th className="p-2">Komponen / Rincian Biaya</th>
-                      <th className="p-2 text-right">Nominal Ikhwan (Rp)</th>
-                      <th className="p-2 text-center w-24">Periode</th>
-                      <th className="p-2">Keterangan</th>
-                      {isEditingIkhwan && <th className="p-2 text-center w-12">Aksi</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {costItems.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-blue-50/30">
-                        <td className="p-2 text-slate-400 font-mono text-[11px] text-center">{idx + 1}</td>
-                        <td className="p-2 font-bold text-slate-800">
-                          {isEditingIkhwan ? (
-                            <input
-                              type="text"
-                              value={item.title}
-                              onChange={e => handleItemTitleChange(item.id, e.target.value)}
-                              className="w-full p-1 border rounded text-xs font-semibold bg-white"
-                            />
-                          ) : (
-                            item.title
-                          )}
-                        </td>
-                        <td className="p-2 text-right font-extrabold font-mono text-blue-900">
-                          {isEditingIkhwan ? (
-                            <input
-                              type="number"
-                              value={item.amountIkhwan ?? item.amount}
-                              onChange={e => handleItemIkhwanChange(item.id, Number(e.target.value))}
-                              className="w-28 p-1 border border-blue-300 bg-blue-50/50 rounded text-xs font-extrabold text-blue-950 text-right ml-auto"
-                            />
-                          ) : (
-                            `Rp ${(item.amountIkhwan ?? item.amount ?? 0).toLocaleString('id-ID')}`
-                          )}
-                        </td>
-                        <td className="p-2 text-center text-[11px] text-slate-600">
-                          {isEditingIkhwan ? (
-                            <select
-                              value={item.period || 'Sekali'}
-                              onChange={e => handleItemPeriodChange(item.id, e.target.value)}
-                              className="p-1 border rounded text-[11px] bg-white font-medium"
-                            >
-                              <option value="Sekali">Sekali</option>
-                              <option value="Per Tahun">Per Tahun</option>
-                              <option value="Per Bulan">Per Bulan</option>
-                            </select>
-                          ) : (
-                            item.period || 'Sekali'
-                          )}
-                        </td>
-                        <td className="p-2 text-[11px] text-slate-500">
-                          {isEditingIkhwan ? (
-                            <input
-                              type="text"
-                              value={item.description || ''}
-                              onChange={e => handleItemDescriptionChange(item.id, e.target.value)}
-                              className="w-full p-1 border rounded text-[11px] bg-white"
-                            />
-                          ) : (
-                            item.description
-                          )}
-                        </td>
-                        {isEditingIkhwan && (
-                          <td className="p-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCostItem(item.id)}
-                              className="p-1 text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
-                              title="Hapus komponen"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="p-3 bg-gradient-to-r from-blue-950 to-slate-900 text-white rounded-xl flex items-center justify-between font-bold text-xs shadow-inner">
-                <span className="text-blue-200">Total Akumulasi Biaya BAM Ikhwan (Putra):</span>
-                <span className="text-base text-amber-300 font-extrabold font-mono">
-                  Rp {totalCalculatedIkhwan.toLocaleString('id-ID')}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* VIEW TAB 2: DATA BAM AKHWAT & MENU EDIT NOMINAL AKHWAT */}
-          {activeNominalTab === 'akhwat' && (
-            <div className="space-y-3 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-rose-50/60 p-3 rounded-xl border border-rose-200">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-pulse"></span>
-                  <div>
-                    <h4 className="font-extrabold text-rose-950 text-xs flex items-center gap-2">
-                      <span>Menu Pengaturan & Rincian Nominal BAM: Akhwat (Putri)</span>
-                      <span className="px-2 py-0.5 bg-rose-200 text-rose-900 rounded-full text-[10px] font-mono font-bold">
-                        Standar: Rp 6.890.000
-                      </span>
-                    </h4>
-                    <p className="text-[10px] text-rose-700">
-                      Rincian berlaku untuk seluruh calon murid berjenis kelamin Perempuan (+ Gamis & Jilbab Rabbani).
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {isEditingAkhwat ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleAddCostItem('akhwat')}
-                        className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-lg border border-slate-300 flex items-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Tambah Item</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSaveCostItems('akhwat')}
-                        className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>Simpan Nominal Akhwat</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingAkhwat(false)}
-                        className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-lg cursor-pointer"
-                      >
-                        Batal
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingAkhwat(true)}
-                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-rose-200" />
-                        <span>Edit Nominal BAM Akhwat</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleResetToDefaultNominals}
-                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                        title="Reset ke Standar Landing Page"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Reset Standar</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto max-h-[300px] overflow-y-auto border border-slate-200 rounded-xl">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 border-b font-bold text-slate-700 sticky top-0 bg-slate-100 z-10">
-                      <th className="p-2 text-center w-10">No</th>
-                      <th className="p-2">Komponen / Rincian Biaya</th>
-                      <th className="p-2 text-right">Nominal Akhwat (Rp)</th>
-                      <th className="p-2 text-center w-24">Periode</th>
-                      <th className="p-2">Keterangan</th>
-                      {isEditingAkhwat && <th className="p-2 text-center w-12">Aksi</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {costItems.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-rose-50/30">
-                        <td className="p-2 text-slate-400 font-mono text-[11px] text-center">{idx + 1}</td>
-                        <td className="p-2 font-bold text-slate-800">
-                          {isEditingAkhwat ? (
-                            <input
-                              type="text"
-                              value={item.title}
-                              onChange={e => handleItemTitleChange(item.id, e.target.value)}
-                              className="w-full p-1 border rounded text-xs font-semibold bg-white"
-                            />
-                          ) : (
-                            item.title
-                          )}
-                        </td>
-                        <td className="p-2 text-right font-extrabold font-mono text-rose-900">
-                          {isEditingAkhwat ? (
-                            <input
-                              type="number"
-                              value={item.amountAkhwat ?? item.amount}
-                              onChange={e => handleItemAkhwatChange(item.id, Number(e.target.value))}
-                              className="w-28 p-1 border border-rose-300 bg-rose-50/50 rounded text-xs font-extrabold text-rose-950 text-right ml-auto"
-                            />
-                          ) : (
-                            `Rp ${(item.amountAkhwat ?? item.amount ?? 0).toLocaleString('id-ID')}`
-                          )}
-                        </td>
-                        <td className="p-2 text-center text-[11px] text-slate-600">
-                          {isEditingAkhwat ? (
-                            <select
-                              value={item.period || 'Sekali'}
-                              onChange={e => handleItemPeriodChange(item.id, e.target.value)}
-                              className="p-1 border rounded text-[11px] bg-white font-medium"
-                            >
-                              <option value="Sekali">Sekali</option>
-                              <option value="Per Tahun">Per Tahun</option>
-                              <option value="Per Bulan">Per Bulan</option>
-                            </select>
-                          ) : (
-                            item.period || 'Sekali'
-                          )}
-                        </td>
-                        <td className="p-2 text-[11px] text-slate-500">
-                          {isEditingAkhwat ? (
-                            <input
-                              type="text"
-                              value={item.description || ''}
-                              onChange={e => handleItemDescriptionChange(item.id, e.target.value)}
-                              className="w-full p-1 border rounded text-[11px] bg-white"
-                            />
-                          ) : (
-                            item.description
-                          )}
-                        </td>
-                        {isEditingAkhwat && (
-                          <td className="p-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCostItem(item.id)}
-                              className="p-1 text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
-                              title="Hapus komponen"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="p-3 bg-gradient-to-r from-rose-950 to-slate-900 text-white rounded-xl flex items-center justify-between font-bold text-xs shadow-inner">
-                <span className="text-rose-200">Total Akumulasi Biaya BAM Akhwat (Putri):</span>
-                <span className="text-base text-amber-300 font-extrabold font-mono">
-                  Rp {totalCalculatedAkhwat.toLocaleString('id-ID')}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* VIEW TAB 3: TABEL PERBANDINGAN IKHWAN & AKHWAT */}
-          {activeNominalTab === 'comparison' && (
-            <div className="space-y-3 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-100 p-3 rounded-xl border border-slate-200">
-                <div>
-                  <h4 className="font-extrabold text-slate-900 text-xs flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-indigo-600" />
-                    <span>Tabel Perbandingan Nominal BAM: Ikhwan vs Akhwat</span>
-                  </h4>
-                  <p className="text-[10px] text-slate-500">
-                    Perbandingan langsung seluruh komponen BAM. Perbedaan utama terdapat pada paket seragam & jilbab.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {isEditingComparison ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleAddCostItem('both')}
-                        className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-lg border border-slate-300 flex items-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Tambah Item</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSaveCostItems('comparison')}
-                        className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>Simpan Kedua Nominal</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingComparison(false)}
-                        className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-lg cursor-pointer"
-                      >
-                        Batal
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingComparison(true)}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Pencil className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Edit Kedua Nominal Sekaligus</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto max-h-[300px] overflow-y-auto border border-slate-200 rounded-xl">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-900 text-white border-b font-bold text-[11px] sticky top-0 z-10">
-                      <th className="p-2 text-center w-10">No</th>
-                      <th className="p-2">Komponen / Rincian Biaya</th>
-                      <th className="p-2 text-right text-blue-200">Biaya Ikhwan (Rp)</th>
-                      <th className="p-2 text-right text-rose-200">Biaya Akhwat (Rp)</th>
-                      <th className="p-2 text-center w-20">Selisih</th>
-                      <th className="p-2 text-center w-24">Periode</th>
-                      {isEditingComparison && <th className="p-2 text-center w-12">Aksi</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {costItems.map((item, idx) => {
-                      const ikhwanCost = Number(item.amountIkhwan ?? item.amount ?? 0);
-                      const akhwatCost = Number(item.amountAkhwat ?? item.amount ?? 0);
-                      const diff = akhwatCost - ikhwanCost;
-                      return (
-                        <tr key={item.id || idx} className={`hover:bg-slate-50 ${diff !== 0 ? 'bg-amber-50/50' : ''}`}>
-                          <td className="p-2 text-slate-400 font-mono text-[11px] text-center">{idx + 1}</td>
-                          <td className="p-2 font-bold text-slate-800">
-                            {isEditingComparison ? (
-                              <input
-                                type="text"
-                                value={item.title}
-                                onChange={e => handleItemTitleChange(item.id, e.target.value)}
-                                className="w-full p-1 border rounded text-xs font-semibold bg-white"
-                              />
-                            ) : (
-                              item.title
-                            )}
-                          </td>
-                          <td className="p-2 text-right font-mono font-bold text-blue-900">
-                            {isEditingComparison ? (
-                              <input
-                                type="number"
-                                value={ikhwanCost}
-                                onChange={e => handleItemIkhwanChange(item.id, Number(e.target.value))}
-                                className="w-24 p-1 border border-blue-300 rounded text-xs font-bold text-right ml-auto"
-                              />
-                            ) : (
-                              `Rp ${ikhwanCost.toLocaleString('id-ID')}`
-                            )}
-                          </td>
-                          <td className="p-2 text-right font-mono font-bold text-rose-900">
-                            {isEditingComparison ? (
-                              <input
-                                type="number"
-                                value={akhwatCost}
-                                onChange={e => handleItemAkhwatChange(item.id, Number(e.target.value))}
-                                className="w-24 p-1 border border-rose-300 rounded text-xs font-bold text-right ml-auto"
-                              />
-                            ) : (
-                              `Rp ${akhwatCost.toLocaleString('id-ID')}`
-                            )}
-                          </td>
-                          <td className="p-2 text-center font-mono text-[11px]">
-                            {diff === 0 ? (
-                              <span className="text-slate-400 font-medium">Sama</span>
-                            ) : (
-                              <span className="font-bold text-rose-600">
-                                +Rp {diff.toLocaleString('id-ID')}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2 text-center text-[11px] text-slate-600">
-                            {item.period || 'Sekali'}
-                          </td>
-                          {isEditingComparison && (
-                            <td className="p-2 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteCostItem(item.id)}
-                                className="p-1 text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-slate-900 text-white font-extrabold text-xs">
-                      <td colSpan={2} className="p-2.5 uppercase text-right">TOTAL BIAYA:</td>
-                      <td className="p-2.5 text-right font-mono text-amber-300">
-                        Rp {totalCalculatedIkhwan.toLocaleString('id-ID')}
+          <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 border-b font-bold text-slate-700 sticky top-0 bg-slate-100 z-10">
+                  <th className="p-2">No</th>
+                  <th className="p-2">Komponen / Rincian Biaya</th>
+                  <th className="p-2">Nominal Biaya (Rp)</th>
+                  <th className="p-2">Keterangan</th>
+                  {isEditingNominals && <th className="p-2 text-center">Aksi</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {costItems.map((item, idx) => (
+                  <tr key={item.id} className="hover:bg-slate-50">
+                    <td className="p-2 text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                    <td className="p-2 font-bold text-slate-800">
+                      {isEditingNominals ? (
+                        <input
+                          type="text"
+                          value={item.title}
+                          onChange={e => handleItemTitleChange(item.id, e.target.value)}
+                          className="w-full p-1 border rounded text-xs font-semibold"
+                        />
+                      ) : (
+                        item.title
+                      )}
+                    </td>
+                    <td className="p-2 font-extrabold text-emerald-700">
+                      {isEditingNominals ? (
+                        <input
+                          type="number"
+                          value={item.amount}
+                          onChange={e => handleItemAmountChange(item.id, Number(e.target.value))}
+                          className="w-full p-1 border border-emerald-300 bg-emerald-50/50 rounded text-xs font-extrabold text-emerald-900"
+                        />
+                      ) : (
+                        `Rp ${item.amount.toLocaleString('id-ID')}`
+                      )}
+                    </td>
+                    <td className="p-2 text-[11px] text-slate-500">{item.description}</td>
+                    {isEditingNominals && (
+                      <td className="p-2 text-center">
+                        <button
+                          onClick={() => handleDeleteCostItem(item.id)}
+                          className="p-1 text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </td>
-                      <td className="p-2.5 text-right font-mono text-amber-300">
-                        Rp {totalCalculatedAkhwat.toLocaleString('id-ID')}
-                      </td>
-                      <td className="p-2.5 text-center font-mono text-emerald-300 text-[11px]">
-                        +Rp {(totalCalculatedAkhwat - totalCalculatedIkhwan).toLocaleString('id-ID')}
-                      </td>
-                      <td colSpan={isEditingComparison ? 2 : 1}></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="p-3 bg-slate-900 text-white rounded-xl flex items-center justify-between font-bold text-xs shadow-inner">
+            <span className="text-slate-300">Standard Ikhwan: Rp 6.670.000 | Akhwat: Rp 6.890.000</span>
+            <span className="text-base text-amber-300 font-extrabold">
+              Akumulasi Tabel: Rp {totalCalculatedItemsCost.toLocaleString('id-ID')}
+            </span>
+          </div>
         </div>
 
       </div>
@@ -1683,7 +1110,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div className="text-[11px] font-bold text-indigo-700 uppercase">Standard Target BAM</div>
           <div className="text-xl sm:text-2xl font-extrabold text-indigo-900 mt-1">
-            Rp {totalCalculatedIkhwan.toLocaleString('id-ID')} / Rp {totalCalculatedAkhwat.toLocaleString('id-ID')}
+            Rp 6.670.000 / Rp 6.890.000
           </div>
           <div className="text-[10px] text-slate-400 font-semibold mt-0.5">Ikhwan (L) / Akhwat (P)</div>
         </div>
@@ -2083,6 +1510,27 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                       </td>
                       <td className="p-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => generatePaymentReceiptPDF(
+                              {
+                                id: r.id,
+                                amount: r.amountPaid,
+                                payment_type: 'daftar_ulang',
+                                payment_date: r.paymentDate,
+                                payment_method: (r as any).paymentMethod || 'Transfer Bank BSI',
+                                status: (r as any).status || 'verified',
+                                verified_by: (r as any).verifiedBy || 'Admin Panitia Keuangan',
+                                notes: `Skema: ${r.installmentType || 'BAM'}`,
+                              },
+                              { registrationNumber: r.registrationNumber, fullName: r.studentName },
+                              currentSchoolInfo || ({} as any)
+                            )}
+                            className="p-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 rounded-lg transition-colors cursor-pointer"
+                            title="Cetak Kuitansi Resmi Pembayaran BAM (PDF)"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => handleOpenQuickNominalModal(r)}
                             className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-lg text-[11px] flex items-center gap-1 cursor-pointer shadow-sm transition-all"
@@ -2538,45 +1986,33 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
               </div>
 
               <div>
-                <h4 className="font-bold text-slate-900 mb-2">B. RINCIAN BIAYA AWAL MASUK (BAM) RESMI</h4>
+                <h4 className="font-bold text-slate-900 mb-2">B. BIAYA AWAL MASUK (BAM) RESMI</h4>
                 <div className="overflow-x-auto border border-slate-200 rounded-xl">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="bg-slate-900 text-white font-bold">
-                        <th className="p-2 text-center w-10">NO</th>
+                      <tr className="bg-slate-800 text-white font-bold">
+                        <th className="p-2 text-center">NO</th>
                         <th className="p-2">JENIS KEUANGAN</th>
-                        <th className="p-2 text-right">BIAYA IKHWAN</th>
-                        <th className="p-2 text-right">BIAYA AKHWAT</th>
-                        <th className="p-2 text-center">KET.</th>
+                        <th className="p-2">INTERNAL (AL-HADIID)</th>
+                        <th className="p-2">EKSTERNAL (UMUM)</th>
+                        <th className="p-2">KET.</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 font-medium">
-                      {BAM_BREAKDOWN_ITEMS.map((item, idx) => (
-                        <tr key={item.id} className="hover:bg-slate-50">
-                          <td className="p-2 text-center text-slate-500 font-mono">{idx + 1}</td>
-                          <td className="p-2 font-semibold text-slate-900">{item.name}</td>
-                          <td className="p-2 text-right font-mono font-bold text-blue-900">
-                            Rp {item.amountIkhwan.toLocaleString('id-ID')}
-                          </td>
-                          <td className="p-2 text-right font-mono font-bold text-rose-900">
-                            Rp {item.amountAkhwat.toLocaleString('id-ID')}
-                          </td>
-                          <td className="p-2 text-center text-slate-500">{item.period}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-slate-900 text-white font-extrabold text-xs">
-                        <td colSpan={2} className="p-2.5 text-right uppercase">TOTAL BIAYA RESMI:</td>
-                        <td className="p-2.5 text-right font-mono text-amber-300 text-sm">
-                          Rp {BAM_CONFIG.totalIkhwan.toLocaleString('id-ID')}
-                        </td>
-                        <td className="p-2.5 text-right font-mono text-amber-300 text-sm">
-                          Rp {BAM_CONFIG.totalAkhwat.toLocaleString('id-ID')}
-                        </td>
-                        <td className="p-2.5 text-center text-emerald-300 text-[10px]">Awal Masuk</td>
+                      <tr><td className="p-2 text-center">1</td><td className="p-2 font-bold">Dana Sarana & Prasarana</td><td className="p-2 font-semibold text-slate-800">Rp 4.500.000</td><td className="p-2 font-semibold text-slate-800">Rp 5.500.000</td><td className="p-2 text-slate-500">Sekali</td></tr>
+                      <tr><td className="p-2 text-center">2</td><td className="p-2">Seragam Sekolah (5 Stel Lengkap)</td><td className="p-2">Rp 1.500.000</td><td className="p-2">Rp 1.500.000</td><td className="p-2 text-slate-500">Sekali</td></tr>
+                      <tr><td className="p-2 text-center">3</td><td className="p-2">Buku Paket & Modul Pembelajaran (1 Tahun)</td><td className="p-2">Rp 1.200.000</td><td className="p-2">Rp 1.200.000</td><td className="p-2 text-slate-500">Per Tahun</td></tr>
+                      <tr><td className="p-2 text-center">4</td><td className="p-2">Kegiatan Kesiswaan & Dauroh Al-Qur'an</td><td className="p-2">Rp 1.000.000</td><td className="p-2">Rp 1.000.000</td><td className="p-2 text-slate-500">Per Tahun</td></tr>
+                      <tr><td className="p-2 text-center">5</td><td className="p-2">Ekstrakurikuler Wajib & Pilihan</td><td className="p-2">Rp 800.000</td><td className="p-2">Rp 800.000</td><td className="p-2 text-slate-500">Per Tahun</td></tr>
+                      <tr><td className="p-2 text-center">6</td><td className="p-2">Masa Pengenalan Lingkungan Sekolah (MPLS)</td><td className="p-2">Rp 500.000</td><td className="p-2">Rp 500.000</td><td className="p-2 text-slate-500">Sekali</td></tr>
+                      <tr><td className="p-2 text-center">7</td><td className="p-2">SPP Bulan Pertama (Bulan Juli)</td><td className="p-2">Rp 1.500.000</td><td className="p-2">Rp 1.500.000</td><td className="p-2 text-slate-500">Bulan Pertama</td></tr>
+                      <tr className="bg-slate-900 text-white font-extrabold text-sm">
+                        <td colSpan={2} className="p-3 text-right">TOTAL BIAYA RESMI:</td>
+                        <td className="p-3 text-amber-300">Rp 11.000.000</td>
+                        <td className="p-3 text-amber-300">Rp 12.000.000</td>
+                        <td></td>
                       </tr>
-                    </tfoot>
+                    </tbody>
                   </table>
                 </div>
               </div>
@@ -2586,19 +2022,19 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
                     <span className="font-bold text-emerald-900">Pilihan 1: Pembayaran Lunas Langsung</span>
-                    <div className="text-emerald-700 font-extrabold mt-0.5">Ikhwan: Rp 6.670.000 | Akhwat: Rp 6.890.000</div>
-                    <div className="text-[10px] text-emerald-600 mt-0.5 font-semibold">Bebas Administrasi Lanjutan • Sisa Tagihan Rp 0</div>
+                    <div className="text-emerald-700 font-extrabold mt-0.5">Internal: Rp 10.500.000 | Eksternal: Rp 11.500.000</div>
+                    <div className="text-[10px] text-emerald-600 mt-0.5 font-semibold">Mendapat Potongan Diskon Khusus Rp 500.000 • Sisa Tagihan Rp 0</div>
                   </div>
                   <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
                     <span className="font-bold text-amber-900">Pilihan 2: Pembayaran Bertahap (3 Tahap)</span>
                     <div className="text-amber-800 font-bold mt-0.5 text-[11px]">
-                      • Tahap 1: Rp 3.500.000 (Saat Daftar Ulang)
+                      • Tahap 1: Internal Rp 5.000.000 / Eksternal Rp 6.000.000 (Saat Daftar Ulang)
                     </div>
                     <div className="text-amber-800 font-bold text-[11px]">
-                      • Tahap 2: Rp 2.000.000 (Sebelum Masuk Sekolah / Juni)
+                      • Tahap 2: Rp 3.000.000 (Sebelum Masuk Sekolah / Juni)
                     </div>
                     <div className="text-amber-800 font-bold text-[11px]">
-                      • Tahap 3: Ikhwan Rp 1.170.000 / Akhwat Rp 1.390.000 (Sebelum PAS 1)
+                      • Tahap 3: Rp 3.000.000 (Sebelum PTS Semester 1 / Oktober)
                     </div>
                   </div>
                 </div>
