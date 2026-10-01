@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule,
   GasConfig, UserAccount, UserRole, FormPaymentRecord, BamPaymentRecord,
-  ExamQuestion, WebsiteConfig, BamInstallmentType
+  ExamQuestion, WebsiteConfig, BamInstallmentType, BamItem, BamGender
 } from '../types';
 import { getDefaultCredentials } from './defaultCredentials';
 import { fetchStudentCredentialsFromSupabase, saveStudentAccountCredentials } from './studentCredentials';
@@ -735,6 +735,132 @@ export async function fetchCostBreakdownFromSupabase(): Promise<CostBreakdown[] 
   return await fetchSupabaseState<CostBreakdown[]>('cost_breakdown');
 }
 
+/**
+ * Mengambil daftar item resmi Biaya Awal Masuk (BAM) dari Supabase (Single Source of Truth).
+ * Membaca dari tabel public.bam_items terlebih dahulu, dengan fallback ke spmb_app_state.
+ */
+export async function fetchBamItemsFromSupabase(): Promise<{ ikhwan: BamItem[]; akhwat: BamItem[] }> {
+  try {
+    // 1. Coba ambil dari tabel relasional public.bam_items
+    const { data: rows, error } = await supabase
+      .from('bam_items')
+      .select('*')
+      .order('urutan', { ascending: true });
+
+    if (!error && Array.isArray(rows) && rows.length > 0) {
+      const ikhwan: BamItem[] = [];
+      const akhwat: BamItem[] = [];
+
+      rows.forEach((r: any) => {
+        const item: BamItem = {
+          id: r.id,
+          gender: r.gender === 'akhwat' ? 'akhwat' : 'ikhwan',
+          nama_item: r.nama_item || '',
+          nominal: Number(r.nominal ?? 0),
+          urutan: Number(r.urutan ?? 1),
+          aktif: r.aktif !== false,
+          keterangan: r.keterangan || undefined,
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        };
+
+        if (item.gender === 'akhwat') {
+          akhwat.push(item);
+        } else {
+          ikhwan.push(item);
+        }
+      });
+
+      return { ikhwan, akhwat };
+    }
+  } catch (err) {
+    console.warn('[Supabase] fetchBamItemsFromSupabase error (falling back to app state):', err);
+  }
+
+  // 2. Fallback ke spmb_app_state jika tabel bam_items belum dibuat
+  try {
+    const ikhwanState = await fetchSupabaseState<BamItem[]>('bam_items_ikhwan');
+    const akhwatState = await fetchSupabaseState<BamItem[]>('bam_items_akhwat');
+
+    if ((ikhwanState && ikhwanState.length > 0) || (akhwatState && akhwatState.length > 0)) {
+      return {
+        ikhwan: ikhwanState || [],
+        akhwat: akhwatState || [],
+      };
+    }
+  } catch (stateErr) {
+    console.warn('[Supabase] fetchSupabaseState bam_items error:', stateErr);
+  }
+
+  return { ikhwan: [], akhwat: [] };
+}
+
+/**
+ * Menyimpan seluruh data item BAM untuk gender tertentu ('ikhwan' atau 'akhwat') ke Supabase.
+ * Menyimpan secara permanen ke tabel public.bam_items dan mencadangkan ke spmb_app_state.
+ */
+export async function saveBamItemsToSupabase(
+  gender: BamGender,
+  items: BamItem[]
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Validasi input
+    if (!gender || (gender !== 'ikhwan' && gender !== 'akhwat')) {
+      return { success: false, error: 'Gender BAM harus spesifik: "ikhwan" atau "akhwat"' };
+    }
+
+    const payloadRows = items.map((it, idx) => ({
+      id: it.id || `bam_${gender}_${Date.now()}_${idx}`,
+      gender,
+      nama_item: it.nama_item.trim(),
+      nominal: Number(it.nominal ?? 0),
+      urutan: Number(it.urutan ?? idx + 1),
+      aktif: it.aktif !== false,
+      updated_at: new Date().toISOString(),
+    }));
+
+    // Coba hapus item lama untuk gender ini yang tidak lagi ada, atau timpa dengan upsert
+    try {
+      const { error: upsertErr } = await supabase
+        .from('bam_items')
+        .upsert(payloadRows, { onConflict: 'id' });
+
+      if (upsertErr) {
+        console.warn('[Supabase] upsert bam_items warning:', upsertErr.message);
+      }
+    } catch (upsertE) {
+      console.warn('[Supabase] upsert bam_items exception:', upsertE);
+    }
+
+    // 2. Simpan juga ke spmb_app_state agar sinkron di semua environment dan device
+    await saveSupabaseState(`bam_items_${gender}`, items);
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('[Supabase] saveBamItemsToSupabase failed:', err);
+    return { success: false, error: err?.message || 'Gagal menyimpan data BAM ke Supabase' };
+  }
+}
+
+/**
+ * Menghapus 1 item BAM secara permanen dari Supabase.
+ */
+export async function deleteBamItemFromSupabase(id: string, gender: BamGender): Promise<boolean> {
+  try {
+    await supabase.from('bam_items').delete().eq('id', id);
+    // Sinkronisasi state lokal di app_state
+    const current = await fetchSupabaseState<BamItem[]>(`bam_items_${gender}`);
+    if (current && Array.isArray(current)) {
+      const updated = current.filter(i => i.id !== id);
+      await saveSupabaseState(`bam_items_${gender}`, updated);
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] deleteBamItemFromSupabase error:', err);
+    return false;
+  }
+}
+
 export async function syncTestSchedulesToSupabase(schedules: TestSchedule[]): Promise<void> {
   try {
     await saveSupabaseState('test_schedules', schedules);
@@ -900,7 +1026,7 @@ export async function verifyPassword(plain: string, storedHash?: string, role?: 
   const dynamicDefaults = getDefaultCredentials();
   if (role && (role in dynamicDefaults)) {
     const roleDef = dynamicDefaults[role as keyof typeof dynamicDefaults];
-    if (roleDef && plain === roleDef.defaultPassword) return true;
+    if (roleDef && typeof roleDef === 'object' && 'defaultPassword' in roleDef && plain === (roleDef as any).defaultPassword) return true;
   }
 
   if (!storedHash) {

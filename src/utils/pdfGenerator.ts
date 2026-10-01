@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf';
 import { StudentData, SchoolInfo, TestSchedule } from '../types';
 import { getKepalaSekolahName, getStoredSchoolInfo } from './storage';
 import { getStudentCredentials } from './studentCredentials';
+import { formatTerbilangRupiah, getReceiptVerificationUrl } from './receiptNumber';
 import {
   PDF_THEME,
   drawOfficialHeader,
@@ -1100,145 +1101,381 @@ export function generateExamResultPDF(student: StudentData, schoolInfo: SchoolIn
 }
 
 // =====================================================================
-// 5. DOKUMEN: BUKTI PEMBAYARAN RESMI / KUITANSI SPMB (BARU)
+// 5. DOKUMEN: KUITANSI PEMBAYARAN RESMI SPMB (FORMULIR & BAM)
+// Sesuai Spesifikasi:
+// - Jenis Kuitansi Jelas: KUITANSI PEMBAYARAN FORMULIR / BAM
+// - Nomor Kuitansi Unik (KWT-FRM-YYYY-XXXXX / KWT-BAM-YYYY-XXXXX)
+// - Khusus BAM: Total Kewajiban, Bayar Sebelumnya, Bayar Saat Ini, Total Terbayar, Sisa Tunggakan
+// - Terbilang Rupiah Akurat
+// - QR Code Verifikasi Online Kuitansi
+// - Tanda Tangan Panitia & Kepala Sekolah
 // =====================================================================
 export function generatePaymentReceiptPDF(
   payment: any,
   student: StudentData | any,
-  schoolInfo: SchoolInfo
+  schoolInfo?: SchoolInfo,
+  bamDetails?: {
+    totalBam: number;
+    previousPaid: number;
+    currentPaid: number;
+    totalPaidToDate: number;
+    remainingBalance: number;
+  }
 ) {
+  const effectiveSchoolInfo = schoolInfo || (typeof window !== 'undefined' ? getStoredSchoolInfo() : undefined);
+  const statusStr = (payment.status || payment.verification_status || 'verified').toLowerCase();
+
+  // Proteksi: Kuitansi resmi HANYA boleh diterbitkan jika transaksi sudah TERVERIFIKASI
+  if (statusStr !== 'verified' && statusStr !== 'lunas') {
+    alert('Transaksi belum diverifikasi. Kuitansi resmi belum dapat diterbitkan.');
+    return;
+  }
+
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
     format: 'a4',
   });
 
+  const academicYear = effectiveSchoolInfo?.academicYear || '2027/2028';
+  const paymentDateStr = formatDateIndonesian(payment.payment_date || payment.created_at || new Date().toISOString());
   const todayStr = formatDateIndonesian(new Date().toISOString());
-  const academicYear = schoolInfo?.academicYear || '2027/2028';
 
-  const paymentType = payment.payment_type || payment.paymentType || 'Pembayaran SPMB';
-  const isForm = paymentType.toLowerCase().includes('form') || paymentType.toLowerCase().includes('formulir');
-  const typeLabel = isForm ? 'PEMBAYARAN FORMULIR PENDAFTARAN' : 'BIAYA AWAL MASUK / DAFTAR ULANG (BAM)';
+  const paymentType = String(payment.payment_type || payment.paymentType || 'form').toLowerCase();
+  const isForm = paymentType.includes('form') || paymentType.includes('formulir');
+  const typeLabel = isForm ? 'KUITANSI PEMBAYARAN FORMULIR' : 'KUITANSI PEMBAYARAN BIAYA AWAL MASUK (BAM)';
+  
+  // Nominal transaksi kuitansi ini
   const amount = Number(payment.amount || payment.amountPaid || 0);
 
-  const trxNumber = payment.id
-    ? `TRX-${payment.id.substring(0, 8).toUpperCase()}`
-    : `TRX-${Date.now().toString().slice(-8)}`;
+  // Nomor Kuitansi Unik
+  const year4 = academicYear.replace(/[^0-9]/g, '').slice(0, 4) || '2027';
+  const receiptNumber = payment.receipt_number || payment.receiptNumber || 
+    (isForm ? `KWT-FRM-${year4}-${String(payment.id || '00001').slice(-5)}` : `KWT-BAM-${year4}-${String(payment.id || '00001').slice(-5)}`);
+  
+  const trxNumber = payment.transactionNumber || payment.transaction_number || payment.id || 'TRX-001';
 
   let curY = drawOfficialHeader(doc, {
-    schoolInfo,
-    documentTitle: 'BUKTI PEMBAYARAN RESMI SPMB',
-    documentSubtitle: typeLabel,
-    documentNumber: `Kuitansi No: ${trxNumber}`,
+    schoolInfo: effectiveSchoolInfo,
+    documentTitle: typeLabel,
+    documentSubtitle: `SISTEM PENERIMAAN MURID BARU TP ${academicYear}`,
+    documentNumber: `Nomor Kuitansi: ${receiptNumber}`,
     orientation: 'portrait',
+    compact: false,
   });
+
+  curY += 2;
 
   // Frame Kuitansi Formal
   doc.saveGraphicsState();
   doc.setDrawColor(PDF_THEME.colors.primaryDark[0], PDF_THEME.colors.primaryDark[1], PDF_THEME.colors.primaryDark[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(15, curY, 180, 205, 2, 2, 'D');
+  doc.setLineWidth(0.4);
+  doc.roundedRect(15, curY, 180, 208, 2, 2, 'D');
 
   // Status Badge di pojok kanan atas frame
-  const statusStr = (payment.status || payment.verification_status || 'verified').toLowerCase();
-  drawStatusBadge(doc, 140, curY + 4, 50, 7.5, statusStr);
+  drawStatusBadge(doc, 132, curY + 3.5, 58, 7, 'verified', '✓ TERVERIFIKASI & SAH');
 
-  curY += 12;
+  curY += 11;
 
-  // A. IDENTITAS PEMBAYARAN
-  curY = drawSectionTitle(doc, 'RINCIAN DATA TRANSAKSI PEMBAYARAN', curY, 20, 170);
+  // A. IDENTITAS & DATA TRANSAKSI
+  curY = drawSectionTitle(doc, 'DATA TRANSAKSI PEMBAYARAN RESMI', curY, 20, 170);
+
+  const parentName = student?.fatherName || student?.motherName || student?.guardianName || '-';
 
   const paymentDetails: [string, string][] = [
+    ['Nomor Kuitansi', receiptNumber],
     ['Nomor Transaksi', trxNumber],
     ['Nomor Pendaftaran', student?.registrationNumber || payment.registration_number || '-'],
-    ['Nama Lengkap Siswa', (student?.fullName || payment.student_name || '-').toUpperCase()],
-    ['Jenis Pembayaran', typeLabel],
-    ['Tanggal Transaksi', formatDateIndonesian(payment.payment_date || payment.created_at)],
-    ['Metode Pembayaran', payment.payment_method || 'Transfer Bank Syariah Indonesia (BSI)'],
-    ['Bank Tujuan', `${schoolInfo?.bankName || 'BSI'} - No. Rek: ${schoolInfo?.bankAccountNumber || '3953157480'} a.n. ${schoolInfo?.bankAccountName || 'Al-Hadiid'}`],
-    ['Status Verifikasi', statusStr === 'verified' ? 'TERVERIFIKASI & SAH OLEH PANITIA' : statusStr === 'rejected' ? 'DITOLAK' : 'MENUNGGU VERIFIKASI'],
+    ['Nama Calon Murid', (student?.fullName || payment.student_name || 'Calon Murid').toUpperCase()],
+    ['Jenis Kelamin', student?.gender || payment.gender || 'Laki-laki'],
+    ['Nama Orang Tua / Wali', parentName],
+    ['Jenis Pembayaran', isForm ? 'Pembayaran Formulir Pendaftaran SPMB' : 'Biaya Awal Masuk (BAM)'],
+    ['Tanggal Pembayaran', paymentDateStr],
+    ['Metode Pembayaran', payment.payment_method || payment.paymentMethod || 'Transfer Bank BSI'],
+    ['Status Pembayaran', 'TERVERIFIKASI (KAS MASUK RESMI)'],
   ];
 
   paymentDetails.forEach(([lbl, val]) => {
-    curY = drawKeyValueRow(doc, lbl, val, 20, curY, 48, 122, 6);
+    curY = drawKeyValueRow(doc, lbl, val, 20, curY, 52, 118, 5.2);
   });
 
-  curY += 5;
+  curY += 2.5;
 
-  // B. KOTAK NOMINAL BESAR & TERBILANG
+  // B. KOTAK NOMINAL BESAR & TERBILANG (NOMINAL TRANSAKSI SAAT INI)
   doc.saveGraphicsState();
   doc.setFillColor(PDF_THEME.colors.primaryLight[0], PDF_THEME.colors.primaryLight[1], PDF_THEME.colors.primaryLight[2]);
   doc.setDrawColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
-  doc.roundedRect(20, curY, 170, 22, 2, 2, 'FD');
+  doc.roundedRect(20, curY, 170, 21, 2, 2, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(PDF_THEME.colors.primaryDark[0], PDF_THEME.colors.primaryDark[1], PDF_THEME.colors.primaryDark[2]);
-  doc.text('JUMLAH PEMBAYARAN (NOMINAL) :', 25, curY + 6.5);
+  doc.text('JUMLAH PEMBAYARAN SAAT INI (NOMINAL) :', 24, curY + 6);
 
-  doc.setFontSize(14);
-  doc.text(formatRupiah(amount), 25, curY + 14);
+  doc.setFontSize(13.5);
+  doc.text(formatRupiah(amount), 24, curY + 13.5);
 
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(8);
   doc.setTextColor(PDF_THEME.colors.textMuted[0], PDF_THEME.colors.textMuted[1], PDF_THEME.colors.textMuted[2]);
-  doc.text(`Terbilang: ${angkaTerbilang(amount)} Rupiah`, 25, curY + 19);
+  doc.text(`Terbilang: "${formatTerbilangRupiah(amount)}"`, 24, curY + 18);
   doc.restoreGraphicsState();
 
-  curY += 28;
+  curY += 24;
 
-  // Catatan Khusus jika Ditolak atau Keterangan Verifikasi
+  // C. KHUSUS KUITANSI BAM: TAMPILKAN RINCIAN ANGSURAN & TUNGGAKAN (SECTION 5)
+  if (!isForm && bamDetails) {
+    curY = drawSectionTitle(doc, 'REKAPITULASI PEMBAYARAN BAM & SISA TUNGGAKAN', curY, 20, 170);
+
+    const bamRows = [
+      ['Total Kewajiban BAM', formatRupiah(bamDetails.totalBam)],
+      ['Pembayaran Sebelumnya', formatRupiah(bamDetails.previousPaid)],
+      ['Pembayaran Saat Ini (Kuitansi Ini)', formatRupiah(bamDetails.currentPaid || amount)],
+      ['Total Pembayaran Sampai Saat Ini', formatRupiah(bamDetails.totalPaidToDate)],
+      ['Sisa Tunggakan BAM', bamDetails.remainingBalance === 0 ? 'Rp 0 (LUNAS)' : formatRupiah(bamDetails.remainingBalance)],
+    ];
+
+    bamRows.forEach(([lbl, val], idx) => {
+      curY = drawKeyValueRow(doc, lbl, val, 20, curY, 75, 95, 5, idx % 2 === 1);
+    });
+
+    curY += 2.5;
+  }
+
+  // Catatan Kuitansi
   if (payment.notes || payment.rejection_reason) {
     doc.saveGraphicsState();
     doc.setFillColor(PDF_THEME.colors.bgZebra[0], PDF_THEME.colors.bgZebra[1], PDF_THEME.colors.bgZebra[2]);
-    doc.rect(20, curY, 170, 10, 'F');
+    doc.rect(20, curY, 170, 8.5, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(PDF_THEME.colors.textBody[0], PDF_THEME.colors.textBody[1], PDF_THEME.colors.textBody[2]);
-    doc.text('Catatan Panitia :', 23, curY + 4.5);
+    doc.text('Keterangan :', 23, curY + 4.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(String(payment.notes || payment.rejection_reason).substring(0, 95), 52, curY + 4.5);
+    doc.text(String(payment.notes || payment.rejection_reason).substring(0, 95), 45, curY + 4.5);
     doc.restoreGraphicsState();
-    curY += 14;
+    curY += 11;
   }
 
   // Pernyataan Keabsahan
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.2);
+  doc.setFontSize(6.8);
   doc.setTextColor(PDF_THEME.colors.textLight[0], PDF_THEME.colors.textLight[1], PDF_THEME.colors.textLight[2]);
-  doc.text('* Bukti pembayaran ini adalah dokumen sah pengganti kuitansi fisik yang diterbitkan secara digital oleh Sistem SPMB SMPS Al-Hadiid Cileungsi.', 20, curY);
+  doc.text('* Kuitansi ini adalah bukti pembayaran yang sah dan diterbitkan secara digital oleh Sistem SPMB SMPS Al-Hadiid Cileungsi.', 20, curY);
 
-  curY += 8;
+  curY += 6.5;
 
-  // Tanda Tangan Bendahara SPMB & Verifikasi
-  const verifiedBy = payment.verified_by || 'Bendahara SPMB Al-Hadiid';
+  // Tanda Tangan: Panitia SPMB & Kepala Sekolah
+  const verifiedBy = payment.verified_by || 'Panitia Keuangan SPMB';
+  const kepsekName = getKepalaSekolahName(effectiveSchoolInfo);
 
   drawOfficialSignature(doc, {
     x: 25,
     y: curY,
-    title: 'Pembayar / Calon Murid,',
-    subtitle: 'Telah melakukan transfer,',
-    personName: (student?.fullName || payment.student_name || 'Calon Murid').toUpperCase(),
-    signatureWidth: 60,
+    title: 'Penerima / Panitia SPMB,',
+    subtitle: 'Bagian Administrasi Keuangan,',
+    personName: verifiedBy,
+    signatureWidth: 55,
   });
 
   drawOfficialSignature(doc, {
     x: 125,
     y: curY,
     title: `Cileungsi, ${todayStr}`,
-    subtitle: 'Bagian Keuangan & Verifikasi SPMB,',
-    personName: verifiedBy,
-    extraNote: 'Stempel Sah Administrasi Keuangan',
+    subtitle: 'Mengetahui,\nKepala Sekolah SMPS Al-Hadiid,',
+    personName: kepsekName,
+    extraNote: effectiveSchoolInfo?.headmasterNiy ? `NIY. ${effectiveSchoolInfo.headmasterNiy}` : undefined,
+    signatureWidth: 55,
+  });
+
+  // QR Code Verifikasi Kuitansi (Section 14)
+  const qrUrl = getReceiptVerificationUrl(receiptNumber);
+  drawVerificationQr(doc, 85, curY + 2, 22, qrUrl);
+
+  // Footer Resmi
+  applyOfficialFooters(doc, { schoolInfo: effectiveSchoolInfo, orientation: 'portrait' });
+
+  // Simpan File dengan nama terstruktur
+  const safeReg = student?.registrationNumber || payment.registration_number || 'NO-REG';
+  const cleanReceiptNo = receiptNumber.replace(/[^A-Za-z0-9_-]/g, '_');
+  doc.save(`Kuitansi_${cleanReceiptNo}_${safeReg}.pdf`);
+}
+
+// =====================================================================
+// 8. DOKUMEN: SURAT KETERANGAN TUNGGAKAN BAM RESMI (PORTRAIT)
+// =====================================================================
+export function generateSuratTunggakanBamPDF(
+  student: StudentData,
+  bamData: {
+    totalBam: number;
+    totalPaid: number;
+    remaining: number;
+    items?: Array<{ nama_item: string; nominal: number }>;
+  },
+  schoolInfo?: SchoolInfo
+) {
+  const effectiveSchoolInfo = schoolInfo || (typeof window !== 'undefined' ? getStoredSchoolInfo() : undefined);
+  
+  if (bamData.remaining <= 0) {
+    alert('Calon murid ini tidak memiliki sisa tunggakan BAM (Status LUNAS). Surat keterangan tunggakan hanya untuk siswa yang memiliki sisa tunggakan.');
+    return;
+  }
+
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const layout = PDF_THEME.layout.portrait;
+  const startX = layout.marginLeft; // 15mm
+  const contentWidth = layout.contentWidth; // 180mm
+  const rightX = startX + contentWidth;
+
+  // Header Resmi
+  let curY = drawOfficialHeader(doc, {
+    schoolInfo: effectiveSchoolInfo,
+    documentTitle: 'SURAT PEMBERITAHUAN TUNGGAKAN BIAYA AWAL MASUK (BAM)',
+    documentSubtitle: `SISTEM PENERIMAAN MURID BARU TP ${effectiveSchoolInfo?.academicYear || '2027/2028'}`,
+    orientation: 'portrait',
+    compact: false,
+  });
+
+  curY += 2;
+
+  // Nomor Surat dan Identitas Dokumen
+  const todayStr = formatDateIndonesian(new Date().toISOString());
+  const yearNum = new Date().getFullYear();
+  const regNo = student.registrationNumber || 'SPMB';
+  const letterNo = `B-421.3/${regNo.replace(/[^0-9]/g, '') || '088'}/SPMB-BAM/SMP-ALH/${yearNum}`;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(PDF_THEME.colors.textDark[0], PDF_THEME.colors.textDark[1], PDF_THEME.colors.textDark[2]);
+
+  doc.text(`Nomor     : ${letterNo}`, startX, curY);
+  doc.text(`Lampiran  : 1 (Satu) Lembar Rincian`, startX, curY + 4.5);
+  doc.text(`Perihal   : Pemberitahuan & Tagihan Tunggakan BAM`, startX, curY + 9);
+  doc.text(`Cileungsi, ${todayStr}`, rightX - 45, curY);
+
+  curY += 16;
+
+  // Kepada Yth
+  doc.setFont('helvetica', 'normal');
+  doc.text('Kepada Yth.', startX, curY);
+  doc.setFont('helvetica', 'bold');
+  const parentName = student.fatherName || student.motherName || student.guardianName || `Orang Tua / Wali dari ${student.fullName}`;
+  doc.text(`Bapak/Ibu Orang Tua / Wali dari ${student.fullName}`, startX, curY + 4.5);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Di Tempat', startX, curY + 9);
+
+  curY += 15;
+
+  // Paragraf Pembuka
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  const introText = 'Assalamu\'alaikum Warahmatullahi Wabarakatuh.\n\nBa\'da salam, semoga Bapak/Ibu senantiasa dalam limpahan taufiq dan hidayah Allah SWT dalam menjalankan aktivitas sehari-hari. Sehubungan dengan proses Penerimaan Murid Baru (SPMB) SMPS Al-Hadiid Cileungsi Tahun Pelajaran ' + (effectiveSchoolInfo?.academicYear || '2027/2028') + ', bersama ini kami sampaikan data administrasi keuangan Biaya Awal Masuk (BAM) atas nama calon santri/murid berikut:';
+  const splitIntro = doc.splitTextToSize(introText, contentWidth);
+  doc.text(splitIntro, startX, curY);
+  curY += splitIntro.length * 4.2 + 2;
+
+  // Box Data Calon Murid
+  curY = drawSectionTitle(doc, 'I. DATA IDENTITAS CALON SANTRI / MURID', curY, startX, contentWidth);
+
+  curY = drawKeyValueRow(doc, 'Nomor Pendaftaran', student.registrationNumber || '-', startX, curY, 45, contentWidth - 45);
+  curY = drawKeyValueRow(doc, 'Nama Lengkap Siswa', student.fullName, startX, curY, 45, contentWidth - 45);
+  curY = drawKeyValueRow(doc, 'Jenis Kelamin', student.gender || 'Laki-laki', startX, curY, 45, contentWidth - 45);
+  curY = drawKeyValueRow(doc, 'Asal Sekolah', student.previousSchoolName || '-', startX, curY, 45, contentWidth - 45);
+  if (student.assignedClassName) {
+    curY = drawKeyValueRow(doc, 'Rekomendasi Kelas', student.assignedClassName, startX, curY, 45, contentWidth - 45);
+  }
+
+  curY += 4;
+
+  // Box Ringkasan Tunggakan
+  curY = drawSectionTitle(doc, 'II. REKAPITULASI PEMBAYARAN & SISA TUNGGAKAN BAM', curY, startX, contentWidth);
+
+  // Tabel Rekapitulasi Keuangan
+  doc.saveGraphicsState();
+  doc.setFillColor(PDF_THEME.colors.primaryDark[0], PDF_THEME.colors.primaryDark[1], PDF_THEME.colors.primaryDark[2]);
+  doc.rect(startX, curY, contentWidth, 6.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(255, 255, 255);
+  doc.text('KOMPONEN PERHITUNGAN', startX + 4, curY + 4.5);
+  doc.text('NOMINAL (RP)', rightX - 35, curY + 4.5);
+  doc.restoreGraphicsState();
+  curY += 6.5;
+
+  const rows = [
+    { label: 'Total Kewajiban Biaya Awal Masuk (BAM)', val: formatRupiah(bamData.totalBam), bold: false, color: [30, 41, 59] },
+    { label: 'Jumlah yang Telah Terbayar / Diterima', val: formatRupiah(bamData.totalPaid), bold: false, color: [16, 185, 129] },
+    { label: 'SISA SALDO TUNGGAKAN BAM (WAJIB DILUNASI)', val: formatRupiah(bamData.remaining), bold: true, color: [225, 29, 72] },
+  ];
+
+  rows.forEach((r, idx) => {
+    doc.saveGraphicsState();
+    if (idx % 2 === 1) {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(startX, curY, contentWidth, 6.5, 'F');
+    }
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.rect(startX, curY, contentWidth, 6.5);
+
+    doc.setFont('helvetica', r.bold ? 'bold' : 'normal');
+    doc.setFontSize(8.2);
+    doc.setTextColor(r.color[0], r.color[1], r.color[2]);
+    doc.text(r.label, startX + 4, curY + 4.5);
+    doc.text(r.val, rightX - 35, curY + 4.5);
+    doc.restoreGraphicsState();
+    curY += 6.5;
+  });
+
+  curY += 4;
+
+  // Box Rekening Pembayaran
+  doc.saveGraphicsState();
+  doc.setFillColor(241, 245, 249);
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(startX, curY, contentWidth, 18, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(30, 41, 59);
+  doc.text('REKENING RESMI PEMBAYARAN SMPS AL-HADIID CILEUNGSI:', startX + 4, curY + 4.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.8);
+  doc.text(`Bank Syariah Indonesia (BSI) / Bank Mandiri Cabang Cileungsi`, startX + 4, curY + 9);
+  doc.text(`Nomor Rekening: 7123-4567-89 a.n. YAYASAN AL-HADIID CILEUNGSI`, startX + 4, curY + 13);
+  doc.text(`Konfirmasi Bukti Transfer via WhatsApp Admin Keuangan SPMB: ${effectiveSchoolInfo?.phone || '0812-3456-7890'}`, startX + 4, curY + 16.5);
+  doc.restoreGraphicsState();
+  curY += 22;
+
+  // Paragraf Penutup
+  const closingText = 'Mengingat pentingnya pemenuhan sarana belajar, pemesanan seragam lengkap, dan modul pembelajaran santri, kami mengimbau Bapak/Ibu untuk dapat melunasi sisa tagihan tersebut sebelum kegiatan MPLS dimulai. Atas perhatian dan kerjasamanya, kami sampaikan terima kasih.\n\nWassalamu\'alaikum Warahmatullahi Wabarakatuh.';
+  const splitClosing = doc.splitTextToSize(closingText, contentWidth);
+  doc.text(splitClosing, startX, curY);
+  curY += splitClosing.length * 4.2 + 2;
+
+  // Tanda Tangan
+  const kepsekName = getKepalaSekolahName(effectiveSchoolInfo);
+  drawOfficialSignature(doc, {
+    x: rightX - 65,
+    y: curY,
+    title: `Cileungsi, ${todayStr}`,
+    subtitle: 'Panitia SPMB & Kepala Sekolah,',
+    personName: kepsekName,
+    extraNote: effectiveSchoolInfo?.headmasterNiy ? `NIY. ${effectiveSchoolInfo.headmasterNiy}` : 'SMPS AL-HADIID CILEUNGSI',
     signatureWidth: 60,
   });
 
-  // QR Code Verifikasi Kuitansi
-  drawVerificationQr(doc, 90, curY + 2, 22, `SPMB-PAY-${trxNumber}`);
+  // QR Code Verifikasi
+  drawVerificationQr(doc, startX + 4, curY + 4, 20, `TUNGGAKAN-BAM-${regNo}-${bamData.remaining}`);
 
   // Footer Resmi
-  applyOfficialFooters(doc, { schoolInfo, orientation: 'portrait' });
+  applyOfficialFooters(doc, { schoolInfo: effectiveSchoolInfo, orientation: 'portrait' });
 
-  // Simpan File
-  const safeReg = student?.registrationNumber || payment.registration_number || 'NO-REG';
-  doc.save(`Kuitansi_Pembayaran_${trxNumber}_${safeReg}.pdf`);
+  // Simpan File PDF
+  const safeName = (student.fullName || 'Calon_Murid').replace(/\s+/g, '_');
+  doc.save(`Surat_Tunggakan_BAM_${regNo}_${safeName}.pdf`);
 }

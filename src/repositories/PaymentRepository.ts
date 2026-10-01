@@ -4,6 +4,7 @@
 // =====================================================================
 
 import { supabase } from '../utils/supabaseClient';
+import { getOrAssignReceiptNumber } from '../utils/receiptNumber';
 
 export interface PaymentItem {
   id: string;
@@ -14,6 +15,8 @@ export interface PaymentItem {
   paymentType: 'form' | 'bam' | 'tuition' | 'other';
   amount: number;
   status: 'unpaid' | 'pending' | 'verified' | 'rejected';
+  receiptNumber?: string;
+  receiptIssuedAt?: string;
   paymentMethod?: string;
   bankName?: string;
   accountNumber?: string;
@@ -46,6 +49,8 @@ export function mapRowToPayment(row: any): PaymentItem {
     paymentType: pType,
     amount: Number(row.amount || 0),
     status: row.status,
+    receiptNumber: row.receipt_number || undefined,
+    receiptIssuedAt: row.receipt_issued_at || undefined,
     paymentMethod: row.payment_method || undefined,
     bankName: row.bank_name || undefined,
     accountNumber: row.account_number || undefined,
@@ -310,7 +315,7 @@ export const PaymentRepository = {
         }
       }
 
-      // 3. Sinkronkan status ke tabel students
+      // 3. Sinkronkan status ke tabel students & pastikan Nomor Kuitansi diterbitkan
       if (updatedPayment?.student_id) {
         const isForm = updatedPayment.payment_type === 'formulir' || updatedPayment.payment_type === 'form';
         if (isForm) {
@@ -325,6 +330,12 @@ export const PaymentRepository = {
             initial_payment_status: status,
             initial_payment_notes: status === 'rejected' ? `Ditolak: ${rejectionReason}` : undefined,
           }).eq('id', updatedPayment.student_id);
+        }
+
+        // Terbitkan nomor kuitansi permanen jika status verified
+        if (status === 'verified' && !updatedPayment.receipt_number) {
+          const type = isForm ? 'form' : 'bam';
+          getOrAssignReceiptNumber(paymentId, type).catch(err => console.warn('Assign receipt error:', err));
         }
       }
 

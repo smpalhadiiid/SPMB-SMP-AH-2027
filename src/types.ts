@@ -360,6 +360,8 @@ export interface WebsiteConfig {
 export interface FormPaymentRecord {
   id: string;
   transactionNumber: string; // e.g. TRX-FORM-001
+  receiptNumber?: string; // e.g. KWT-FRM-2027-00001
+  receiptIssuedAt?: string;
   registrationNumber: string; // e.g. SPMB20270001
   studentId: string;
   studentName: string;
@@ -375,19 +377,41 @@ export interface FormPaymentRecord {
 
 export type BamInstallmentType = 'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3' | 'Cicilan 4' | 'Cicilan 5' | 'Cicilan 6' | 'Cicilan 7' | 'Cicilan 8' | 'Cicilan 9' | 'Cicilan 10' | 'Belum Bayar';
 
+export type BamGender = 'ikhwan' | 'akhwat';
+
+export interface BamItem {
+  id: string;
+  gender: BamGender;
+  nama_item: string;
+  nominal: number;
+  urutan: number;
+  aktif: boolean;
+  keterangan?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type BamPaymentStatus = 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS' | 'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3' | 'Belum Bayar';
+
 export interface BamPaymentRecord {
   id: string;
   transactionNumber: string; // e.g. TRX-BAM-001
+  receiptNumber?: string; // e.g. KWT-BAM-2027-00001
+  receiptIssuedAt?: string;
   registrationNumber: string; // e.g. SPMB20270001
   studentId: string;
   studentName: string;
   gender: 'Laki-laki' | 'Perempuan';
   paymentDate: string; // YYYY-MM-DD
-  totalBamCost: number; // Total nominal BAM e.g. 8500000
+  totalBamCost: number; // Total nominal BAM sesuai gender dari Supabase
   amountPaid: number; // nominal bayar transaksi ini
   installmentType: BamInstallmentType;
+  paymentStatus?: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS';
+  paymentMethod?: string; // e.g. 'Transfer Bank Mandiri', 'Tunai/Kasir', 'BSI'
+  itemName?: string; // Item BAM spesifik bila dicicil per item atau akumulasi
+  itemAmount?: number;
   totalPaidToDate: number; // akumulasi terbayar
-  remainingBalance: number; // totalBamCost - totalPaidToDate (Saldo)
+  remainingBalance: number; // totalBamCost - totalPaidToDate (Saldo / Tunggakan)
   proofUrl?: string;
   notes?: string;
   createdAt?: string;

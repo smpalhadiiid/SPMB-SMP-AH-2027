@@ -414,7 +414,7 @@ export function mapStudentToRow(s: Partial<StudentData>): Record<string, any> {
   if (s.firstDayDate !== undefined) row.first_day_date = sanitizeDate(s.firstDayDate);
   if (s.mplsInfo !== undefined) row.mpls_info = s.mplsInfo;
 
-  const testAnswersObj = typeof s.testAnswers === 'object' && s.testAnswers ? { ...s.testAnswers } : {};
+  const testAnswersObj: Record<string, any> = typeof s.testAnswers === 'object' && s.testAnswers ? { ...s.testAnswers } : {};
   if (s.username || s.password) {
     testAnswersObj._accountCredentials = {
       username: s.username || testAnswersObj._accountCredentials?.username,
