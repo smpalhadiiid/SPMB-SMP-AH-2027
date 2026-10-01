@@ -67,6 +67,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button onClick={onNavigateHome} className="hover:text-blue-400 transition-colors">
             Beranda
           </button>
+          <a href="#kuota" className="hover:text-emerald-400 text-emerald-300 font-semibold transition-colors flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            <span>Kuota Realtime</span>
+          </a>
           <a href="#profil" className="hover:text-blue-400 transition-colors">
             Profil
           </a>
@@ -157,6 +161,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button onClick={() => { onNavigateHome(); setMobileMenuOpen(false); }} className="text-left py-1.5 hover:text-blue-400">
               Beranda
             </button>
+            <a href="#kuota" onClick={() => setMobileMenuOpen(false)} className="py-1.5 hover:text-emerald-400 text-emerald-300 font-semibold flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Kuota Realtime</span>
+            </a>
             <a href="#profil" onClick={() => setMobileMenuOpen(false)} className="py-1.5 hover:text-blue-400">
               Profil Sekolah
             </a>

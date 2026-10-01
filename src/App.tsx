@@ -509,6 +509,8 @@ export default function App() {
               testSchedules={testSchedules}
               websiteConfig={websiteConfig}
               currentUser={currentUser}
+              classQuotas={classQuotas}
+              students={students}
               onOpenAuth={(mode) => {
                 setAuthMode(mode);
                 setAuthModalOpen(true);

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SchoolInfo, CostBreakdown, TestSchedule, WebsiteConfig, UserAccount, UserRole } from '../types';
+import { SchoolInfo, CostBreakdown, TestSchedule, WebsiteConfig, UserAccount, UserRole, ClassQuota, StudentData } from '../types';
 import { 
   Sparkles, CheckCircle2, Award, BookOpen, ShieldCheck, Download, Video,
   MessageSquare, ChevronRight, HelpCircle, GraduationCap, MapPin, 
@@ -7,6 +7,7 @@ import {
   ExternalLink, Play, Bell, Settings, Palette, Eye, Save, Globe
 } from 'lucide-react';
 import { SchoolLogo } from './SchoolLogo';
+import { RealtimeQuotaSection } from './landing/RealtimeQuotaSection';
 
 interface LandingPageProps {
   schoolInfo: SchoolInfo;
@@ -14,6 +15,8 @@ interface LandingPageProps {
   testSchedules: TestSchedule[];
   websiteConfig?: WebsiteConfig;
   currentUser?: UserAccount | null;
+  classQuotas?: ClassQuota[];
+  students?: StudentData[];
   onOpenAuth: (mode: 'login' | 'register') => void;
   onOpenWhatsApp: () => void;
   onSelectRoleView: (role: UserRole) => void;
@@ -27,6 +30,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   testSchedules,
   websiteConfig,
   currentUser,
+  classQuotas = [],
+  students = [],
   onOpenAuth,
   onOpenWhatsApp,
   onSelectRoleView,
@@ -332,7 +337,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="bg-slate-800/80 p-4 rounded-xl space-y-3">
                   <div className="text-xs text-slate-300 font-bold flex items-center justify-between">
                     <span>8 Alur Pendaftaran SPMB:</span>
-                    <span className="text-[10px] text-emerald-400 font-mono">Resmi 2026/2027</span>
+                    <span className="text-[10px] text-emerald-400 font-mono">Resmi 2027/2028</span>
                   </div>
                   <div className="space-y-1.5 text-xs text-slate-300">
                     <div className="flex items-center gap-2">
@@ -353,7 +358,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">5</span>
-                      <span className="text-[11px]">Login ujian pakai No. Registrasi & tes</span>
+                      <span className="text-[11px]">Login ujian mengunakan akun username dan password saat mendaftar</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-4 h-4 rounded-full bg-amber-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">6</span>
@@ -365,7 +370,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">8</span>
-                      <span className="text-[11px]">Panitia verifikasi & catat nominal transfer ke tabel</span>
+                      <span className="text-[11px]">Panitia verifikasi pembayaran BAM dan penepatan kelas</span>
                     </div>
                   </div>
                 </div>
@@ -390,6 +395,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
         </div>
       </section>
+
+      {/* SEKSI STATUS KUOTA & PENDAFTAR REALTIME */}
+      {(websiteConfig?.showQuotaSection ?? true) && (
+        <RealtimeQuotaSection
+          schoolInfo={schoolInfo}
+          initialClassQuotas={classQuotas}
+          initialStudents={students}
+          onOpenRegister={() => onOpenAuth('register')}
+          onOpenWhatsApp={onOpenWhatsApp}
+        />
+      )}
 
       {/* PROFIL SEKOLAH SECTION */}
       <section id="profil" className="py-16 bg-white border-b border-slate-200">
