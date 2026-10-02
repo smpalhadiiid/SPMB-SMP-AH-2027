@@ -23,7 +23,7 @@ import {
 import {
   ShieldCheck, ShieldAlert, Key, Edit, Lock, UserCheck, UserX, RefreshCw,
   Search, Shield, CheckCircle2, XCircle, AlertCircle, History as HistoryIcon, User, Check, X, Info, Trash2, GraduationCap,
-  Eye, EyeOff, RotateCcw, Sparkles
+  Eye, EyeOff, RotateCcw, Sparkles, Loader2, AtSign, Mail
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
@@ -1434,6 +1434,164 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
                   className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-600/30"
                 >
                   {isSubmitting ? 'Memproses...' : 'Simpan Perubahan'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Ubah Kredensial Default (Super Admin, Admin, Kepsek, Calon Murid) */}
+      {showDefaultModal && targetDefaultRole && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-400">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">
+                    Ubah Kredensial Default
+                  </h3>
+                  <p className="text-xs text-slate-400 font-medium">
+                    Peran: <span className="text-blue-400 font-semibold">{defaultsConfig[targetDefaultRole].roleLabel}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDefaultModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer transition-colors"
+                title="Tutup Modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDefault} className="space-y-4">
+              {defaultFormError && (
+                <div className="bg-red-900/30 border border-red-500/40 p-3 rounded-xl text-red-200 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <span>{defaultFormError}</span>
+                </div>
+              )}
+
+              {/* Username Input */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Username Login
+                </label>
+                <div className="relative">
+                  <AtSign className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    value={formDefaultUsername}
+                    onChange={(e) => setFormDefaultUsername(e.target.value)}
+                    placeholder="Contoh: superadmin"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Digunakan untuk login cepat atau masuk langsung dengan username.
+                </p>
+              </div>
+
+              {/* Email Input */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Email Login
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="email"
+                    value={formDefaultEmail}
+                    onChange={(e) => setFormDefaultEmail(e.target.value)}
+                    placeholder="Contoh: superadmin@alhadiid.sch.id"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Password Input */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-300">
+                    Password Baru
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowDefaultPassInput(!showDefaultPassInput)}
+                    className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer font-medium"
+                  >
+                    {showDefaultPassInput ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{showDefaultPassInput ? 'Sembunyikan' : 'Perlihatkan'}</span>
+                  </button>
+                </div>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type={showDefaultPassInput ? 'text' : 'password'}
+                    value={formDefaultPassword}
+                    onChange={(e) => setFormDefaultPassword(e.target.value)}
+                    placeholder="Minimal 6 karakter"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Confirm Password Input */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Konfirmasi Password Baru
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type={showDefaultPassInput ? 'text' : 'password'}
+                    value={formDefaultConfirm}
+                    onChange={(e) => setFormDefaultConfirm(e.target.value)}
+                    placeholder="Ulangi password baru persis"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-blue-950/40 border border-blue-800/40 rounded-xl text-[11px] text-blue-300 leading-relaxed">
+                ℹ️ <strong>Sinkronisasi Otomatis:</strong> Kredensial baru ini akan disimpan ke Supabase (<code>public.users</code> dan <code>spmb_app_state</code>) dan langsung aktif untuk login.
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowDefaultModal(false)}
+                  className="px-4 py-2.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl cursor-pointer transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingDefault}
+                  className="px-5 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl flex items-center gap-2 shadow-lg shadow-blue-600/30 cursor-pointer transition-all disabled:opacity-50"
+                >
+                  {isSavingDefault ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Menyimpan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Simpan Kredensial</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
