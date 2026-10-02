@@ -2737,10 +2737,10 @@ GRANT ALL ON public.class_quotas TO anon, authenticated, service_role;
 -- Masukkan rombel kelas 7 resmi SMP Al-Hadiid jika belum ada
 INSERT INTO public.class_quotas (id, academic_year, level, class_name, capacity, filled, homeroom_teacher, created_at)
 VALUES 
-    ('q1', '2027/2028', 'Kelas 7', '7 A (Tahfizh Unggulan)', 32, 0, 'Ustadz Ahmad Fauzi, S.Pd.I.', NOW()),
-    ('q2', '2027/2028', 'Kelas 7', '7 B (Sains & Digital)', 32, 0, 'Ibu Nuraeni, S.Si.', NOW()),
-    ('q3', '2027/2028', 'Kelas 7', '7 C (Bilingual & International)', 32, 0, 'Ustadz Rizky Syahputra, M.Pd.', NOW()),
-    ('q4', '2027/2028', 'Kelas 7', '7 D (Reguler Rabbani)', 32, 0, 'Ibu Fitri Handayani, S.Pd.', NOW())
+    ('cls-7a', '2027/2028', 'Kelas 7', '7 A', 32, 0, '-', NOW()),
+    ('cls-7b', '2027/2028', 'Kelas 7', '7 B', 32, 0, '-', NOW()),
+    ('cls-7c', '2027/2028', 'Kelas 7', '7 C', 32, 0, '-', NOW()),
+    ('cls-7d', '2027/2028', 'Kelas 7', '7 D', 32, 0, '-', NOW())
 ON CONFLICT (id) DO UPDATE SET
     class_name = EXCLUDED.class_name,
     capacity = EXCLUDED.capacity,
@@ -2789,10 +2789,10 @@ GRANT ALL ON public.class_quotas TO anon, authenticated, service_role;
 -- Masukkan rombel kelas 7 resmi SMP Al-Hadiid jika belum ada
 INSERT INTO public.class_quotas (id, academic_year, level, class_name, capacity, filled, homeroom_teacher, created_at)
 VALUES 
-    ('q1', '2027/2028', 'Kelas 7', '7 A (Tahfizh Unggulan)', 32, 0, 'Ustadz Ahmad Fauzi, S.Pd.I.', NOW()),
-    ('q2', '2027/2028', 'Kelas 7', '7 B (Sains & Digital)', 32, 0, 'Ibu Nuraeni, S.Si.', NOW()),
-    ('q3', '2027/2028', 'Kelas 7', '7 C (Bilingual & International)', 32, 0, 'Ustadz Rizky Syahputra, M.Pd.', NOW()),
-    ('q4', '2027/2028', 'Kelas 7', '7 D (Reguler Rabbani)', 32, 0, 'Ibu Fitri Handayani, S.Pd.', NOW())
+    ('cls-7a', '2027/2028', 'Kelas 7', '7 A', 32, 0, '-', NOW()),
+    ('cls-7b', '2027/2028', 'Kelas 7', '7 B', 32, 0, '-', NOW()),
+    ('cls-7c', '2027/2028', 'Kelas 7', '7 C', 32, 0, '-', NOW()),
+    ('cls-7d', '2027/2028', 'Kelas 7', '7 D', 32, 0, '-', NOW())
 ON CONFLICT (id) DO UPDATE SET
     class_name = EXCLUDED.class_name,
     capacity = EXCLUDED.capacity,

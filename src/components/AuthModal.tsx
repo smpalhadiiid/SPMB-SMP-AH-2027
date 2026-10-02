@@ -649,27 +649,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {selectedRole === 'student' ? (
               /* Calon Murid Login - Username & Password */
               <>
-                {/* Quick Demo Fill Pill */}
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50/80 border border-blue-100 text-[11px] text-blue-900">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className="font-bold">💡 Akun Demo:</span>
-                    <span className="font-mono text-blue-700 font-semibold">{defaultsConfig.student.defaultUsername}</span>
-                    <span className="text-slate-400">|</span>
-                    <span className="text-slate-600">Pass: <code className="font-bold text-blue-700">{defaultsConfig.student.defaultPassword}</code></span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStudentUsername(defaultsConfig.student.defaultUsername);
-                      setStudentPassword(defaultsConfig.student.defaultPassword);
-                      setErrorMsg('');
-                    }}
-                    className="ml-2 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all"
-                  >
-                    Gunakan
-                  </button>
-                </div>
-
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
                     Username Calon Murid
@@ -686,7 +665,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     />
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Gunakan Username yang dibuat saat pendaftaran akun (contoh: <strong className="text-slate-600">afrah</strong>)
+                    Gunakan Username yang dibuat saat pendaftaran akun calon murid.
                   </p>
                 </div>
 

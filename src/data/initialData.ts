@@ -58,10 +58,14 @@ export const initialCostBreakdowns: CostBreakdown[] = [
 ];
 
 export const initialClassQuotas: ClassQuota[] = [
-  { id: 'q1', academicYear: '2027/2028', level: 'Kelas 7', className: '7 A (Tahfizh Unggulan)', capacity: 32, filled: 0, homeroomTeacher: 'Ustadz Ahmad Fauzi, S.Pd.I.' },
-  { id: 'q2', academicYear: '2027/2028', level: 'Kelas 7', className: '7 B (Sains & Digital)', capacity: 32, filled: 0, homeroomTeacher: 'Ibu Nuraeni, S.Si.' },
-  { id: 'q3', academicYear: '2027/2028', level: 'Kelas 7', className: '7 C (Bilingual & International)', capacity: 32, filled: 0, homeroomTeacher: 'Ustadz Rizky Syahputra, M.Pd.' },
-  { id: 'q4', academicYear: '2027/2028', level: 'Kelas 7', className: '7 D (Reguler Rabbani)', capacity: 32, filled: 0, homeroomTeacher: 'Ibu Fitri Handayani, S.Pd.' },
+  { id: 'cls-7a', academicYear: '2027/2028', level: 'Kelas 7', className: '7 A', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7b', academicYear: '2027/2028', level: 'Kelas 7', className: '7 B', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7c', academicYear: '2027/2028', level: 'Kelas 7', className: '7 C', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7d', academicYear: '2027/2028', level: 'Kelas 7', className: '7 D', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7e', academicYear: '2027/2028', level: 'Kelas 7', className: '7 E', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7f', academicYear: '2027/2028', level: 'Kelas 7', className: '7 F', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7g', academicYear: '2027/2028', level: 'Kelas 7', className: '7 G', capacity: 32, filled: 0, homeroomTeacher: '-' },
+  { id: 'cls-7h', academicYear: '2027/2028', level: 'Kelas 7', className: '7 H', capacity: 32, filled: 0, homeroomTeacher: '-' },
 ];
 
 export const initialTestSchedules: TestSchedule[] = [

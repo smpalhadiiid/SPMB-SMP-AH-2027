@@ -107,7 +107,13 @@ export function getStoredClassQuotas(): ClassQuota[] {
   }
   try {
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : initialClassQuotas;
+    const valid = Array.isArray(parsed) ? parsed : initialClassQuotas;
+    // Filter baris lama yang diminta dihapus
+    const cleaned = valid.filter((q: any) =>
+      !['q1', 'q2', 'q3', 'q4'].includes(q.id) &&
+      !['7 A (Tahfizh Unggulan)', '7 B (Sains & Digital)', '7 C (Bilingual & International)', '7 D (Reguler Rabbani)'].includes(q.className || q.class_name)
+    );
+    return cleaned.length > 0 ? cleaned : initialClassQuotas;
   } catch {
     return initialClassQuotas;
   }

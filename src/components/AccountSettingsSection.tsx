@@ -1217,8 +1217,8 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
                           <User className="w-5 h-5" />
                         </div>
                         <div>
-                          <div className="font-bold text-white text-base">Akun Demo Calon Murid</div>
-                          <div className="text-[11px] text-indigo-400/90 font-medium">Preset Percobaan Login Siswa</div>
+                          <div className="font-bold text-white text-base">Akun Calon Murid (Default)</div>
+                          <div className="text-[11px] text-indigo-400/90 font-medium">Preset Kredensial Login Siswa</div>
                         </div>
                       </div>
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-950 border border-indigo-500/50 text-indigo-300 uppercase">

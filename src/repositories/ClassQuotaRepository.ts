@@ -2,6 +2,21 @@ import { supabase, isSupabaseConfigured, saveSupabaseState, fetchSupabaseState }
 import { ClassQuota, StudentData } from '../types';
 import { initialClassQuotas } from '../data/initialData';
 
+const DEPRECATED_IDS = ['q1', 'q2', 'q3', 'q4'];
+const DEPRECATED_NAMES = [
+  '7 A (Tahfizh Unggulan)',
+  '7 B (Sains & Digital)',
+  '7 C (Bilingual & International)',
+  '7 D (Reguler Rabbani)',
+];
+
+function isLegacyDeprecatedQuota(q: { id?: string; className?: string; class_name?: string }): boolean {
+  if (q.id && DEPRECATED_IDS.includes(q.id)) return true;
+  const name = q.className || q.class_name;
+  if (name && DEPRECATED_NAMES.includes(name)) return true;
+  return false;
+}
+
 export function mapRowToClassQuota(row: any): ClassQuota {
   return {
     id: String(row.id),
@@ -45,7 +60,7 @@ export const ClassQuotaRepository = {
         .order('class_name', { ascending: true });
 
       if (!error && data && data.length > 0) {
-        const mapped = data.map(mapRowToClassQuota);
+        const mapped = data.map(mapRowToClassQuota).filter(q => !isLegacyDeprecatedQuota(q));
         return { data: mapped, error: null, source: 'table' };
       }
 
@@ -55,7 +70,8 @@ export const ClassQuotaRepository = {
         if (apiRes.ok) {
           const apiJson = await apiRes.json();
           if (apiJson.success && Array.isArray(apiJson.data) && apiJson.data.length > 0) {
-            return { data: apiJson.data, error: null, source: apiJson.source?.includes('table') ? 'table' : 'state' };
+            const cleaned = apiJson.data.filter((q: any) => !isLegacyDeprecatedQuota(q));
+            return { data: cleaned, error: null, source: apiJson.source?.includes('table') ? 'table' : 'state' };
           }
         }
       } catch {
@@ -65,17 +81,8 @@ export const ClassQuotaRepository = {
       // 3. Fallback baca langsung dari spmb_app_state key 'class_quotas'
       const legacyState = await fetchSupabaseState<ClassQuota[]>('class_quotas');
       if (legacyState && Array.isArray(legacyState) && legacyState.length > 0) {
-        // Coba migrasikan otomatis ke tabel public.class_quotas jika write diperbolehkan
-        try {
-          const rows = legacyState.map(mapClassQuotaToRow);
-          const { error: seedErr } = await supabase.from('class_quotas').upsert(rows, { onConflict: 'id' });
-          if (!seedErr) {
-            console.log('[ClassQuotaRepository] Berhasil migrasi kuota kelas dari spmb_app_state ke tabel class_quotas.');
-          }
-        } catch {
-          // ignore
-        }
-        return { data: legacyState, error: null, source: 'state' };
+        const cleaned = legacyState.filter(q => !isLegacyDeprecatedQuota(q));
+        return { data: cleaned, error: null, source: 'state' };
       }
 
       // 4. Fallback ke initialClassQuotas

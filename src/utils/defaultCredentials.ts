@@ -50,11 +50,11 @@ export const FACTORY_DEFAULT_CREDENTIALS: DefaultCredentialsConfig = {
   },
   student: {
     role: 'student',
-    roleLabel: 'Calon Murid (Demo / Default)',
+    roleLabel: 'Calon Murid (Default)',
     defaultUsername: 'siswa',
     defaultEmail: 'siswa@alhadiid.sch.id',
     defaultPassword: 'siswa123',
-    description: 'Akun demo percobaan alur pendaftaran murid baru.',
+    description: 'Akun pendaftaran calon murid baru.',
     userId: 'usr_student',
   },
 };
