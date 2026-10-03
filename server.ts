@@ -1,14 +1,18 @@
 import 'dotenv/config';
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 
 // =====================================================================
 // KONFIGURASI EXPRESS & PORT
 // =====================================================================
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -706,19 +710,48 @@ app.post(
 // API ROUTES: KUOTA KELAS (TABEL RELASIONAL public.class_quotas)
 // =====================================================================
 
+const DEPRECATED_CLASS_NAMES = [
+  '7 A (Tahfizh Unggulan)',
+  '7 B (Sains & Digital)',
+  '7 C (Bilingual & International)',
+  '7 D (Reguler Rabbani)',
+];
+const DEPRECATED_CLASS_IDS = ['q1', 'q2', 'q3', 'q4'];
+
 // GET /api/class-quotas: Ambil daftar kuota kelas dari tabel relasional
 app.get('/api/class-quotas', async (_req: Request, res: Response) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
 
   try {
+    // Jalankan pembersihan baris lama dari database Supabase (class_quotas & class_quotass)
+    try {
+      sb.from('class_quotas')
+        .delete()
+        .or(`class_name.in.("${DEPRECATED_CLASS_NAMES.join('","')}"),id.in.("${DEPRECATED_CLASS_IDS.join('","')}")`)
+        .then(() => {})
+        .catch(() => {});
+
+      sb.from('class_quotass' as any)
+        .delete()
+        .or(`class_name.in.("${DEPRECATED_CLASS_NAMES.join('","')}"),id.in.("${DEPRECATED_CLASS_IDS.join('","')}")`)
+        .then(() => {})
+        .catch(() => {});
+    } catch {}
+
     const { data, error } = await sb
       .from('class_quotas')
       .select('*')
       .order('class_name', { ascending: true });
 
     if (!error && data && data.length > 0) {
-      const mapped = data.map((r: any) => ({
+      const filtered = data.filter((r: any) => {
+        if (DEPRECATED_CLASS_IDS.includes(String(r.id))) return false;
+        if (DEPRECATED_CLASS_NAMES.includes(r.class_name)) return false;
+        return true;
+      });
+
+      const mapped = filtered.map((r: any) => ({
         id: String(r.id),
         academicYear: r.academic_year || '2027/2028',
         level: r.level || 'Kelas 7',
@@ -727,14 +760,23 @@ app.get('/api/class-quotas', async (_req: Request, res: Response) => {
         filled: Number(r.filled || 0),
         homeroomTeacher: r.homeroom_teacher || '',
       }));
-      return res.json({ success: true, data: mapped, source: 'table:public.class_quotas', count: data.length });
+      return res.json({ success: true, data: mapped, source: 'table:public.class_quotas', count: mapped.length });
     }
 
     // Fallback: jika tabel belum di-seed, coba ambil dari spmb_app_state
     const { data: stateData } = await sb.from('spmb_app_state').select('payload').eq('key', 'class_quotas').maybeSingle();
-    const fallbackQuotas = stateData?.payload || [];
+    const rawFallback = stateData?.payload || [];
+    const fallbackQuotas = Array.isArray(rawFallback)
+      ? rawFallback.filter((q: any) => {
+          const name = q.className || q.class_name;
+          const id = q.id;
+          if (DEPRECATED_CLASS_IDS.includes(id)) return false;
+          if (DEPRECATED_CLASS_NAMES.includes(name)) return false;
+          return true;
+        })
+      : [];
 
-    return res.json({ success: true, data: fallbackQuotas, source: 'state:spmb_app_state', count: Array.isArray(fallbackQuotas) ? fallbackQuotas.length : 0 });
+    return res.json({ success: true, data: fallbackQuotas, source: 'state:spmb_app_state', count: fallbackQuotas.length });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Gagal mengambil data kuota kelas.' });
   }
@@ -1329,8 +1371,10 @@ app.post(
             }, { onConflict: 'id' });
           }
 
+          const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const safeFormPayId = (fp.id && UUID_REGEX.test(fp.id)) ? fp.id : randomUUID();
           const payRow = {
-            id: fp.id || `pay_form_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            id: safeFormPayId,
             student_id: fp.studentId,
             registration_number: fp.registrationNumber || 'SPMB-FORM',
             student_name: fp.studentName || 'Calon Siswa',
@@ -1394,8 +1438,9 @@ app.post(
             }, { onConflict: 'id' });
           }
 
+          const safeBamPayId = (bp.id && UUID_REGEX.test(bp.id)) ? bp.id : randomUUID();
           const payRow = {
-            id: bp.id || `pay_bam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            id: safeBamPayId,
             student_id: bp.studentId,
             registration_number: bp.registrationNumber || 'SPMB-BAM',
             student_name: bp.studentName || 'Calon Siswa',
@@ -1591,16 +1636,18 @@ async function ensureDefaultSystemAccounts() {
 }
 
 async function startServer() {
-  await ensureDefaultSystemAccounts();
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const isCloudRun = !!process.env.K_SERVICE || !!process.env.K_REVISION || !!process.env.CLOUD_RUN_JOB;
+  const isProduction = process.env.NODE_ENV === 'production' || isCloudRun || (hasDist && process.env.NODE_ENV !== 'development');
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1608,7 +1655,12 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SPMB Server] Server API aman aktif di http://0.0.0.0:${PORT}`);
+    console.log(`[SPMB Server] Server API aktif di http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
+  });
+
+  // Jalankan inisialisasi akun secara background agar tidak menghambat Cloud Run health check startup
+  ensureDefaultSystemAccounts().catch((err: any) => {
+    console.warn('[SPMB Server] Background account init note:', err?.message || err);
   });
 }
 

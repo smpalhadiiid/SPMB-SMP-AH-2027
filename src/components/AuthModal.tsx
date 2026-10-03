@@ -82,18 +82,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         html: `
           <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
             <p style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">
-              Username atau Password Anda salah.
+              Username atau Password Calon Murid tidak sesuai.
             </p>
             <p style="margin-bottom: 8px;">
-              Silakan periksa kembali Username dan Password Anda.
+              Silakan periksa kembali kombinasi Username dan Password yang Anda masukkan saat pendaftaran akun.
             </p>
-            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 12px;">
-              <strong>💡 Contoh Akun Uji Coba Calon Murid:</strong><br/>
-              Username: <code style="color: #2563eb; font-weight: bold;">afrah</code><br/>
-              Password: <code style="color: #2563eb; font-weight: bold;">siswa123</code>
-            </div>
-            <p>
-              Apabila belum memiliki akun Calon Murid, silakan klik tombol <strong>"Buat Akun Baru"</strong>.
+            <p style="color: #64748b; font-size: 12px;">
+              Apabila belum memiliki akun Calon Murid, silakan klik tombol <strong>"Buat Akun Baru"</strong> di bawah ini.
             </p>
           </div>
         `,
@@ -125,49 +120,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         : defaultsConfig.kepsek;
 
       const roleLabel = activeRoleConfig.roleLabel;
-      const defaultUser = activeRoleConfig.defaultUsername;
-      const defaultEmail = activeRoleConfig.defaultEmail;
-      const defaultPass = activeRoleConfig.defaultPassword;
 
       Swal.fire({
         title: 'Login Gagal',
         html: `
           <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
             <p style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">
-              Email/Username atau Password ${roleLabel} salah.
+              Email/Username atau Password ${roleLabel} tidak sesuai.
             </p>
             <p style="margin-bottom: 8px;">
-              Silakan periksa kembali kredensial akun Pengelola Anda:
+              Pastikan Anda memasukkan email atau username terdaftar beserta password yang benar.
             </p>
-            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 12px;">
-              <strong>🛡️ Kredensial Resmi Akun ${roleLabel}:</strong><br/>
-              Username: <code style="color: #2563eb; font-weight: bold;">${defaultUser}</code> (atau <code>${defaultEmail}</code>)<br/>
-              Password: <code style="color: #2563eb; font-weight: bold;">${defaultPass}</code>
-            </div>
             <p style="color: #64748b; font-size: 11px;">
-              * Kredensial default ini dapat diubah sewaktu-waktu oleh Super Admin melalui Pengaturan Akun Pengguna.
+              * Apabila lupa password atau membutuhkan pembaruan kredensial, silakan hubungi Super Admin SPMB SMPS Al-Hadiid.
             </p>
           </div>
         `,
         icon: 'error',
-        showCancelButton: true,
+        showCancelButton: false,
         confirmButtonText: '✔ Coba Lagi',
-        cancelButtonText: '⚡ Isi Kredensial',
         confirmButtonColor: '#2563eb',
-        cancelButtonColor: '#f59e0b',
         buttonsStyling: true,
         customClass: {
           popup: 'rounded-2xl p-6 shadow-2xl border border-slate-200 font-sans',
           title: 'text-xl font-extrabold text-slate-900',
           confirmButton: 'px-5 py-2.5 rounded-xl text-xs font-bold shadow-md',
-          cancelButton: 'px-5 py-2.5 rounded-xl text-xs font-bold shadow-md',
         },
-      }).then((result) => {
-        if (result.isDismissed && result.dismiss === Swal.DismissReason.cancel) {
-          setEmail(defaultUser);
-          setAdminPassword(defaultPass);
-          setErrorMsg('');
-        }
       });
     }
   };
@@ -717,49 +695,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             ) : (
               /* Admin & Kepsek Login - Email & Password */
               <>
-                {/* Quick Credential Helper Pill */}
-                {(() => {
-                  const activeRoleConfig = selectedRole === 'super_admin'
-                    ? defaultsConfig.super_admin
-                    : selectedRole === 'admin'
-                    ? defaultsConfig.admin
-                    : defaultsConfig.kepsek;
-
-                  return (
-                    <div className={`flex items-center justify-between p-2.5 rounded-xl border text-[11px] ${
-                      selectedRole === 'super_admin'
-                        ? 'bg-amber-50/80 border-amber-200 text-amber-900'
-                        : 'bg-blue-50/80 border-blue-100 text-blue-900'
-                    }`}>
-                      <div className="flex items-center gap-1.5 truncate">
-                        <span className="font-bold">
-                          {selectedRole === 'super_admin' ? '🔑 Akun Default:' : selectedRole === 'admin' ? '🛡️ Akun Panitia:' : '🎓 Akun Kepsek:'}
-                        </span>
-                        <span className="font-mono font-semibold">
-                          {activeRoleConfig.defaultUsername}
-                        </span>
-                        <span className="text-slate-400">|</span>
-                        <span className="text-slate-600">Pass: <code className="font-bold">{activeRoleConfig.defaultPassword}</code></span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEmail(activeRoleConfig.defaultUsername);
-                          setAdminPassword(activeRoleConfig.defaultPassword);
-                          setErrorMsg('');
-                        }}
-                        className={`ml-2 px-2.5 py-1 rounded-lg text-white font-bold text-[10px] shrink-0 cursor-pointer shadow-xs transition-all ${
-                          selectedRole === 'super_admin'
-                            ? 'bg-amber-600 hover:bg-amber-700'
-                            : 'bg-blue-600 hover:bg-blue-700'
-                        }`}
-                      >
-                        Gunakan
-                      </button>
-                    </div>
-                  );
-                })()}
-
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
                     Email / Username Pengelola ({selectedRole === 'super_admin' ? 'Super Admin' : selectedRole === 'admin' ? 'Panitia Admin' : 'Kepala Sekolah'})

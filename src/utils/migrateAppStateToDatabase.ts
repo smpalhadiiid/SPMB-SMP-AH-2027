@@ -11,6 +11,7 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { StudentData, UserAccount, FormPaymentRecord, BamPaymentRecord, ExamQuestion } from '../types';
 import { mapStudentToRow } from '../repositories/StudentRepository';
+import { generateUUID, isValidUUID } from './uuid';
 
 export interface LegacyAppStateStatus {
   hasLegacyData: boolean;
@@ -270,8 +271,9 @@ export async function migrateAllAppStateToRelationalDatabase(): Promise<Migratio
           }, { onConflict: 'id' });
         }
 
+        const safeFormPayId = (fp.id && isValidUUID(fp.id)) ? fp.id : generateUUID();
         const paymentRow = {
-          id: fp.id || `pay_form_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: safeFormPayId,
           student_id: fp.studentId,
           registration_number: fp.registrationNumber || 'SPMB-FORM',
           student_name: fp.studentName || 'Calon Siswa',
@@ -348,8 +350,9 @@ export async function migrateAllAppStateToRelationalDatabase(): Promise<Migratio
           }, { onConflict: 'id' });
         }
 
+        const safeBamPayId = (bp.id && isValidUUID(bp.id)) ? bp.id : generateUUID();
         const paymentRow = {
-          id: bp.id || `pay_bam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: safeBamPayId,
           student_id: bp.studentId,
           registration_number: bp.registrationNumber || 'SPMB-BAM',
           student_name: bp.studentName || 'Calon Siswa',

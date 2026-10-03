@@ -85,7 +85,7 @@ export const FilledClassesSection: React.FC<FilledClassesSectionProps> = ({
   // Export Roster Excel
   const handleExportRoster = () => {
     const exportData = assignedStudents.map((s, idx) => ({
-      No: idx + 1,
+      'No. Urut': idx + 1,
       'No Registrasi': s.registrationNumber,
       'Nama Lengkap': s.fullName,
       'Jenis Kelamin': s.gender,
@@ -316,7 +316,7 @@ export const FilledClassesSection: React.FC<FilledClassesSectionProps> = ({
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200 uppercase text-[10px]">
-                        <th className="p-3">No</th>
+                        <th className="p-3 text-center w-14">No. Urut</th>
                         <th className="p-3">No. Reg SPMB</th>
                         <th className="p-3">Nama Lengkap Siswa</th>
                         <th className="p-3">L / P</th>
@@ -336,7 +336,7 @@ export const FilledClassesSection: React.FC<FilledClassesSectionProps> = ({
                       ) : (
                         classStudents.map((s, idx) => (
                           <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
+                            <td className="p-3 text-center font-mono font-bold text-slate-600">{idx + 1}</td>
                             <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
                             <td className="p-3 font-bold text-slate-900">{s.fullName}</td>
                             <td className="p-3">
@@ -404,7 +404,7 @@ export const FilledClassesSection: React.FC<FilledClassesSectionProps> = ({
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-amber-100/60 text-slate-800 font-bold border-b border-amber-200 uppercase text-[10px]">
-                    <th className="p-3">No</th>
+                    <th className="p-3 text-center w-14">No. Urut</th>
                     <th className="p-3">No. Reg SPMB</th>
                     <th className="p-3">Nama Lengkap Siswa</th>
                     <th className="p-3">Gender</th>
@@ -423,7 +423,7 @@ export const FilledClassesSection: React.FC<FilledClassesSectionProps> = ({
                   ) : (
                     unassignedStudents.map((s, idx) => (
                       <tr key={s.id} className="hover:bg-amber-50/50 transition-colors">
-                        <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
+                        <td className="p-3 text-center font-mono font-bold text-slate-600">{idx + 1}</td>
                         <td className="p-3 font-mono font-bold text-amber-900">{s.registrationNumber}</td>
                         <td className="p-3 font-bold text-slate-900">{s.fullName}</td>
                         <td className="p-3">{s.gender}</td>

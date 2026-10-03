@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { getDefaultCredentials } from './defaultCredentials';
 import { fetchStudentCredentialsFromSupabase, saveStudentAccountCredentials } from './studentCredentials';
+import { generateUUID, isValidUUID } from './uuid';
 
 /**
  * Sanitasi URL Supabase untuk membersihkan trailing path (/rest/v1) atau teks ekstra
@@ -570,7 +571,7 @@ export async function syncFormPaymentsToSupabase(records: FormPaymentRecord[]): 
 
   try {
     const paymentRows = records.map(r => ({
-      id: r.id || `pay_form_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: (r.id && isValidUUID(r.id)) ? r.id : generateUUID(),
       student_id: r.studentId,
       registration_number: r.registrationNumber,
       student_name: r.studentName,
@@ -645,7 +646,7 @@ export async function syncBamPaymentsToSupabase(records: BamPaymentRecord[]): Pr
 
   try {
     const paymentRows = records.map(r => ({
-      id: r.id || `pay_bam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: (r.id && isValidUUID(r.id)) ? r.id : generateUUID(),
       student_id: r.studentId,
       registration_number: r.registrationNumber,
       student_name: r.studentName,

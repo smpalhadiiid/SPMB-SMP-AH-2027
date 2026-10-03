@@ -42,7 +42,8 @@ export const KepsekDashboard: React.FC<KepsekDashboardProps> = ({
   const totalFilled = classQuotas.reduce((acc, curr) => acc + curr.filled, 0);
 
   const handleExportKepsekPDF = () => {
-    const reportData = students.map(s => ({
+    const reportData = students.map((s, idx) => ({
+      No_Urut: idx + 1,
       No_Pendaftaran: s.registrationNumber,
       Nama_Siswa: s.fullName,
       Sekolah_Asal: s.previousSchoolName,
@@ -55,13 +56,14 @@ export const KepsekDashboard: React.FC<KepsekDashboardProps> = ({
     generateReportPDF(
       `Laporan_Eksekutif_Kepala_Sekolah_TP_${schoolInfo.academicYear.replace('/', '_')}`,
       reportData,
-      ['No_Pendaftaran', 'Nama_Siswa', 'Sekolah_Asal', 'Nilai_Akhir', 'Status_Kelulusan', 'Daftar_Ulang', 'Kelas'],
+      ['No_Urut', 'No_Pendaftaran', 'Nama_Siswa', 'Sekolah_Asal', 'Nilai_Akhir', 'Status_Kelulusan', 'Daftar_Ulang', 'Kelas'],
       schoolInfo
     );
   };
 
   const handleExportKepsekExcel = () => {
-    const reportData = students.map(s => ({
+    const reportData = students.map((s, idx) => ({
+      No_Urut: idx + 1,
       No_Pendaftaran: s.registrationNumber,
       Nama_Lengkap: s.fullName,
       Sekolah_Asal: s.previousSchoolName,

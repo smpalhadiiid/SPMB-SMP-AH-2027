@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion, BamPaymentRecord, BamInstallmentType } from '../types';
 import { exportToExcel } from '../utils/excelExporter';
 import { generateReportPDF, generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
+import { downloadBrochureFile } from '../utils/brochureGenerator';
 import { getStudentCredentials, fetchStudentCredentialsFromSupabase } from '../utils/studentCredentials';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import {
@@ -1286,7 +1287,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Export handlers
   const handleExportApplicantsExcel = () => {
-    const data = students.map(s => ({
+    const data = students.map((s, idx) => ({
+      No_Urut: idx + 1,
       No_Pendaftaran: s.registrationNumber,
       Nama_Lengkap: s.fullName,
       NIK: s.nik,
@@ -1680,6 +1682,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-100 border-b text-slate-600 font-bold">
+                      <th className="p-3 text-center w-14">No. Urut</th>
                       <th className="p-3">No. Pendaftaran</th>
                       <th className="p-3">Nama Lengkap</th>
                       <th className="p-3">Sekolah Asal</th>
@@ -1689,10 +1692,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {students.slice(0, 5).map(s => {
+                    {students.slice(0, 5).map((s, idx) => {
                       const isEligible = canDownloadStudentForm(s);
                       return (
                         <tr key={s.id} className="hover:bg-slate-50">
+                          <td className="p-3 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
                           <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
                           <td className="p-3 font-semibold">{s.fullName}</td>
                           <td className="p-3 text-slate-600">{s.previousSchoolName || '-'}</td>
@@ -1796,6 +1800,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-100 border-b text-slate-700 font-bold">
+                    <th className="p-3 text-center w-14">No. Urut</th>
                     <th className="p-3">No. Reg</th>
                     <th className="p-3">Nama Siswa</th>
                     <th className="p-3">JK</th>
@@ -1808,8 +1813,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y text-slate-700">
-                  {filteredStudents.map((s) => (
+                  {filteredStudents.map((s, idx) => (
                     <tr key={s.id} className="hover:bg-slate-50">
+                      <td className="p-3 text-center font-mono font-bold text-slate-600">{idx + 1}</td>
                       <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
                       <td className="p-3 font-semibold">{s.fullName}</td>
                       <td className="p-3">{s.gender === 'Laki-laki' ? 'L' : 'P'}</td>
@@ -1960,6 +1966,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-100 border-b font-bold text-slate-700">
+                    <th className="p-3 text-center w-14">No. Urut</th>
                     <th className="p-3">No. Reg</th>
                     <th className="p-3">Nama Siswa</th>
                     <th className="p-3">Diagnostik (30%)</th>
@@ -1970,8 +1977,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {students.map(s => (
+                  {students.map((s, idx) => (
                     <tr key={s.id} className="hover:bg-slate-50">
+                      <td className="p-3 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
                       <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
                       <td className="p-3 font-semibold">{s.fullName}</td>
                       <td className="p-3">{s.diagnosticScore ?? '-'}</td>
@@ -2139,6 +2147,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-100 border-b font-bold text-slate-700">
+                      <th className="p-3 text-center w-14">No. Urut</th>
                       <th className="p-3">No. Reg</th>
                       <th className="p-3">Nama Siswa</th>
                       <th className="p-3">Kontak Orang Tua (WhatsApp)</th>
@@ -2152,18 +2161,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <tbody className="divide-y text-slate-700">
                     {filteredAnnouncementStudents.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="p-8 text-center text-slate-400">
+                        <td colSpan={9} className="p-8 text-center text-slate-400">
                           Tidak ada calon murid yang sesuai dengan filter pencarian.
                         </td>
                       </tr>
                     ) : (
-                      filteredAnnouncementStudents.map(s => {
+                      filteredAnnouncementStudents.map((s, idx) => {
                         const primaryContact = getPrimaryParentContact(s);
                         const sentRecord = waSentHistory[s.id];
                         const cleanPhone = cleanWhatsAppNumber(primaryContact.phone);
 
                         return (
                           <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
                             {/* Reg Number */}
                             <td className="p-3 font-mono font-bold text-emerald-800 whitespace-nowrap">
                               {s.registrationNumber}
@@ -2826,6 +2836,7 @@ NOTIFY pgrst, 'reload schema';`;
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-100 border-b font-bold text-slate-700">
+                    <th className="p-3 text-center w-14">No. Urut</th>
                     <th className="p-3">No. Reg</th>
                     <th className="p-3">Nama Siswa</th>
                     <th className="p-3">Daftar Ulang</th>
@@ -2834,8 +2845,9 @@ NOTIFY pgrst, 'reload schema';`;
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {students.map(s => (
+                  {students.map((s, idx) => (
                     <tr key={s.id} className="hover:bg-slate-50">
+                      <td className="p-3 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
                       <td className="p-3 font-mono font-bold text-emerald-800">{s.registrationNumber}</td>
                       <td className="p-3 font-semibold">{s.fullName}</td>
                       <td className="p-3 font-bold uppercase">{s.initialPaymentStatus}</td>
@@ -3873,7 +3885,7 @@ Kunci: B`}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
-                    {schoolForm.brochureUrl && (
+                    {schoolForm.brochureUrl ? (
                       <a
                         href={schoolForm.brochureUrl}
                         target="_blank"
@@ -3883,6 +3895,15 @@ Kunci: B`}
                         <Download className="w-3.5 h-3.5" />
                         <span>Unduh / Lihat Brosur</span>
                       </a>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => downloadBrochureFile(schoolForm as any, costBreakdowns, testSchedules)}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh Brosur Standar (PDF)</span>
+                      </button>
                     )}
 
                     {schoolForm.brochureUrl && (

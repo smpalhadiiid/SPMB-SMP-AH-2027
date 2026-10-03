@@ -688,7 +688,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
           <table className="w-full text-left text-xs border-collapse min-w-[750px]">
             <thead>
               <tr className="bg-slate-100 border-b font-bold text-slate-700 whitespace-nowrap">
-                <th className="p-3">No</th>
+                <th className="p-3 text-center w-14">No. Urut</th>
                 <th className="p-3">No. Transaksi</th>
                 <th className="p-3">No. Reg</th>
                 <th className="p-3">Tgl Pembayaran</th>
@@ -719,7 +719,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
 
                   return (
                     <tr key={r.id} className="hover:bg-slate-50 font-medium whitespace-nowrap">
-                      <td className="p-3 text-slate-500 font-mono">{idx + 1}</td>
+                      <td className="p-3 text-center font-mono font-bold text-slate-600">{idx + 1}</td>
                       <td className="p-3 font-mono font-bold text-blue-700">{r.transactionNumber}</td>
                       <td className="p-3 font-mono text-slate-600">{r.registrationNumber}</td>
                       <td className="p-3 text-slate-600">{r.paymentDate}</td>

@@ -336,7 +336,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
 
     if (activeMainTab === 'form') {
       const excelData = filteredFormRows.map((r, idx) => ({
-        'No': idx + 1,
+        'No. Urut': idx + 1,
         'No Pendaftaran': r.registrationNumber,
         'Nama Calon Murid': r.studentName,
         'Jenis Kelamin': r.gender,
@@ -359,7 +359,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
     } else {
       // Laporan BAM
       const excelData = filteredBamRows.map((r, idx) => ({
-        'No': idx + 1,
+        'No. Urut': idx + 1,
         'No Pendaftaran': r.registrationNumber,
         'Nama Calon Murid': r.studentName,
         'Gender': r.gender,
@@ -391,7 +391,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
 
     if (activeMainTab === 'form') {
       const pdfData = filteredFormRows.map((r, idx) => ({
-        'No': idx + 1,
+        'No. Urut': idx + 1,
         'No_Pendaftaran': r.registrationNumber,
         'Nama': r.studentName,
         'Gender': r.gender,
@@ -403,13 +403,13 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
       generateReportPDF(
         `Laporan_Pembayaran_Formulir_${cleanYear}`,
         pdfData,
-        ['No', 'No_Pendaftaran', 'Nama', 'Gender', 'Tanggal', 'Nominal', 'Status'],
+        ['No. Urut', 'No_Pendaftaran', 'Nama', 'Gender', 'Tanggal', 'Nominal', 'Status'],
         schoolInfo
       );
     } else {
       // BAM
       const pdfData = filteredBamRows.map((r, idx) => ({
-        'No': idx + 1,
+        'No. Urut': idx + 1,
         'No_Pendaftaran': r.registrationNumber,
         'Nama': r.studentName,
         'Gender': r.gender,
@@ -422,7 +422,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
       generateReportPDF(
         `Laporan_Pembayaran_BAM_${cleanYear}`,
         pdfData,
-        ['No', 'No_Pendaftaran', 'Nama', 'Gender', 'Total_BAM', 'Total_Dibayar', 'Tunggakan', 'Status'],
+        ['No. Urut', 'No_Pendaftaran', 'Nama', 'Gender', 'Total_BAM', 'Total_Dibayar', 'Tunggakan', 'Status'],
         schoolInfo
       );
     }
@@ -630,7 +630,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
               <table className="w-full text-left text-xs border-collapse min-w-[750px]">
                 <thead>
                   <tr className="bg-slate-100 border-b font-bold text-slate-700 whitespace-nowrap">
-                    <th className="p-3 w-12 text-center">No</th>
+                    <th className="p-3 w-14 text-center">No. Urut</th>
                     <th className="p-3">No. Pendaftaran</th>
                     <th className="p-3">Nama Calon Murid</th>
                     <th className="p-3">Jenis Kelamin</th>
@@ -650,7 +650,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
                   ) : (
                     filteredFormRows.map((r, i) => (
                       <tr key={r.id} className="hover:bg-slate-50 font-medium whitespace-nowrap">
-                        <td className="p-3 text-center text-slate-400 font-mono">{i + 1}</td>
+                        <td className="p-3 text-center text-slate-600 font-mono font-bold">{i + 1}</td>
                         <td className="p-3 font-mono font-bold text-slate-700">{r.registrationNumber}</td>
                         <td className="p-3 font-extrabold text-slate-900">{r.studentName}</td>
                         <td className="p-3 font-semibold">
@@ -853,7 +853,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
               <table className="w-full text-left text-xs border-collapse min-w-[950px]">
                 <thead>
                   <tr className="bg-slate-100 border-b font-bold text-slate-700 whitespace-nowrap">
-                    <th className="p-3 w-12 text-center">No</th>
+                    <th className="p-3 w-14 text-center">No. Urut</th>
                     <th className="p-3">No. Pendaftaran</th>
                     <th className="p-3">Nama</th>
                     <th className="p-3">Gender</th>
@@ -875,7 +875,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
                   ) : (
                     filteredBamRows.map((r, i) => (
                       <tr key={r.id} className="hover:bg-slate-50 font-medium whitespace-nowrap">
-                        <td className="p-3 text-center text-slate-400 font-mono">{i + 1}</td>
+                        <td className="p-3 text-center text-slate-600 font-mono font-bold">{i + 1}</td>
                         <td className="p-3 font-mono font-bold text-slate-700">{r.registrationNumber}</td>
                         <td className="p-3 font-extrabold text-slate-900">{r.studentName}</td>
                         <td className="p-3 font-semibold">

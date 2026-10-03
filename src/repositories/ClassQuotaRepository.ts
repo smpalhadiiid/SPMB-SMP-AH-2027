@@ -53,6 +53,21 @@ export const ClassQuotaRepository = {
     }
 
     try {
+      // 0. Hapus baris lama secara langsung dari database Supabase jika masih tersimpan
+      void (async () => {
+        try {
+          await supabase
+            .from('class_quotas')
+            .delete()
+            .or(`class_name.in.("${DEPRECATED_NAMES.join('","')}"),id.in.("${DEPRECATED_IDS.join('","')}")`);
+
+          await supabase
+            .from('class_quotass' as any)
+            .delete()
+            .or(`class_name.in.("${DEPRECATED_NAMES.join('","')}"),id.in.("${DEPRECATED_IDS.join('","')}")`);
+        } catch {}
+      })();
+
       // 1. Ambil langsung dari tabel relasional public.class_quotas di Supabase
       const { data, error } = await supabase
         .from('class_quotas')

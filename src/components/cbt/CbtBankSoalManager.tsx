@@ -605,7 +605,7 @@ export const CbtBankSoalManager: React.FC = () => {
                     className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                 </th>
-                <th className="p-3 w-12 text-center">No</th>
+                <th className="p-3 w-14 text-center">No. Urut</th>
                 <th className="p-3">Kategori</th>
                 <th className="p-3 min-w-[260px]">Pertanyaan Soal</th>
                 <th className="p-3 min-w-[180px]">Pilihan Jawaban & Kunci</th>

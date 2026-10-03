@@ -1479,3 +1479,6 @@ export function generateSuratTunggakanBamPDF(
   const safeName = (student.fullName || 'Calon_Murid').replace(/\s+/g, '_');
   doc.save(`Surat_Tunggakan_BAM_${regNo}_${safeName}.pdf`);
 }
+
+// Ekspor Generator Brosur SPMB & Pengunduh Berkas
+export { generateBrosurSpmbPDF, downloadBrochureFile } from './brochureGenerator';

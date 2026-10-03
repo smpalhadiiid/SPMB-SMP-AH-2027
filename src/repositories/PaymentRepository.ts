@@ -5,6 +5,7 @@
 
 import { supabase } from '../utils/supabaseClient';
 import { getOrAssignReceiptNumber } from '../utils/receiptNumber';
+import { generateUUID, isValidUUID } from '../utils/uuid';
 
 export interface PaymentItem {
   id: string;
@@ -181,9 +182,15 @@ export const PaymentRepository = {
         created_at: new Date().toISOString(),
       };
 
-      if (payment.id) {
+      // Pastikan id selalu berformat UUID yang valid untuk PostgreSQL/Supabase public.payments
+      if (payment.id && isValidUUID(payment.id)) {
         row.id = payment.id;
+      } else {
+        // Jika tidak berformat UUID (misal pay_form_...), gunakan UUID v4 standar
+        // agar tidak memicu error PostgreSQL 22P02: invalid input syntax for type uuid
+        row.id = generateUUID();
       }
+
       if (payment.status === 'verified') {
         row.verified_at = payment.verifiedAt || new Date().toISOString();
         row.verified_by = payment.verifiedBy || 'Admin Panitia';
@@ -204,8 +211,26 @@ export const PaymentRepository = {
       const { data, error } = await supabase.from('payments').insert(extendedRow).select().single();
       
       if (error) {
-        // Jika kolom metadata belum ada di schema cache, coba insert dengan kolom dasar row
-        if (error.message.includes('column') || error.message.includes('schema cache')) {
+        // 1. Jika error terkait UUID atau ID spesifik, coba insert tanpa kolom id (biarkan DEFAULT gen_random_uuid())
+        if (error.message.includes('uuid') || error.message.includes('22P02')) {
+          const noIdRow = { ...extendedRow };
+          delete noIdRow.id;
+          const { data: noIdData, error: noIdErr } = await supabase.from('payments').insert(noIdRow).select().single();
+          if (!noIdErr) {
+            insertedData = noIdData;
+          } else {
+            // Coba lagi tanpa kolom metadata tambahan jika schema cache berbeda
+            const baseNoIdRow = { ...row };
+            delete baseNoIdRow.id;
+            const { data: baseData, error: baseErr } = await supabase.from('payments').insert(baseNoIdRow).select().single();
+            if (baseErr) {
+              return { data: null, error: new Error(baseErr.message) };
+            }
+            insertedData = baseData;
+          }
+        }
+        // 2. Jika kolom metadata belum ada di schema cache, coba insert dengan kolom dasar row
+        else if (error.message.includes('column') || error.message.includes('schema cache')) {
           const { data: retryData, error: retryErr } = await supabase.from('payments').insert(row).select().single();
           if (retryErr) {
             return { data: null, error: new Error(retryErr.message) };

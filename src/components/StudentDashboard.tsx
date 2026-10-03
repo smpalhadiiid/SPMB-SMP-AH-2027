@@ -21,6 +21,7 @@ import {
 import { safeConfetti } from '../utils/confettiHelper';
 import { getStudentCredentials, fetchStudentCredentialsFromSupabase } from '../utils/studentCredentials';
 import { getStoredQuestionBank, getStoredTestSchedules, getStoredFormPayments, saveFormPayments, getStoredBamPayments, saveBamPayments } from '../utils/storage';
+import { generateUUID } from '../utils/uuid';
 import {
   CheckCircle2, Clock, AlertCircle, Download, Upload, CreditCard,
   FileText, GraduationCap, Award, Calendar, MapPin, User, Phone,
@@ -695,7 +696,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setFormUploadSuccessMsg('');
 
     const regNo = studentData.registrationNumber || `SPMB202700${Math.floor(1000 + Math.random() * 9000)}`;
-    const paymentId = `pay_form_${studentData.id}_${Date.now()}`;
+    const paymentId = generateUUID();
 
     let storagePath = formPaymentProof;
     let fileName = formProofMeta.fileName || 'bukti_transfer_formulir.jpg';
@@ -768,7 +769,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       const existingFormPayments = getStoredFormPayments();
       const updatedFormPayments = [
         {
-          id: paymentId,
+          id: createdPayment?.id || paymentId,
           transactionNumber: `TRX-FORM-${regNo.slice(-6)}`,
           paymentDate: new Date().toISOString().split('T')[0],
           studentId: studentData.id,
@@ -883,7 +884,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const category = getStudentCategory(studentData);
     const totalCost = getTotalBamCost(category);
     const amountToSave = Number(initialPaymentAmountInput) || totalCost;
-    const paymentId = `pay_bam_${studentData.id}_${Date.now()}`;
+    const paymentId = generateUUID();
 
     let storagePath = initialPaymentProof;
     let fileName = bamProofMeta.fileName || 'bukti_transfer_bam.jpg';
@@ -907,7 +908,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
 
     // 2. Simpan referensi dan metadata ke database Supabase public.payments
-    const { error: dbErr } = await PaymentRepository.create({
+    const { data: createdPayment, error: dbErr } = await PaymentRepository.create({
       id: paymentId,
       studentId: studentData.id,
       studentName: studentData.fullName,
@@ -953,7 +954,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       const existingBamPayments = getStoredBamPayments();
       const updatedBamPayments = [
         {
-          id: paymentId,
+          id: createdPayment?.id || paymentId,
           transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
           paymentDate: initialPaymentDateInput || new Date().toISOString().split('T')[0],
           studentId: studentData.id,

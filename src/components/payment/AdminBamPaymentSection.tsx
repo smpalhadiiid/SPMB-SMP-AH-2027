@@ -897,7 +897,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     const todayStr = new Date().toLocaleDateString('id-ID');
 
     const data = filteredStudentSummaries.map((s, idx) => ({
-      'No': idx + 1,
+      'No. Urut': idx + 1,
       'No Pendaftaran': s.registrationNumber,
       'Nama Calon Murid': s.fullName,
       'Jenis Kelamin': s.gender,
@@ -927,7 +927,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     const cleanYear = effectiveSchoolInfo.academicYear.replace('/', '_');
 
     const data = filteredStudentSummaries.map((s, idx) => ({
-      'No': idx + 1,
+      'No. Urut': idx + 1,
       'No_Pendaftaran': s.registrationNumber,
       'Nama': s.fullName,
       'Gender': s.gender,
@@ -940,7 +940,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     generateReportPDF(
       `Laporan_Pembayaran_BAM_${cleanYear}`,
       data,
-      ['No', 'No_Pendaftaran', 'Nama', 'Gender', 'Total_BAM', 'Total_Dibayar', 'Tunggakan', 'Status'],
+      ['No. Urut', 'No_Pendaftaran', 'Nama', 'Gender', 'Total_BAM', 'Total_Dibayar', 'Tunggakan', 'Status'],
       effectiveSchoolInfo
     );
   };
@@ -1198,7 +1198,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
               <table className="w-full text-left text-xs border-collapse min-w-[950px]">
                 <thead>
                   <tr className="bg-slate-100 border-b font-bold text-slate-700 whitespace-nowrap">
-                    <th className="p-3 w-10 text-center">No</th>
+                    <th className="p-3 w-14 text-center">No. Urut</th>
                     <th className="p-3">No. Pendaftaran</th>
                     <th className="p-3">Nama Calon Murid</th>
                     <th className="p-3">Jenis Kelamin</th>
@@ -1221,7 +1221,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                   ) : (
                     filteredStudentSummaries.map((s, idx) => (
                       <tr key={s.student.id} className="hover:bg-slate-50 font-medium whitespace-nowrap">
-                        <td className="p-3 text-center text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="p-3 text-center text-slate-600 font-mono font-bold">{idx + 1}</td>
                         <td className="p-3 font-mono font-bold text-slate-700">{s.registrationNumber}</td>
                         <td className="p-3 font-extrabold text-slate-900">{s.fullName}</td>
                         <td className="p-3">
@@ -1422,7 +1422,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
               <table className="w-full text-left text-xs border-collapse min-w-[700px]">
                 <thead>
                   <tr className="bg-slate-100 border-b font-bold text-slate-700 whitespace-nowrap">
-                    <th className="p-3 w-12 text-center">No</th>
+                    <th className="p-3 w-14 text-center">No. Urut</th>
                     <th className="p-3">Nama Item BAM</th>
                     <th className="p-3">Nominal (Rp)</th>
                     <th className="p-3 w-20 text-center">Urutan</th>
@@ -1446,7 +1446,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
                     return currentList.map((item, idx) => (
                       <tr key={item.id} className="hover:bg-slate-50 font-medium">
-                        <td className="p-3 text-center text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="p-3 text-center text-slate-600 font-mono font-bold">{idx + 1}</td>
                         <td className="p-3 font-bold text-slate-900">{item.nama_item}</td>
                         <td className="p-3 font-extrabold text-emerald-700">
                           Rp {item.nominal.toLocaleString('id-ID')}
@@ -1606,7 +1606,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-100 border-b font-bold text-slate-700 sticky top-0">
-                      <th className="p-2.5 w-12 text-center">No</th>
+                      <th className="p-2.5 w-14 text-center">No. Urut</th>
                       <th className="p-2.5">Gender / Kategori</th>
                       <th className="p-2.5">Nama Item BAM</th>
                       <th className="p-2.5">Nominal (Rp)</th>
@@ -1617,7 +1617,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                   <tbody className="divide-y divide-slate-100 text-slate-800">
                     {previewParsedRows.map((r, idx) => (
                       <tr key={idx} className="hover:bg-slate-50">
-                        <td className="p-2.5 text-center text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="p-2.5 text-center text-slate-600 font-mono font-bold">{idx + 1}</td>
                         <td className="p-2.5 font-bold">
                           <span className={`px-2 py-0.5 rounded text-[10px] uppercase ${
                             r.gender === 'ikhwan' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'
@@ -1824,7 +1824,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-100 border-b font-bold text-slate-700">
-                      <th className="p-2.5 w-10 text-center">No</th>
+                      <th className="p-2.5 w-14 text-center">No. Urut</th>
                       <th className="p-2.5">Item BAM</th>
                       <th className="p-2.5">Tagihan (Rp)</th>
                       <th className="p-2.5">Dibayar (Rp)</th>
@@ -1835,7 +1835,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                   <tbody className="divide-y divide-slate-100 text-slate-800">
                     {selectedStudentItemsBreakdown.map(item => (
                       <tr key={item.no} className="hover:bg-slate-50 font-medium">
-                        <td className="p-2.5 text-center text-slate-400 font-mono">{item.no}</td>
+                        <td className="p-2.5 text-center text-slate-600 font-mono font-bold">{item.no}</td>
                         <td className="p-2.5 font-bold text-slate-900">{item.nama_item}</td>
                         <td className="p-2.5 text-slate-700 font-semibold">
                           Rp {item.nominal.toLocaleString('id-ID')}

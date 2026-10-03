@@ -79,6 +79,7 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
         <table className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="bg-slate-100 border-b text-slate-700 font-bold">
+              <th className="p-3 text-center w-14">No. Urut</th>
               <th className="p-3">No. Reg</th>
               <th className="p-3">Nama Peserta</th>
               <th className="p-3">Nomor Soal Terakhir</th>
@@ -91,7 +92,7 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
           <tbody className="divide-y text-slate-700">
             {filteredLogs.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-400 italic">
+                <td colSpan={8} className="p-8 text-center text-slate-400 italic">
                   Belum ada sesi pengerjaan ujian yang tercatat secara aktif.
                 </td>
               </tr>
@@ -100,6 +101,9 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
                 const std = studentMap.get(log.pesertaId);
                 return (
                   <tr key={idx} className="hover:bg-slate-50">
+                    <td className="p-3 text-center font-mono font-bold text-slate-600">
+                      {idx + 1}
+                    </td>
                     <td className="p-3 font-mono font-bold text-emerald-800">
                       {std?.registrationNumber || '-'}
                     </td>

@@ -527,7 +527,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
   // Export Excel
   const handleExportExcel = () => {
     const data = filteredPayments.map((p, i) => ({
-      No: i + 1,
+      No_Urut: i + 1,
       ID_Transaksi: p.id,
       No_Pendaftaran: p.registrationNumber,
       Tanggal: p.paymentDate || p.createdAt.split('T')[0],
@@ -547,7 +547,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
   // Export PDF
   const handleExportPDF = () => {
     const data = filteredPayments.map((p, i) => ({
-      No: i + 1,
+      No_Urut: i + 1,
       ID_Trx: p.id.slice(-8),
       Tanggal: p.paymentDate || p.createdAt.split('T')[0],
       Nama_Murid: p.studentName,
@@ -559,7 +559,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
     generateReportPDF(
       `Laporan_Pembayaran_${activeGender}`,
       data,
-      ['No', 'ID_Trx', 'Tanggal', 'Nama_Murid', 'JK', 'Jenis', 'Nominal', 'Status']
+      ['No_Urut', 'ID_Trx', 'Tanggal', 'Nama_Murid', 'JK', 'Jenis', 'Nominal', 'Status']
     );
   };
 
@@ -798,7 +798,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
           <table className="w-full text-left text-xs border-collapse min-w-[950px]">
             <thead>
               <tr className="bg-slate-100 border-b font-bold text-slate-700 whitespace-nowrap">
-                <th className="p-3 text-center">No</th>
+                <th className="p-3 text-center w-14">No. Urut</th>
                 <th className="p-3">ID Transaksi</th>
                 <th className="p-3">Tanggal</th>
                 <th className="p-3">No. Pendaftaran</th>
@@ -832,7 +832,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
               ) : (
                 filteredPayments.map((p, i) => (
                   <tr key={p.id} className="hover:bg-slate-50 font-medium whitespace-nowrap">
-                    <td className="p-3 text-center text-slate-500 font-mono">{i + 1}</td>
+                    <td className="p-3 text-center font-mono font-bold text-slate-600">{i + 1}</td>
                     <td className="p-3 font-mono font-bold text-blue-700 text-[11px]">{p.id}</td>
                     <td className="p-3 text-slate-600">{p.paymentDate ? p.paymentDate.split('T')[0] : p.createdAt.split('T')[0]}</td>
                     <td className="p-3 font-mono text-slate-700 font-semibold">{p.registrationNumber}</td>

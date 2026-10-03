@@ -77,6 +77,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           <a href="#keunggulan" className="hover:text-blue-400 transition-colors">
             Keunggulan
           </a>
+          <a href="#brosur" className="hover:text-emerald-400 text-emerald-300 font-semibold transition-colors flex items-center gap-1">
+            <span>Brosur</span>
+          </a>
           <a href="#biaya" className="hover:text-blue-400 transition-colors">
             Biaya Pendidikan
           </a>
@@ -170,6 +173,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             </a>
             <a href="#keunggulan" onClick={() => setMobileMenuOpen(false)} className="py-1.5 hover:text-blue-400">
               Keunggulan
+            </a>
+            <a href="#brosur" onClick={() => setMobileMenuOpen(false)} className="py-1.5 hover:text-emerald-400 text-emerald-300 font-semibold flex items-center gap-1.5">
+              <span>Brosur SPMB (PDF)</span>
             </a>
             <a href="#biaya" onClick={() => setMobileMenuOpen(false)} className="py-1.5 hover:text-blue-400">
               Biaya Pendidikan

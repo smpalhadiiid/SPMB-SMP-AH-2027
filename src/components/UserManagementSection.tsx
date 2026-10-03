@@ -119,7 +119,7 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
     setShowAddModal(true);
   };
 
-  const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email === 'superadmin@alhadiid.sch.id';
+  const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email === 'superadmin@alhadiid.sch.id' || currentUser?.username === 'superadmin';
 
   // Open Edit Modal
   const handleOpenEdit = (user: UserAccount) => {
@@ -405,7 +405,7 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
       </div>
 
       {/* Super Admin Quick Access for Default Credentials */}
-      {currentUser?.role === 'super_admin' && (
+      {isSuperAdmin && (
         <div className="bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/70 border border-amber-500/40 rounded-2xl p-4 sm:p-5 text-white shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             <div className="p-3 bg-amber-500/20 border border-amber-500/40 rounded-xl text-amber-400 shrink-0">
@@ -424,16 +424,20 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
             </div>
           </div>
 
-          {onNavigateToDefaultCredentials && (
-            <button
-              type="button"
-              onClick={onNavigateToDefaultCredentials}
-              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-            >
-              <Key className="w-4 h-4 text-slate-950" />
-              <span>Ubah Username & Password Default</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (onNavigateToDefaultCredentials) {
+                onNavigateToDefaultCredentials();
+              } else {
+                window.location.hash = '#default_credentials';
+              }
+            }}
+            className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+          >
+            <Key className="w-4 h-4 text-slate-950" />
+            <span>Ubah Username & Password Default</span>
+          </button>
         </div>
       )}
 
@@ -574,7 +578,7 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200 uppercase text-[10px]">
-                <th className="p-3">No</th>
+                <th className="p-3 text-center w-14">No. Urut</th>
                 <th className="p-3">Nama & Email</th>
                 <th className="p-3">No. Telepon / HP</th>
                 <th className="p-3">Role Hak Akses</th>
@@ -593,7 +597,7 @@ export const UserManagementSection: React.FC<UserManagementSectionProps> = ({
               ) : (
                 filteredUsers.map((usr, idx) => (
                   <tr key={usr.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
+                    <td className="p-3 text-center font-mono font-bold text-slate-600">{idx + 1}</td>
                     <td className="p-3">
                       <div className="font-bold text-slate-900">{usr.name}</div>
                       <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">

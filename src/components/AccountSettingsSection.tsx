@@ -82,7 +82,7 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Access Control Guard
-  const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email === 'superadmin@alhadiid.sch.id';
+  const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email === 'superadmin@alhadiid.sch.id' || currentUser?.username === 'superadmin';
 
   useEffect(() => {
     refreshAccountsList();
@@ -110,12 +110,13 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
   };
 
   const handleOpenEditDefault = (role: 'super_admin' | 'admin' | 'kepsek' | 'student') => {
-    const item = defaultsConfig[role];
+    const factory = FACTORY_DEFAULT_CREDENTIALS[role];
+    const item = defaultsConfig?.[role] || factory;
     setTargetDefaultRole(role);
-    setFormDefaultUsername(item.defaultUsername);
-    setFormDefaultEmail(item.defaultEmail);
-    setFormDefaultPassword(item.defaultPassword);
-    setFormDefaultConfirm(item.defaultPassword);
+    setFormDefaultUsername(item?.defaultUsername || factory.defaultUsername);
+    setFormDefaultEmail(item?.defaultEmail || factory.defaultEmail);
+    setFormDefaultPassword(item?.defaultPassword || factory.defaultPassword);
+    setFormDefaultConfirm(item?.defaultPassword || factory.defaultPassword);
     setShowDefaultPassInput(false);
     setDefaultFormError('');
     setShowDefaultModal(true);
@@ -145,7 +146,7 @@ export const AccountSettingsSection: React.FC<AccountSettingsSectionProps> = ({
       return;
     }
 
-    const roleName = defaultsConfig[targetDefaultRole].roleLabel;
+    const roleName = (defaultsConfig?.[targetDefaultRole] || FACTORY_DEFAULT_CREDENTIALS[targetDefaultRole]).roleLabel;
 
     const confirmRes = await Swal.fire({
       title: `Simpan Kredensial ${roleName}?`,
