@@ -249,6 +249,93 @@ export interface CbtLogUjian {
   updatedAt: string;
 }
 
+export type CbtMonitoringStatus =
+  | 'BELUM_MULAI'
+  | 'AKTIF'
+  | 'TIDAK_AKTIF'
+  | 'SELESAI'
+  | 'TERPUTUS';
+
+export interface CbtHeartbeatPayload {
+  exam_id: string;
+  participant_id: string;
+  user_id?: string;
+  last_seen_at: string;
+  current_question: number;
+  answered_count: number;
+  total_questions: number;
+  progress_percentage: number;
+  remaining_seconds: number;
+  session_id?: string;
+  connection_status: 'online' | 'offline';
+  server_start_time?: string;
+  server_end_time?: string;
+}
+
+export type CbtActivityEventType =
+  | 'exam_login'
+  | 'exam_start'
+  | 'view_question'
+  | 'save_answer'
+  | 'mark_doubtful'
+  | 'tab_switch'
+  | 'window_blur'
+  | 'network_offline'
+  | 'network_reconnect'
+  | 'save_failed'
+  | 'exam_submit';
+
+export interface CbtActivityLogItem {
+  id: string;
+  examId: string;
+  participantId: string;
+  participantName?: string;
+  eventType: CbtActivityEventType;
+  title: string;
+  description: string;
+  questionNumber?: number;
+  timestamp: string; // ISO string
+  isSuspicious?: boolean;
+}
+
+export interface CbtParticipantLiveStatus {
+  participantId: string;
+  registrationNumber: string;
+  fullName: string;
+  gender: 'Laki-laki' | 'Perempuan';
+  examId: string;
+  status: CbtMonitoringStatus;
+  progressPercentage: number;
+  answeredCount: number;
+  totalQuestions: number;
+  currentQuestionNumber: number;
+  remainingSeconds: number;
+  lastSeenAt: string | null;
+  serverStartTime: string | null;
+  serverEndTime: string | null;
+  isSubmitted: boolean;
+  score?: number;
+  needsAttention: boolean;
+  attentionReasons: string[];
+  recentActivities: CbtActivityLogItem[];
+  connectionStatus: 'online' | 'offline';
+  doubtfulCount?: number;
+}
+
+export interface CbtLiveMonitoringSummary {
+  examId: string;
+  examName: string;
+  totalParticipants: number;
+  activeCount: number;       // Sedang Ujian (heartbeat < 60s)
+  notStartedCount: number;   // Belum Mulai
+  finishedCount: number;     // Selesai
+  inactiveCount: number;     // Tidak Aktif (60-120s)
+  disconnectedCount: number; // Terputus (> 120s)
+  needsAttentionCount: number; // Perlu diperiksa
+  connectionQuality: 'connected' | 'polling' | 'error';
+  lastUpdated: string;
+}
+
 export interface CbtExamSession {
   ujianId: string;
   pesertaId: string;
@@ -259,6 +346,8 @@ export interface CbtExamSession {
   remainingTimeSeconds: number;
   isCompleted: boolean;
   startedAt?: string;
+  serverStartTime?: string;
+  serverEndTime?: string;
 }
 
 export interface TestSchedule {

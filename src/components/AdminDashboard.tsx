@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion, BamPaymentRecord, BamInstallmentType } from '../types';
 import { exportToExcel } from '../utils/excelExporter';
 import { generateReportPDF, generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
-import { downloadBrochureFile } from '../utils/brochureGenerator';
+import { downloadBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
 import { getStudentCredentials, fetchStudentCredentialsFromSupabase } from '../utils/studentCredentials';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import {
@@ -14,7 +14,7 @@ import {
 import {
   exportAllDataAsBackup, importBackupData, purgeApplicantData, resetAllDataToDefault, getStoredWebsiteConfig,
   getStoredQuestionBank, saveQuestionBank, saveTestSchedules,
-  getStoredBamPayments, saveBamPayments
+  getStoredBamPayments, saveBamPayments, saveSchoolInfo
 } from '../utils/storage';
 import logoSvg from '../assets/logo.svg';
 import {
@@ -287,31 +287,270 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     reader.readAsDataURL(file);
   };
 
+  const [adminBrochurePreviewOpen, setAdminBrochurePreviewOpen] = useState(false);
+  const [isUploadingBamBrochure, setIsUploadingBamBrochure] = useState(false);
+
   const handleBrochureFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (file.size > 15 * 1024 * 1024) {
-      alert('Ukuran file brosur maksimal 15 MB.');
+      Swal.fire({
+        icon: 'warning',
+        title: 'Ukuran Terlalu Besar',
+        text: 'Ukuran file brosur maksimal 15 MB.',
+        confirmButtonColor: '#0f766e',
+      });
       return;
     }
 
     setIsUploadingBrochure(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64Url = reader.result as string;
-      const formattedSize = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+    const isImg = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
 
-      setSchoolForm((prev) => ({
-        ...prev,
-        brochureUrl: base64Url,
-        brochureFileName: file.name,
-        brochureFileType: file.type,
-        brochureFileSize: formattedSize,
-      }));
-      setIsUploadingBrochure(false);
-    };
-    reader.readAsDataURL(file);
+    if (isImg) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawBase64 = event.target?.result as string;
+        const img = new Image();
+        img.onload = () => {
+          try {
+            // Optimasi resolusi agar pas di localStorage & Supabase tanpa penurunan kualitas tajam
+            const maxDim = 1800;
+            let width = img.width;
+            let height = img.height;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              // Gunakan image/jpeg kualitas tinggi 0.85 untuk kompresi ideal & bebas QuotaExceededError
+              const format = 'image/jpeg';
+              const optimizedBase64 = canvas.toDataURL(format, 0.85);
+              const formattedSize = (optimizedBase64.length * 0.75 / (1024 * 1024)).toFixed(2) + ' MB';
+              const safeFileName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+
+              const updatedSchool = {
+                ...schoolForm,
+                brochureUrl: optimizedBase64,
+                brochureFileName: safeFileName,
+                brochureFileType: format,
+                brochureFileSize: formattedSize,
+              };
+
+              setSchoolForm(updatedSchool);
+              onUpdateSchoolInfo(updatedSchool);
+              saveSchoolInfo(updatedSchool);
+              setIsUploadingBrochure(false);
+
+              Swal.fire({
+                icon: 'success',
+                title: 'Brosur Gambar Berhasil Dipublikasikan!',
+                html: `
+                  <div style="text-align: left; font-size: 13px; line-height: 1.6;">
+                    <p>Berkas gambar <strong>${safeFileName}</strong> berhasil diunggah dan disimpan ke sistem.</p>
+                    <div style="background-color: #f1f5f9; padding: 8px 12px; border-radius: 8px; margin: 8px 0; font-size: 12px;">
+                      🖼️ <strong>Dimensi:</strong> ${width} × ${height} px<br/>
+                      💾 <strong>Ukuran:</strong> ${formattedSize}<br/>
+                      📄 <strong>Format:</strong> GAMBAR DIGITAL (JPG)
+                    </div>
+                    <p style="color: #059669; font-size: 12px; font-weight: bold;">
+                      ✓ Calon murid kini dapat langsung mengunduh dan melihat brosur gambar ini di Halaman Utama SPMB!
+                    </p>
+                  </div>
+                `,
+                confirmButtonColor: '#10b981',
+                confirmButtonText: 'Baik, Mengerti',
+              });
+              return;
+            }
+          } catch (err) {
+            console.warn('Canvas optimization fallback:', err);
+          }
+
+          // Fallback raw base64 jika canvas gagal
+          const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+          const updatedSchool = {
+            ...schoolForm,
+            brochureUrl: rawBase64,
+            brochureFileName: file.name,
+            brochureFileType: file.type || 'image/jpeg',
+            brochureFileSize: formattedSize,
+          };
+          setSchoolForm(updatedSchool);
+          onUpdateSchoolInfo(updatedSchool);
+          saveSchoolInfo(updatedSchool);
+          setIsUploadingBrochure(false);
+          Swal.fire({
+            icon: 'success',
+            title: 'Brosur Gambar Berhasil Dimuat!',
+            text: `Berkas "${file.name}" berhasil diaktifkan untuk calon murid.`,
+            confirmButtonColor: '#10b981',
+          });
+        };
+        img.onerror = () => {
+          setIsUploadingBrochure(false);
+          Swal.fire({
+            icon: 'error',
+            title: 'Gagal Memproses Gambar',
+            text: 'Format gambar tidak dapat dibaca oleh browser.',
+            confirmButtonColor: '#ef4444',
+          });
+        };
+        img.src = rawBase64;
+      };
+      reader.readAsDataURL(file);
+    } else {
+      // PDF File upload
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64Url = reader.result as string;
+        const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+
+        const updatedSchool = {
+          ...schoolForm,
+          brochureUrl: base64Url,
+          brochureFileName: file.name,
+          brochureFileType: file.type || 'application/pdf',
+          brochureFileSize: formattedSize,
+        };
+        setSchoolForm(updatedSchool);
+        onUpdateSchoolInfo(updatedSchool);
+        saveSchoolInfo(updatedSchool);
+        setIsUploadingBrochure(false);
+        Swal.fire({
+          icon: 'success',
+          title: 'Brosur PDF Berhasil Dimuat & Dipublikasikan!',
+          text: `Berkas "${file.name}" (${formattedSize}) siap didownload oleh calon murid di Halaman Utama.`,
+          confirmButtonColor: '#10b981',
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleBamBrochureFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 15 * 1024 * 1024) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Ukuran Terlalu Besar',
+        text: 'Ukuran file SK BAM maksimal 15 MB.',
+        confirmButtonColor: '#0f766e',
+      });
+      return;
+    }
+
+    setIsUploadingBamBrochure(true);
+    const isImg = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+
+    if (isImg) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawBase64 = event.target?.result as string;
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const maxDim = 1800;
+            let width = img.width;
+            let height = img.height;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              const format = 'image/jpeg';
+              const optimizedBase64 = canvas.toDataURL(format, 0.85);
+              const formattedSize = (optimizedBase64.length * 0.75 / (1024 * 1024)).toFixed(2) + ' MB';
+              const safeFileName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+
+              const updatedSchool = {
+                ...schoolForm,
+                bamBrochureUrl: optimizedBase64,
+                bamBrochureFileName: safeFileName,
+                bamBrochureFileType: format,
+                bamBrochureFileSize: formattedSize,
+              };
+
+              setSchoolForm(updatedSchool);
+              onUpdateSchoolInfo(updatedSchool);
+              saveSchoolInfo(updatedSchool);
+              setIsUploadingBamBrochure(false);
+
+              Swal.fire({
+                icon: 'success',
+                title: 'Dokumen SK Rincian BAM Berhasil Diunggah!',
+                text: `Berkas gambar "${safeFileName}" (${formattedSize}) siap diunduh calon murid.`,
+                confirmButtonColor: '#10b981',
+              });
+              return;
+            }
+          } catch {}
+
+          const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+          const updatedSchool = {
+            ...schoolForm,
+            bamBrochureUrl: rawBase64,
+            bamBrochureFileName: file.name,
+            bamBrochureFileType: file.type || 'image/jpeg',
+            bamBrochureFileSize: formattedSize,
+          };
+          setSchoolForm(updatedSchool);
+          onUpdateSchoolInfo(updatedSchool);
+          saveSchoolInfo(updatedSchool);
+          setIsUploadingBamBrochure(false);
+        };
+        img.src = rawBase64;
+      };
+      reader.readAsDataURL(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64Url = reader.result as string;
+        const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+        const updatedSchool = {
+          ...schoolForm,
+          bamBrochureUrl: base64Url,
+          bamBrochureFileName: file.name,
+          bamBrochureFileType: file.type || 'application/pdf',
+          bamBrochureFileSize: formattedSize,
+        };
+        setSchoolForm(updatedSchool);
+        onUpdateSchoolInfo(updatedSchool);
+        saveSchoolInfo(updatedSchool);
+        setIsUploadingBamBrochure(false);
+        Swal.fire({
+          icon: 'success',
+          title: 'Dokumen SK Rincian BAM PDF Berhasil Dimuat!',
+          text: `Berkas "${file.name}" (${formattedSize}) siap diunduh oleh calon murid.`,
+          confirmButtonColor: '#10b981',
+        });
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSaveSchoolInfo = (e: React.FormEvent) => {
@@ -1586,7 +1825,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
-        {activeTab === 'cbt_dashboard' && <CbtDashboardAdmin students={students} />}
+        {activeTab === 'cbt_dashboard' && <CbtDashboardAdmin students={students} onNavigateTab={setActiveTab} />}
         {activeTab === 'cbt_kategori' && <CbtKategoriManager />}
         {activeTab === 'cbt_bank_soal' && <CbtBankSoalManager />}
         {activeTab === 'cbt_import' && <CbtImportSoal />}
@@ -3813,41 +4052,63 @@ Kunci: B`}
 
             {/* SECTION 2: BROSUR SPMB & MEDIA PROMOSI */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-              <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
+              <div className="border-b border-slate-200 pb-3 flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <FileText className="w-5 h-5 text-indigo-600" />
-                    <span>2. Brosur Resmi SPMB (PDF / Gambar)</span>
+                    <span>2. Brosur Resmi SPMB (Gambar / PDF)</span>
                   </h4>
                   <p className="text-xs text-slate-500">
-                    Upload file brosur pendaftaran resmi yang dapat diunduh oleh calon murid di Halaman Depan.
+                    Upload berkas brosur pendaftaran resmi (Gambar JPG/PNG atau PDF) yang dapat langsung diunduh oleh calon murid di Halaman Utama.
                   </p>
                 </div>
+                {schoolForm.brochureUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateSchoolInfo(schoolForm);
+                      Swal.fire({
+                        icon: 'success',
+                        title: 'Brosur Berhasil Dipublikasikan!',
+                        text: 'Calon murid kini dapat langsung mengunduh brosur ini di Halaman Utama SPMB.',
+                        confirmButtonColor: '#10b981',
+                      });
+                    }}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan & Publikasikan Brosur</span>
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Upload File Area */}
                 <div className="space-y-3">
                   <label className="block text-xs font-bold text-slate-700">
-                    Upload File Brosur Baru (Maks 15MB, Format PDF/PNG/JPG)
+                    Upload Berkas Brosur Baru (Format Gambar PNG/JPG/WEBP atau PDF, Maks 15MB)
                   </label>
 
-                  <div className="border-2 border-dashed border-indigo-200 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-2xl p-6 text-center transition-all cursor-pointer relative">
+                  <div className="border-2 border-dashed border-indigo-200 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-2xl p-6 text-center transition-all cursor-pointer relative group">
                     <input
                       type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp"
                       onChange={handleBrochureFileUpload}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
                     <div className="flex flex-col items-center gap-2">
-                      <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold">
+                      <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold group-hover:scale-110 transition-transform">
                         <Upload className="w-6 h-6" />
                       </div>
                       <div className="text-xs font-bold text-slate-800">
-                        {isUploadingBrochure ? 'Mengunggah File...' : 'Klik atau Drag & Drop File Brosur'}
+                        {isUploadingBrochure ? 'Mengunggah & Memproses File...' : 'Klik atau Drag & Drop Berkas Brosur'}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        Mendukung PDF, PNG, JPG hingga 15 Megabytes
+                        Mendukung Gambar (PNG, JPG, JPEG, WEBP) dan PDF hingga 15MB
+                      </div>
+                      <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-semibold mt-1">
+                        <Sparkles className="w-3 h-3" />
+                        <span>Otomatis dioptimasi untuk download cepat calon murid</span>
                       </div>
                     </div>
                   </div>
@@ -3860,70 +4121,293 @@ Kunci: B`}
                       <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status Brosur Aktif</span>
                       {schoolForm.brochureUrl ? (
                         <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center gap-1 border border-emerald-200">
-                          <Check className="w-3 h-3" /> Tersedia & Siap Diunduh
+                          <Check className="w-3 h-3" /> {isImageBrochure(schoolForm) ? 'Brosur Gambar Aktif' : 'Brosur PDF Aktif'}
                         </span>
                       ) : (
                         <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold border border-amber-200">
-                          Menggunakan Brosur Default
+                          Menggunakan Brosur PDF Sistem
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
-                      <div className="p-3 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
-                        <FileText className="w-6 h-6" />
-                      </div>
-                      <div className="overflow-hidden">
-                        <div className="text-xs font-bold text-slate-900 truncate">
-                          {schoolForm.brochureFileName || 'Brosur_SPMB_SMP_AlHadiid_2027.pdf'}
+                    {schoolForm.brochureUrl && isImageBrochure(schoolForm) ? (
+                      /* Preview Khusus Gambar */
+                      <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                        <div className="flex items-center gap-3">
+                          <div
+                            onClick={() => setAdminBrochurePreviewOpen(true)}
+                            className="w-16 h-16 rounded-lg overflow-hidden border border-slate-200 shrink-0 bg-slate-100 relative group cursor-pointer"
+                          >
+                            <img
+                              src={schoolForm.brochureUrl}
+                              alt="Thumbnail Brosur"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
+                            <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                              <Eye className="w-4 h-4 text-white" />
+                            </div>
+                          </div>
+                          <div className="overflow-hidden flex-1">
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-md border border-emerald-200 mb-1">
+                              <ImageIcon className="w-3 h-3" />
+                              <span>FORMAT GAMBAR ({schoolForm.brochureFileType || 'JPG/PNG'})</span>
+                            </div>
+                            <div className="text-xs font-bold text-slate-900 truncate">
+                              {schoolForm.brochureFileName || 'Brosur_SPMB_Al-Hadiid.jpg'}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              Ukuran: {schoolForm.brochureFileSize || '1.5 MB'}
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-[11px] text-slate-500">
-                          Ukuran: {schoolForm.brochureFileSize || '2.4 MB'}
+                      </div>
+                    ) : (
+                      /* Preview Dokumen PDF atau Default */
+                      <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                        <div className="p-3 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                        <div className="overflow-hidden">
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {schoolForm.brochureFileName || 'Brosur_Resmi_SPMB_SMP_AlHadiid_2027_2028.pdf'}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            Format: Dokumen PDF | Ukuran: {schoolForm.brochureFileSize || '2.4 MB'}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
-                    {schoolForm.brochureUrl ? (
-                      <a
-                        href={schoolForm.brochureUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Unduh / Lihat Brosur</span>
-                      </a>
-                    ) : (
+                    {schoolForm.brochureUrl && isImageBrochure(schoolForm) && (
                       <button
                         type="button"
-                        onClick={() => downloadBrochureFile(schoolForm as any, costBreakdowns, testSchedules)}
-                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        onClick={() => setAdminBrochurePreviewOpen(true)}
+                        className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                       >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Unduh Brosur Standar (PDF)</span>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Pratinjau Gambar</span>
                       </button>
                     )}
+
+                    <button
+                      type="button"
+                      onClick={() => downloadBrochureFile(schoolForm as any, costBreakdowns, testSchedules)}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{isImageBrochure(schoolForm) ? 'Unduh Brosur Gambar' : 'Unduh Brosur (PDF)'}</span>
+                    </button>
 
                     {schoolForm.brochureUrl && (
                       <button
                         type="button"
-                        onClick={() =>
-                          setSchoolForm((prev) => ({
-                            ...prev,
-                            brochureUrl: '',
-                            brochureFileName: '',
-                            brochureFileSize: '',
-                          }))
-                        }
-                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors border border-rose-200"
+                        onClick={() => {
+                          Swal.fire({
+                            title: 'Hapus Berkas Brosur?',
+                            text: 'Sistem akan kembali menggunakan Brosur PDF Standar yang digenerate otomatis.',
+                            icon: 'question',
+                            showCancelButton: true,
+                            confirmButtonText: 'Ya, Hapus',
+                            cancelButtonText: 'Batal',
+                            confirmButtonColor: '#e11d48',
+                          }).then((result) => {
+                            if (result.isConfirmed) {
+                              const resetForm = {
+                                ...schoolForm,
+                                brochureUrl: '',
+                                brochureFileName: '',
+                                brochureFileType: '',
+                                brochureFileSize: '',
+                              };
+                              setSchoolForm(resetForm);
+                              onUpdateSchoolInfo(resetForm);
+                            }
+                          });
+                        }}
+                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors border border-rose-200 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Hapus File</span>
+                        <span>Reset ke Default</span>
                       </button>
                     )}
                   </div>
+                </div>
+              </div>
+
+              {/* Modal Pratinjau Gambar Brosur untuk Admin */}
+              {adminBrochurePreviewOpen && schoolForm.brochureUrl && (
+                <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                    <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+                      <div className="flex items-center gap-2">
+                        <ImageIcon className="w-5 h-5 text-indigo-600" />
+                        <div>
+                          <h3 className="font-bold text-sm text-slate-900">{schoolForm.brochureFileName || 'Brosur Gambar SPMB'}</h3>
+                          <p className="text-[11px] text-slate-500">Pratinjau Brosur Gambar yang akan dilihat oleh Calon Murid</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => downloadBrochureFile(schoolForm as any, costBreakdowns, testSchedules)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Unduh Gambar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminBrochurePreviewOpen(false)}
+                          className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="p-4 flex-1 overflow-auto bg-slate-900 flex items-center justify-center">
+                      <img
+                        src={schoolForm.brochureUrl}
+                        alt="Brosur Gambar SPMB"
+                        className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-xl"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* SECTION 2B: DOKUMEN SK RINCIAN BIAYA BAM (GAMBAR / PDF) */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+              <div className="border-b border-slate-200 pb-3 flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                    <span>2B. Dokumen SK Rincian Biaya Awal Masuk (BAM) (Gambar / PDF)</span>
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Upload berkas SK rincian pembiayaan BAM resmi sekolah (Format Gambar JPG/PNG atau PDF) yang dapat diunduh calon murid di tabel Biaya Pendidikan Halaman Depan & Dashboard Murid.
+                  </p>
+                </div>
+                {schoolForm.bamBrochureUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateSchoolInfo(schoolForm);
+                      saveSchoolInfo(schoolForm);
+                      Swal.fire({
+                        icon: 'success',
+                        title: 'SK BAM Berhasil Dipublikasikan!',
+                        text: 'Calon murid kini dapat langsung mengunduh berkas SK BAM ini.',
+                        confirmButtonColor: '#10b981',
+                      });
+                    }}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan & Publikasikan SK BAM</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Upload Berkas SK Biaya BAM (Gambar JPG/PNG atau PDF, Maks 15MB)
+                  </label>
+                  <div className="border-2 border-dashed border-emerald-200 hover:border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50/80 rounded-2xl p-6 text-center transition-all cursor-pointer relative group">
+                    <input
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp"
+                      onChange={handleBamBrochureFileUpload}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold group-hover:scale-110 transition-transform">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="text-xs font-bold text-slate-800">
+                        {isUploadingBamBrochure ? 'Mengunggah & Memproses File SK BAM...' : 'Klik atau Drag & Drop Berkas SK BAM'}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Mendukung Gambar (PNG, JPG, WEBP) dan PDF SK Resmi BAM
+                      </div>
+                      <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-semibold mt-1">
+                        <Check className="w-3 h-3" />
+                        <span>Langsung aktif di tabel biaya Landing Page</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status Berkas SK BAM</span>
+                      {schoolForm.bamBrochureUrl ? (
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center gap-1 border border-emerald-200">
+                          <Check className="w-3 h-3" /> Berkas SK Terunggah
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold">
+                          Belum Ada Berkas SK Khusus
+                        </span>
+                      )}
+                    </div>
+
+                    {schoolForm.bamBrochureUrl ? (
+                      <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                        <div className="p-3 bg-emerald-100 text-emerald-700 rounded-lg shrink-0">
+                          {schoolForm.bamBrochureFileType?.startsWith('image/') ? <ImageIcon className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
+                        </div>
+                        <div className="overflow-hidden flex-1">
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {schoolForm.bamBrochureFileName || 'SK_Rincian_Biaya_BAM.pdf'}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            Ukuran: {schoolForm.bamBrochureFileSize || '~1 MB'} | Format: {schoolForm.bamBrochureFileType || 'Dokumen'}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 text-center">
+                        Upload berkas gambar atau PDF SK rincian biaya BAM resmi sekolah jika ingin calon murid dapat mengunduh dokumen SK asli.
+                      </div>
+                    )}
+                  </div>
+
+                  {schoolForm.bamBrochureUrl && (
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                      <a
+                        href={schoolForm.bamBrochureUrl}
+                        download={schoolForm.bamBrochureFileName || 'SK_Rincian_Biaya_BAM.pdf'}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh Berkas SK BAM</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const reset = {
+                            ...schoolForm,
+                            bamBrochureUrl: '',
+                            bamBrochureFileName: '',
+                            bamBrochureFileType: '',
+                            bamBrochureFileSize: '',
+                          };
+                          setSchoolForm(reset);
+                          onUpdateSchoolInfo(reset);
+                          saveSchoolInfo(reset);
+                        }}
+                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold flex items-center gap-1 border border-rose-200 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Hapus SK</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

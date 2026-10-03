@@ -20,6 +20,11 @@ import {
 import { shuffleArray, saveCbtExamSession, getCbtExamSession } from '../../utils/cbtStorage';
 import { generateExamResultPDF } from '../../utils/pdfGenerator';
 import { getStoredSchoolInfo } from '../../utils/storage';
+import {
+  sendCbtHeartbeatSupabase,
+  recordCbtActivityLogSupabase,
+  CBT_MONITORING_CONFIG,
+} from '../../services/cbtMonitoringService';
 
 interface ShuffledOption {
   originalIndex: number;
@@ -39,6 +44,8 @@ interface PesertaExamSession {
   currentIndex: number;
   remainingTimeSeconds: number;
   isCompleted: boolean;
+  serverStartTime?: string;
+  serverEndTime?: string;
 }
 
 interface CbtPesertaPortalProps {
@@ -81,13 +88,88 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
     }
 
     // Try loading local cached session if available
-    const cached = getCbtExamSession(activeUjian.id, student.id);
+    const cached = getCbtExamSession(activeUjian.id, student.id) as any;
     if (cached && !cached.isCompleted) {
-      setExamSession(cached as any);
+      // Re-calculate remaining seconds against serverEndTime if available
+      if (cached.serverEndTime) {
+        const msLeft = new Date(cached.serverEndTime).getTime() - Date.now();
+        const secsLeft = Math.max(0, Math.floor(msLeft / 1000));
+        if (secsLeft <= 0) {
+          toast.error('Waktu ujian telah berakhir selama sesi terputus. Jawaban disubmit.');
+          autoSubmitExam(cached);
+          return;
+        }
+        cached.remainingTimeSeconds = secsLeft;
+      }
+      setExamSession(cached);
+
+      // Catat log peserta reconnect / kembali membuka portal ujian
+      recordCbtActivityLogSupabase({
+        examId: activeUjian.id,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'network_reconnect',
+        title: 'Peserta Membuka Kembali Portal',
+        description: 'Sesi ujian berhasil dipulihkan dari server.',
+        questionNumber: (cached.currentIndex || 0) + 1,
+      });
     }
   }, [activeUjian?.id, existingHasil]);
 
-  // Timer Countdown Effect
+  // Window Focus, Blur, & Network Activity Detection
+  useEffect(() => {
+    if (!examSession || examSession.isCompleted) return;
+
+    const handleWindowBlur = () => {
+      recordCbtActivityLogSupabase({
+        examId: examSession.ujianId,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'window_blur',
+        title: 'Beralih Tab / Jendela',
+        description: `Peserta beralih ke jendela lain pada soal nomor ${examSession.currentIndex + 1}`,
+        questionNumber: examSession.currentIndex + 1,
+        isSuspicious: true,
+      });
+    };
+
+    const handleOffline = () => {
+      recordCbtActivityLogSupabase({
+        examId: examSession.ujianId,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'network_offline',
+        title: 'Koneksi Terputus',
+        description: 'Perangkat peserta kehilangan koneksi internet (offline).',
+        questionNumber: examSession.currentIndex + 1,
+        isSuspicious: true,
+      });
+    };
+
+    const handleOnline = () => {
+      recordCbtActivityLogSupabase({
+        examId: examSession.ujianId,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'network_reconnect',
+        title: 'Koneksi Pulih',
+        description: 'Perangkat peserta kembali terhubung ke internet.',
+        questionNumber: examSession.currentIndex + 1,
+      });
+    };
+
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [examSession?.ujianId, examSession?.isCompleted, examSession?.currentIndex]);
+
+  // Timer Countdown Effect & Heartbeat (18 seconds interval)
   useEffect(() => {
     if (!examSession || examSession.isCompleted) {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -98,33 +180,61 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
       setExamSession((prev) => {
         if (!prev) return null;
 
-        if (prev.remainingTimeSeconds <= 1) {
+        // Hitung remaining seconds berdasarkan acuan serverEndTime
+        let nextSeconds: number;
+        if (prev.serverEndTime) {
+          const msLeft = new Date(prev.serverEndTime).getTime() - Date.now();
+          nextSeconds = Math.max(0, Math.floor(msLeft / 1000));
+        } else {
+          nextSeconds = Math.max(0, prev.remainingTimeSeconds - 1);
+        }
+
+        if (nextSeconds <= 0) {
           if (timerRef.current) clearInterval(timerRef.current);
           toast.error('Waktu ujian telah habis! Jawaban otomatis dikirim.');
           autoSubmitExam(prev);
           return { ...prev, remainingTimeSeconds: 0, isCompleted: true };
         }
 
-        const nextSeconds = prev.remainingTimeSeconds - 1;
         const updated = { ...prev, remainingTimeSeconds: nextSeconds };
 
         // Save session locally as fallback
         saveCbtExamSession(updated as any);
 
-        // Periodically update log in Supabase every 30 seconds
-        if (nextSeconds % 30 === 0) {
+        // Periodically kirim Heartbeat ke Supabase setiap 18 detik (15-30s)
+        if (nextSeconds % 18 === 0) {
+          const ansCount = Object.keys(prev.answers).length;
+          const totQ = prev.questions.length;
+          const progPct = totQ > 0 ? Math.min(100, Math.round((ansCount / totQ) * 100)) : 0;
+
+          sendCbtHeartbeatSupabase({
+            exam_id: prev.ujianId,
+            participant_id: prev.pesertaId,
+            user_id: student.id,
+            last_seen_at: new Date().toISOString(),
+            current_question: prev.currentIndex + 1,
+            answered_count: ansCount,
+            total_questions: totQ,
+            progress_percentage: progPct,
+            remaining_seconds: nextSeconds,
+            session_id: `ses_${prev.ujianId}_${student.id}`,
+            connection_status: navigator.onLine ? 'online' : 'offline',
+            server_start_time: prev.serverStartTime,
+            server_end_time: prev.serverEndTime,
+          });
+
+          // Juga simpan log_ujian kompatibilitas
           saveLogUjianSupabase({
             ujianId: prev.ujianId,
             pesertaId: prev.pesertaId,
             namaPeserta: student.fullName,
             nomorSoalTerakhir: prev.currentIndex + 1,
             sisaWaktuDetik: nextSeconds,
-            statusOnline: 'ONLINE',
+            statusOnline: navigator.onLine ? 'ONLINE' : 'OFFLINE',
             isSubmitted: false,
             updatedAt: new Date().toISOString(),
           });
         }
-
 
         return updated;
       });
@@ -221,6 +331,9 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
         }
       });
 
+      const startTimeIso = new Date().toISOString();
+      const endTimeIso = new Date(Date.now() + activeUjian.durasiMinutes * 60 * 1000).toISOString();
+
       const newSession: PesertaExamSession = {
         ujianId: activeUjian.id,
         pesertaId: student.id,
@@ -230,6 +343,8 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
         currentIndex: 0,
         remainingTimeSeconds: activeUjian.durasiMinutes * 60,
         isCompleted: false,
+        serverStartTime: startTimeIso,
+        serverEndTime: endTimeIso,
       };
 
       setExamSession(newSession);
@@ -244,9 +359,36 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
         sisaWaktuDetik: activeUjian.durasiMinutes * 60,
         statusOnline: 'ONLINE',
         isSubmitted: false,
-        updatedAt: new Date().toISOString(),
+        updatedAt: startTimeIso,
       });
 
+      // Catat event log aktivitas mulai ujian
+      recordCbtActivityLogSupabase({
+        examId: activeUjian.id,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'exam_start',
+        title: 'Memulai Ujian CBT',
+        description: `Peserta mulai mengerjakan ujian dengan ${processedQuestions.length} butir soal.`,
+        questionNumber: 1,
+      });
+
+      // Kirim heartbeat pertama
+      sendCbtHeartbeatSupabase({
+        exam_id: activeUjian.id,
+        participant_id: student.id,
+        user_id: student.id,
+        last_seen_at: startTimeIso,
+        current_question: 1,
+        answered_count: Object.keys(restoredAnswers).length,
+        total_questions: processedQuestions.length,
+        progress_percentage: Math.min(100, Math.round((Object.keys(restoredAnswers).length / processedQuestions.length) * 100)),
+        remaining_seconds: activeUjian.durasiMinutes * 60,
+        session_id: `ses_${activeUjian.id}_${student.id}`,
+        connection_status: 'online',
+        server_start_time: startTimeIso,
+        server_end_time: endTimeIso,
+      });
 
       toast.success('Ujian CBT berhasil dimulai! Selamat mengerjakan.');
     } catch (err: any) {
@@ -262,6 +404,8 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
 
     const currentQuestion = examSession.questions[examSession.currentIndex];
     const qId = currentQuestion.id;
+    const qNum = examSession.currentIndex + 1;
+    const optLetter = ['A', 'B', 'C', 'D'][originalOptionIndex] || 'A';
 
     const updatedAnswers = { ...examSession.answers, [qId]: originalOptionIndex };
     const updatedSession: PesertaExamSession = {
@@ -280,6 +424,38 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
       jawabanIndex: originalOptionIndex,
       isRaguRagu: Boolean(examSession.doubtfuls[qId]),
     });
+
+    // Catat log aktivitas menjawab soal
+    recordCbtActivityLogSupabase({
+      examId: examSession.ujianId,
+      participantId: student.id,
+      participantName: student.fullName,
+      eventType: 'save_answer',
+      title: 'Menyimpan Jawaban',
+      description: `Menyimpan jawaban nomor ${qNum} (Pilihan ${optLetter})`,
+      questionNumber: qNum,
+    });
+
+    // Kirim heartbeat seketika agar progress bar di layar panitia langsung terupdate real-time
+    const ansCount = Object.keys(updatedAnswers).length;
+    const totQ = examSession.questions.length;
+    const progPct = totQ > 0 ? Math.min(100, Math.round((ansCount / totQ) * 100)) : 0;
+
+    sendCbtHeartbeatSupabase({
+      exam_id: examSession.ujianId,
+      participant_id: examSession.pesertaId,
+      user_id: student.id,
+      last_seen_at: new Date().toISOString(),
+      current_question: qNum,
+      answered_count: ansCount,
+      total_questions: totQ,
+      progress_percentage: progPct,
+      remaining_seconds: examSession.remainingTimeSeconds,
+      session_id: `ses_${examSession.ujianId}_${student.id}`,
+      connection_status: navigator.onLine ? 'online' : 'offline',
+      server_start_time: examSession.serverStartTime,
+      server_end_time: examSession.serverEndTime,
+    });
   };
 
   // Handle Toggle Ragu-ragu (Auto Save to Supabase)
@@ -288,6 +464,7 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
 
     const currentQuestion = examSession.questions[examSession.currentIndex];
     const qId = currentQuestion.id;
+    const qNum = examSession.currentIndex + 1;
     const nextDoubtful = !examSession.doubtfuls[qId];
 
     const updatedDoubtfuls = { ...examSession.doubtfuls, [qId]: nextDoubtful };
@@ -307,14 +484,36 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
       jawabanIndex: examSession.answers[qId],
       isRaguRagu: nextDoubtful,
     });
+
+    // Catat log ragu-ragu
+    recordCbtActivityLogSupabase({
+      examId: examSession.ujianId,
+      participantId: student.id,
+      participantName: student.fullName,
+      eventType: 'mark_doubtful',
+      title: nextDoubtful ? 'Menandai Ragu-ragu' : 'Menghapus Ragu-ragu',
+      description: nextDoubtful
+        ? `Menandai ragu-ragu pada nomor ${qNum}`
+        : `Menghapus tanda ragu-ragu pada nomor ${qNum}`,
+      questionNumber: qNum,
+    });
   };
 
-  // Question Navigation
+  // Question Navigation with Audit Log
   const handleNextQuestion = () => {
     if (!examSession) return;
     if (examSession.currentIndex < examSession.questions.length - 1) {
       const nextIdx = examSession.currentIndex + 1;
       setExamSession({ ...examSession, currentIndex: nextIdx });
+      recordCbtActivityLogSupabase({
+        examId: examSession.ujianId,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'view_question',
+        title: 'Membuka Soal',
+        description: `Membuka soal nomor ${nextIdx + 1}`,
+        questionNumber: nextIdx + 1,
+      });
     }
   };
 
@@ -323,12 +522,30 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
     if (examSession.currentIndex > 0) {
       const prevIdx = examSession.currentIndex - 1;
       setExamSession({ ...examSession, currentIndex: prevIdx });
+      recordCbtActivityLogSupabase({
+        examId: examSession.ujianId,
+        participantId: student.id,
+        participantName: student.fullName,
+        eventType: 'view_question',
+        title: 'Membuka Soal',
+        description: `Membuka soal nomor ${prevIdx + 1}`,
+        questionNumber: prevIdx + 1,
+      });
     }
   };
 
   const handleJumpToQuestion = (index: number) => {
     if (!examSession) return;
     setExamSession({ ...examSession, currentIndex: index });
+    recordCbtActivityLogSupabase({
+      examId: examSession.ujianId,
+      participantId: student.id,
+      participantName: student.fullName,
+      eventType: 'view_question',
+      title: 'Membuka Soal',
+      description: `Membuka soal nomor ${index + 1}`,
+      questionNumber: index + 1,
+    });
   };
 
   // Submit & Automated Score Calculation
@@ -401,6 +618,33 @@ export const CbtPesertaPortal: React.FC<CbtPesertaPortalProps> = ({ student }) =
       updatedAt: new Date().toISOString(),
     });
 
+    // Catat activity log submit ujian
+    recordCbtActivityLogSupabase({
+      examId: sessionToSubmit.ujianId,
+      participantId: student.id,
+      participantName: student.fullName,
+      eventType: 'exam_submit',
+      title: 'Ujian Berhasil Disubmit',
+      description: `Peserta menyelesaikan ujian CBT secara resmi. Skor akhir: ${totalScore} (${isPass ? 'LULUS' : 'BELUM LULUS'}).`,
+      questionNumber: sessionToSubmit.questions.length,
+    });
+
+    // Kirim final heartbeat dengan status SELESAI
+    sendCbtHeartbeatSupabase({
+      exam_id: sessionToSubmit.ujianId,
+      participant_id: student.id,
+      user_id: student.id,
+      last_seen_at: new Date().toISOString(),
+      current_question: sessionToSubmit.questions.length,
+      answered_count: Object.keys(sessionToSubmit.answers).length,
+      total_questions: sessionToSubmit.questions.length,
+      progress_percentage: 100,
+      remaining_seconds: 0,
+      session_id: `ses_${sessionToSubmit.ujianId}_${student.id}`,
+      connection_status: 'offline',
+      server_start_time: sessionToSubmit.serverStartTime,
+      server_end_time: sessionToSubmit.serverEndTime,
+    });
 
     setLastCalculatedHasil(hasilRecord);
     setExamSession({ ...sessionToSubmit, remainingTimeSeconds: 0, isCompleted: true });

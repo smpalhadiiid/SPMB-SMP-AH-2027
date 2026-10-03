@@ -11,6 +11,7 @@ import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, Test
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF, generatePaymentReceiptPDF } from '../utils/pdfGenerator';
+import { downloadBrochureFile, downloadBamBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
 import {
   canDownloadStudentForm,
   canStudentDownloadDocuments,
@@ -3079,18 +3080,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <div className="text-xs text-slate-300">a.n. <b>{schoolInfo.bankAccountName || 'YAYASAN AL-HADIID CILEUNGSI'}</b></div>
                     </div>
 
-                    {schoolInfo.bamBrochureUrl && (
-                      <div className="pt-1">
-                        <a
-                          href={schoolInfo.bamBrochureUrl}
-                          download={schoolInfo.bamBrochureFileName || 'Rincian_Biaya_Awal_Masuk_BAM.pdf'}
+                    <div className="pt-2 space-y-2">
+                      {schoolInfo.bamBrochureUrl && (
+                        <button
+                          type="button"
+                          onClick={() => downloadBamBrochureFile(schoolInfo)}
                           className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow cursor-pointer"
                         >
                           <Download className="w-4 h-4 text-amber-300" />
-                          <span>Unduh Brosur PDF Rincian Biaya BAM Resmi</span>
-                        </a>
-                      </div>
-                    )}
+                          <span>Unduh Dokumen SK Rincian Biaya BAM Resmi</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => downloadBrochureFile(schoolInfo, costBreakdowns, schedulesList)}
+                        className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow cursor-pointer"
+                      >
+                        <Download className="w-4 h-4 text-emerald-200" />
+                        <span>{isImageBrochure(schoolInfo) ? 'Unduh Brosur Resmi SPMB (Gambar)' : 'Unduh Brosur Resmi SPMB (PDF)'}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Cost Itemization Breakdown */}

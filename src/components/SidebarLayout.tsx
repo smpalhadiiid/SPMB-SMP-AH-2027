@@ -107,6 +107,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
         { id: 'overview', label: 'Ringkasan Eksekutif', icon: BarChart3 },
         { id: 'reports', label: 'Laporan Pembayaran Formulir & BAM', icon: FileText },
         { id: 'filled_classes', label: 'Data Kelas Terisi', icon: Users },
+        { id: 'cbt_monitoring', label: 'Live Monitoring Ujian', icon: Clock },
       ],
     },
     super_admin: {

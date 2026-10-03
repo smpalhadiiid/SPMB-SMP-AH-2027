@@ -6,6 +6,7 @@ import { getKepalaSekolahName } from '../utils/storage';
 import { KepsekPaymentReportSection } from './payment/KepsekPaymentReportSection';
 import { FilledClassesSection } from './FilledClassesSection';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
+import { CbtMonitoring } from './cbt/CbtMonitoring';
 import {
   BarChart3, PieChart, Users, Award, School, Download, FileSpreadsheet,
   CheckCircle2, TrendingUp, ShieldCheck, FileText, ArrowUpRight
@@ -101,6 +102,16 @@ export const KepsekDashboard: React.FC<KepsekDashboardProps> = ({
       <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto space-y-6">
           <KepsekPaymentReportSection schoolInfo={schoolInfo} students={students} />
+        </div>
+      </div>
+    );
+  }
+
+  if (activeTab === 'cbt_monitoring') {
+    return (
+      <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <CbtMonitoring students={students} />
         </div>
       </div>
     );

@@ -4,12 +4,13 @@ import {
   Sparkles, CheckCircle2, Award, BookOpen, ShieldCheck, Download, Video,
   MessageSquare, ChevronRight, HelpCircle, GraduationCap, MapPin, 
   ArrowRight, HeartHandshake, Layers, Monitor, Phone, FileText, Check, X,
-  ExternalLink, Play, Bell, Settings, Palette, Eye, Save, Globe, Loader2, AlertCircle
+  ExternalLink, Play, Bell, Settings, Palette, Eye, Save, Globe, Loader2, AlertCircle,
+  Image as ImageIcon
 } from 'lucide-react';
 import { SchoolLogo } from './SchoolLogo';
 import { RealtimeQuotaSection } from './landing/RealtimeQuotaSection';
 import { BrochureSection } from './landing/BrochureSection';
-import { downloadBrochureFile, generateBrosurSpmbPDF, getBrochurePdfBlobUrl } from '../utils/brochureGenerator';
+import { downloadBrochureFile, downloadBamBrochureFile, generateBrosurSpmbPDF, getBrochurePdfBlobUrl, isImageBrochure } from '../utils/brochureGenerator';
 
 interface LandingPageProps {
   schoolInfo: SchoolInfo;
@@ -43,16 +44,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [showBrosurModal, setShowBrosurModal] = useState(false);
+  const [showImagePreviewModal, setShowImagePreviewModal] = useState(false);
   const [isDownloadingBrochure, setIsDownloadingBrochure] = useState(false);
   const [brochureStatusMsg, setBrochureStatusMsg] = useState<{ type: 'info' | 'success' | 'error'; text: string } | null>(null);
 
   const handleDownloadBrochure = async () => {
     setIsDownloadingBrochure(true);
-    setBrochureStatusMsg({ type: 'info', text: 'Menyiapkan berkas brosur resmi SPMB...' });
+    const isImage = isImageBrochure(schoolInfo);
+    setBrochureStatusMsg({ type: 'info', text: `Menyiapkan berkas brosur ${isImage ? 'gambar' : 'PDF'} resmi SPMB...` });
     try {
       const res = await downloadBrochureFile(schoolInfo, costBreakdowns, testSchedules);
       if (res.success) {
-        setBrochureStatusMsg({ type: 'success', text: '✓ Brosur berhasil diunduh ke perangkat Anda.' });
+        setBrochureStatusMsg({ type: 'success', text: `✓ Brosur ${isImage ? 'gambar' : 'PDF'} berhasil diunduh ke perangkat Anda.` });
         setTimeout(() => {
           setShowBrosurModal(false);
           setBrochureStatusMsg(null);
@@ -68,6 +71,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   };
 
   const handlePreviewBrochure = () => {
+    if (isImageBrochure(schoolInfo)) {
+      setShowImagePreviewModal(true);
+      return;
+    }
     try {
       const blobUrl = getBrochurePdfBlobUrl(schoolInfo, costBreakdowns, testSchedules);
       const win = window.open(blobUrl, '_blank');
@@ -653,15 +660,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     <span>B. Rincian Komponen Biaya Awal Masuk (BAM)</span>
                   </h3>
                   <div className="flex items-center gap-2">
-                    {schoolInfo.bamBrochureUrl && (
-                      <a
-                        href={schoolInfo.bamBrochureUrl}
-                        download={schoolInfo.bamBrochureFileName || 'BAM_SMP_2027.jpeg'}
-                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors"
+                    {schoolInfo.bamBrochureUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => downloadBamBrochureFile(schoolInfo)}
+                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        <span>Unduh Dokumen SK Resmi</span>
-                      </a>
+                        <span>Unduh Dokumen SK BAM Resmi</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleDownloadBrochure}
+                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh Brosur Rincian Biaya</span>
+                      </button>
                     )}
                     <span className="text-xs font-semibold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">
                       Sesuai SK Resmi Biaya Pendidikan
@@ -1026,90 +1042,170 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       )}
 
       {/* MODAL BROSUR DOWNLOAD */}
-      {showBrosurModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 text-slate-900 relative shadow-2xl space-y-4">
-            <button
-              onClick={() => {
-                setShowBrosurModal(false);
-                setBrochureStatusMsg(null);
-              }}
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
-            >
-              <X className="w-6 h-6" />
-            </button>
-            <h3 className="text-lg font-bold text-emerald-800 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-emerald-600" />
-              <span>Brosur Resmi SPMB {schoolInfo.academicYear}</span>
-            </h3>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Silakan unduh brosur lengkap untuk informasi persyaratan, alur pendaftaran, rincian biaya, program unggulan, dan kurikulum {schoolInfo.name}.
-            </p>
+      {showBrosurModal && (() => {
+        const isImage = isImageBrochure(schoolInfo);
+        const fileName = schoolInfo.brochureFileName || (isImage
+          ? `Brosur_Resmi_SPMB_SMP_AlHadiid_${(schoolInfo.academicYear || '2027_2028').replace('/', '_')}.jpg`
+          : `Brosur_Resmi_SPMB_SMP_AlHadiid_${(schoolInfo.academicYear || '2027_2028').replace('/', '_')}.pdf`);
 
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2.5">
-              <div className="flex justify-between">
-                <span className="font-semibold text-slate-600">Nama Dokumen:</span>
-                <span className="font-bold text-slate-900">
-                  {schoolInfo.brochureFileName || `Brosur_Resmi_SPMB_SMP_AlHadiid_${(schoolInfo.academicYear || '2027_2028').replace('/', '_')}.pdf`}
-                </span>
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 text-slate-900 relative shadow-2xl space-y-4">
+              <button
+                onClick={() => {
+                  setShowBrosurModal(false);
+                  setBrochureStatusMsg(null);
+                }}
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <h3 className="text-lg font-bold text-emerald-800 flex items-center gap-2">
+                {isImage ? <ImageIcon className="w-5 h-5 text-emerald-600" /> : <FileText className="w-5 h-5 text-emerald-600" />}
+                <span>Brosur Resmi SPMB {schoolInfo.academicYear}</span>
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Silakan unduh brosur lengkap untuk informasi persyaratan, alur pendaftaran, rincian biaya awal masuk (BAM), program unggulan, dan kurikulum {schoolInfo.name}.
+              </p>
+
+              {/* Visual Thumbnail if Image */}
+              {isImage && schoolInfo.brochureUrl && (
+                <div
+                  onClick={() => {
+                    setShowBrosurModal(false);
+                    setShowImagePreviewModal(true);
+                  }}
+                  className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 aspect-[16/9] max-h-48 relative group cursor-pointer"
+                >
+                  <img
+                    src={schoolInfo.brochureUrl}
+                    alt="Pratinjau Brosur Gambar"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
+                  <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-bold gap-1.5">
+                    <Eye className="w-4 h-4" />
+                    <span>Klik untuk Memperbesar</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2.5">
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-600">Nama Dokumen:</span>
+                  <span className="font-bold text-slate-900 truncate max-w-[220px]">
+                    {fileName}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-600">Format Dokumen:</span>
+                  <span className="text-slate-700 font-mono font-medium">
+                    {isImage ? `Gambar Digital (${schoolInfo.brochureFileType || 'JPG/PNG'})` : 'Adobe PDF Document (.pdf)'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-600">Status Dokumen:</span>
+                  <span className="text-emerald-700 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{schoolInfo.brochureUrl ? (isImage ? 'Brosur Gambar Khusus Terunggah' : 'Brosur Khusus Terunggah') : 'Brosur Resmi Sekolah'}</span>
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="font-semibold text-slate-600">Format Dokumen:</span>
-                <span className="text-slate-700 font-mono font-medium">Adobe PDF Document (.pdf)</span>
+
+              {brochureStatusMsg && (
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                  brochureStatusMsg.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : brochureStatusMsg.type === 'error'
+                    ? 'bg-rose-50 text-rose-800 border border-rose-200'
+                    : 'bg-blue-50 text-blue-800 border border-blue-200'
+                }`}>
+                  {brochureStatusMsg.type === 'info' && <Loader2 className="w-4 h-4 animate-spin shrink-0 text-blue-600" />}
+                  {brochureStatusMsg.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />}
+                  {brochureStatusMsg.type === 'error' && <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />}
+                  <span>{brochureStatusMsg.text}</span>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadBrochure}
+                  disabled={isDownloadingBrochure}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  {isDownloadingBrochure ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Mengunduh Brosur...</span>
+                    </>
+                  ) : (
+                    <>
+                      {isImage ? <ImageIcon className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                      <span>{isImage ? 'Unduh Brosur Gambar' : 'Unduh Brosur PDF'}</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePreviewBrochure}
+                  disabled={isDownloadingBrochure}
+                  className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-300"
+                >
+                  <Eye className="w-4 h-4 text-slate-600" />
+                  <span>{isImage ? 'Pratinjau Gambar' : 'Pratinjau / Buka'}</span>
+                </button>
               </div>
-              <div className="flex justify-between">
-                <span className="font-semibold text-slate-600">Status Dokumen:</span>
-                <span className="text-emerald-700 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{schoolInfo.brochureUrl ? 'Brosur Khusus Terunggah' : 'Brosur Resmi Sekolah'}</span>
-                </span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* MODAL PRATINJAU GAMBAR KHUSUS UNTUK CALON MURID */}
+      {showImagePreviewModal && schoolInfo.brochureUrl && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full h-[90vh] flex flex-col overflow-hidden shadow-2xl text-white">
+            <div className="p-4 sm:px-6 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                  <ImageIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white truncate max-w-[280px] sm:max-w-md">
+                    {schoolInfo.brochureFileName || 'Brosur Resmi SPMB (Gambar)'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Pratinjau Brosur Gambar Resmi SMPS Al-Hadiid Cileungsi
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadBrochure}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Unduh Gambar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowImagePreviewModal(false)}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  title="Tutup"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
             </div>
 
-            {brochureStatusMsg && (
-              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                brochureStatusMsg.type === 'success'
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  : brochureStatusMsg.type === 'error'
-                  ? 'bg-rose-50 text-rose-800 border border-rose-200'
-                  : 'bg-blue-50 text-blue-800 border border-blue-200'
-              }`}>
-                {brochureStatusMsg.type === 'info' && <Loader2 className="w-4 h-4 animate-spin shrink-0 text-blue-600" />}
-                {brochureStatusMsg.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />}
-                {brochureStatusMsg.type === 'error' && <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />}
-                <span>{brochureStatusMsg.text}</span>
-              </div>
-            )}
-
-            <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={handleDownloadBrochure}
-                disabled={isDownloadingBrochure}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-              >
-                {isDownloadingBrochure ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Mengunduh Brosur...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    <span>Unduh Brosur PDF</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={handlePreviewBrochure}
-                disabled={isDownloadingBrochure}
-                className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-300"
-              >
-                <Eye className="w-4 h-4 text-slate-600" />
-                <span>Pratinjau / Buka</span>
-              </button>
+            <div className="flex-1 bg-slate-950 relative overflow-auto flex items-center justify-center p-4">
+              <img
+                src={schoolInfo.brochureUrl}
+                alt="Brosur Resmi SPMB SMP Al-Hadiid"
+                className="max-w-full max-h-[75vh] object-contain rounded-xl shadow-2xl"
+              />
             </div>
           </div>
         </div>

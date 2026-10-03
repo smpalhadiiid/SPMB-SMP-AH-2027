@@ -3,16 +3,20 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // =====================================================================
 // KONFIGURASI EXPRESS & PORT
 // =====================================================================
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -635,6 +639,104 @@ app.post('/api/soal', requireAuth, requireRole('admin', 'super_admin'), async (r
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Gagal menyimpan soal.' });
+  }
+});
+
+// =====================================================================
+// API ROUTES: MONITORING LIVE UJIAN / CBT REAL-TIME
+// =====================================================================
+
+// POST /api/cbt/heartbeat: Menerima heartbeat berkala dari peserta ujian
+app.post('/api/cbt/heartbeat', async (req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
+
+  const payload = req.body;
+  if (!payload || !payload.exam_id || !payload.participant_id) {
+    return res.status(400).json({ success: false, message: 'Data heartbeat tidak lengkap (exam_id & participant_id wajib).' });
+  }
+
+  try {
+    const key = `cbt_sessions_${payload.exam_id}`;
+    // Ambil sesi existing untuk ujian ini
+    const { data: existingRow } = await sb.from('spmb_app_state').select('payload').eq('key', key).maybeSingle();
+    const sessions = (existingRow?.payload && typeof existingRow.payload === 'object') ? existingRow.payload : {};
+    sessions[payload.participant_id] = {
+      ...payload,
+      last_seen_at: payload.last_seen_at || new Date().toISOString(),
+    };
+
+    await sb.from('spmb_app_state').upsert({
+      key,
+      payload: sessions,
+      updated_at: new Date().toISOString(),
+    });
+
+    return res.json({ success: true, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err?.message || 'Gagal memproses heartbeat' });
+  }
+});
+
+// POST /api/cbt/activity: Catat aktivitas peserta ujian (buka soal, simpan jawaban, tab switch, dsb)
+app.post('/api/cbt/activity', async (req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
+
+  const activity = req.body;
+  if (!activity || !activity.examId || !activity.participantId) {
+    return res.status(400).json({ success: false, message: 'Data aktivitas tidak valid.' });
+  }
+
+  try {
+    const key = `cbt_activities_${activity.examId}`;
+    const { data: existingRow } = await sb.from('spmb_app_state').select('payload').eq('key', key).maybeSingle();
+    const list: any[] = Array.isArray(existingRow?.payload) ? existingRow.payload : [];
+    list.unshift({
+      ...activity,
+      id: activity.id || `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: activity.timestamp || new Date().toISOString(),
+    });
+
+    // Batasi list maksimal 150 log terbaru
+    const capped = list.slice(0, 150);
+    await sb.from('spmb_app_state').upsert({
+      key,
+      payload: capped,
+      updated_at: new Date().toISOString(),
+    });
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err?.message || 'Gagal menyimpan aktivitas' });
+  }
+});
+
+// GET /api/cbt/live/:examId: Ambil status live monitoring dari database Supabase
+app.get('/api/cbt/live/:examId', async (req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
+
+  const { examId } = req.params;
+  try {
+    const sessionsKey = `cbt_sessions_${examId}`;
+    const activitiesKey = `cbt_activities_${examId}`;
+
+    const [sessionsRes, activitiesRes, hasilRes] = await Promise.all([
+      sb.from('spmb_app_state').select('payload').eq('key', sessionsKey).maybeSingle(),
+      sb.from('spmb_app_state').select('payload').eq('key', activitiesKey).maybeSingle(),
+      sb.from('hasil_ujian').select('*').eq('ujian_id', examId),
+    ]);
+
+    return res.json({
+      success: true,
+      sessions: sessionsRes.data?.payload || {},
+      activities: activitiesRes.data?.payload || [],
+      hasilList: hasilRes.data || [],
+      serverTime: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Gagal mengambil data monitoring live.' });
   }
 });
 
@@ -1636,23 +1738,104 @@ async function ensureDefaultSystemAccounts() {
 }
 
 async function startServer() {
-  const distPath = path.join(process.cwd(), 'dist');
-  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
   const isCloudRun = !!process.env.K_SERVICE || !!process.env.K_REVISION || !!process.env.CLOUD_RUN_JOB;
-  const isProduction = process.env.NODE_ENV === 'production' || isCloudRun || (hasDist && process.env.NODE_ENV !== 'development');
+  const isProdEnv = process.env.NODE_ENV === 'production' || isCloudRun;
 
-  if (!isProduction) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(distPath));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+  // Resolusi direktori dist secara komprehensif
+  const candidateDistPaths = [
+    path.resolve(process.cwd(), 'dist'),
+    path.resolve(__dirname, 'dist'),
+    path.resolve('/app/applet/dist'),
+  ];
+
+  let activeDistPath = '';
+  let activeIndexPath = '';
+
+  for (const p of candidateDistPaths) {
+    const indexPath = path.join(p, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      activeDistPath = p;
+      activeIndexPath = indexPath;
+      break;
+    }
   }
+
+  const isProduction = isProdEnv || !!activeIndexPath;
+
+  if (activeDistPath && fs.existsSync(activeDistPath)) {
+    app.use(express.static(activeDistPath));
+  }
+
+  if (isProduction) {
+    app.get('*', (_req: Request, res: Response) => {
+      // Periksa kembali jika file baru selesai dibangun
+      let targetFile = activeIndexPath;
+      if (!targetFile || !fs.existsSync(targetFile)) {
+        for (const p of candidateDistPaths) {
+          const idx = path.join(p, 'index.html');
+          if (fs.existsSync(idx)) {
+            targetFile = idx;
+            activeIndexPath = idx;
+            break;
+          }
+        }
+      }
+
+      if (targetFile && fs.existsSync(targetFile)) {
+        res.sendFile(targetFile, (err) => {
+          if (err && !res.headersSent) {
+            console.error('[SPMB Server] sendFile error:', err);
+            res.status(500).send('Error loading SPMB Application: ' + (err.message || 'File read error'));
+          }
+        });
+      } else {
+        res.status(200).send(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SPMB SMP Al-Hadiid Cileungsi</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0f172a; color: #fff; text-align: center; }
+    .card { background: #1e293b; padding: 2.5rem; border-radius: 1.5rem; max-width: 500px; border: 1px solid #334155; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #10b981; }
+    p { color: #94a3b8; font-size: 0.95rem; line-height: 1.6; }
+    .btn { display: inline-block; margin-top: 1rem; padding: 0.75rem 1.5rem; background: #10b981; color: #fff; text-decoration: none; border-radius: 0.75rem; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>SPMB SMP Al-Hadiid Cileungsi</h1>
+    <p>Aplikasi sedang menginisialisasi atau memuat aset statis. Silakan muat ulang halaman ini dalam beberapa saat.</p>
+    <a href="/" class="btn" onclick="location.reload(); return false;">Muat Ulang Halaman</a>
+  </div>
+</body>
+</html>`);
+      }
+    });
+  } else {
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.error('[SPMB Server] Vite server initialization error:', viteErr);
+    }
+  }
+
+  // Global Error Handler agar server tidak crash
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('[SPMB Server Global Error]:', err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        message: err?.message || 'Terjadi kesalahan pada server SPMB.',
+      });
+    }
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SPMB Server] Server API aktif di http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
