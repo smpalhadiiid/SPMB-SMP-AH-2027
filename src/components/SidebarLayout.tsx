@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UserAccount, UserRole, StudentData } from '../types';
+import { UserAccount, UserRole, StudentData, WebsiteConfig } from '../types';
 import {
   GraduationCap, ShieldAlert, ShieldCheck, Users, FileText,
   CreditCard, Award, CheckCircle2, School, Clock, LogOut,
@@ -10,6 +10,7 @@ import {
 import { SchoolLogo } from './SchoolLogo';
 import { SupabaseBadge } from './SupabaseBadge';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
+import { getStoredWebsiteConfig } from '../utils/storage';
 
 interface SidebarLayoutProps {
   currentUser: UserAccount | null;
@@ -23,6 +24,7 @@ interface SidebarLayoutProps {
   onTabChange?: (tab: string) => void;
   studentData?: StudentData;
   onRefreshAllData?: () => void;
+  websiteConfig?: WebsiteConfig;
 }
 
 export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
@@ -37,9 +39,12 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
   onTabChange,
   studentData,
   onRefreshAllData,
+  websiteConfig,
 }) => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [cbtMenuOpen, setCbtMenuOpen] = useState(true);
+
+  const activeConfig = websiteConfig || getStoredWebsiteConfig();
 
   // Role details metadata
   const roleConfig = {
@@ -526,6 +531,23 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
             </div>
           </div>
         </header>
+
+        {/* RUNNING ANNOUNCEMENT BANNER FOR DASHBOARDS */}
+        {activeConfig?.showAnnouncementBanner !== false && activeConfig?.announcementBannerText && (
+          <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 text-white text-xs py-2 px-3 sm:px-4 shadow-sm flex items-center overflow-hidden border-b border-slate-800 relative z-20">
+            <div className="shrink-0 bg-slate-950 py-0.5 px-2 rounded-md flex items-center gap-1.5 border border-emerald-500/30 mr-2 sm:mr-3 shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-extrabold text-emerald-300 uppercase tracking-wider flex items-center gap-1">
+                <Bell className="w-3 h-3 text-emerald-400" /> PENGUMUMAN
+              </span>
+            </div>
+            <div className="overflow-hidden w-full whitespace-nowrap relative flex items-center">
+              <div className="animate-marquee text-emerald-200 font-medium tracking-wide">
+                {activeConfig.announcementBannerText} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 🔥 {activeConfig.announcementBannerText} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 📢 {activeConfig.announcementBannerText}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Scrollable Dashboard View Content */}
         <main className="flex-1 overflow-x-hidden">

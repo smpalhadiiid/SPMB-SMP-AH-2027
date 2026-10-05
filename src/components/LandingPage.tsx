@@ -10,7 +10,7 @@ import {
 import { SchoolLogo } from './SchoolLogo';
 import { RealtimeQuotaSection } from './landing/RealtimeQuotaSection';
 import { BrochureSection } from './landing/BrochureSection';
-import { downloadBrochureFile, downloadBamBrochureFile, generateBrosurSpmbPDF, getBrochurePdfBlobUrl, isImageBrochure } from '../utils/brochureGenerator';
+import { downloadBrochureFile, generateBrosurSpmbPDF, getBrochurePdfBlobUrl, isImageBrochure } from '../utils/brochureGenerator';
 
 interface LandingPageProps {
   schoolInfo: SchoolInfo;
@@ -245,7 +245,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       )}
 
       {/* RUNNING ANNOUNCEMENT BANNER */}
-      {websiteConfig?.showAnnouncementBanner && websiteConfig?.announcementBannerText && (
+      {websiteConfig?.showAnnouncementBanner !== false && websiteConfig?.announcementBannerText && (
         <div className="bg-gradient-to-r from-emerald-900 via-slate-900 to-rose-950 text-white text-xs py-2.5 font-semibold shadow-md flex items-center overflow-hidden border-b border-white/10 relative">
           <div className="px-4 z-20 shrink-0 bg-slate-950 py-1 flex items-center gap-2 border-r border-slate-800 shadow-md">
             <span className="px-2 py-0.5 bg-rose-600 text-white font-bold text-[10px] rounded uppercase shrink-0 animate-pulse flex items-center gap-1">
@@ -254,7 +254,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
           <div className="overflow-hidden w-full whitespace-nowrap relative flex items-center">
             <div className="animate-marquee pl-4 text-emerald-200 font-medium tracking-wide">
-              {websiteConfig.announcementBannerText} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 🔥 {websiteConfig.announcementBannerText}
+              {websiteConfig.announcementBannerText} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 🔥 {websiteConfig.announcementBannerText} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 📢 {websiteConfig.announcementBannerText}
             </div>
           </div>
         </div>
@@ -660,24 +660,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     <span>B. Rincian Komponen Biaya Awal Masuk (BAM)</span>
                   </h3>
                   <div className="flex items-center gap-2">
-                    {schoolInfo.bamBrochureUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => downloadBamBrochureFile(schoolInfo)}
-                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    {schoolInfo.bamBrochureUrl && (
+                      <a
+                        href={schoolInfo.bamBrochureUrl}
+                        download={schoolInfo.bamBrochureFileName || 'BAM_SMP_2027.jpeg'}
+                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        <span>Unduh Dokumen SK BAM Resmi</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleDownloadBrochure}
-                        className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Unduh Brosur Rincian Biaya</span>
-                      </button>
+                        <span>Unduh Dokumen SK Resmi</span>
+                      </a>
                     )}
                     <span className="text-xs font-semibold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">
                       Sesuai SK Resmi Biaya Pendidikan

@@ -6,17 +6,21 @@ import {
   saveAllJawabanPesertaSupabase,
   saveHasilUjianSupabase,
   fetchHasilUjianSupabase,
-  saveLogUjianSupabase,
+  getValidDatabaseUjianId,
 } from '../services/cbtSupabaseService';
 import {
   sendCbtHeartbeatSupabase,
   recordCbtActivityLogSupabase,
+  getOrCreateParticipantChannel,
+  CBT_MONITORING_CONFIG,
 } from '../services/cbtMonitoringService';
+import { supabase } from '../utils/supabaseClient';
+import toast from 'react-hot-toast';
 import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule } from '../types';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF, generatePaymentReceiptPDF } from '../utils/pdfGenerator';
-import { downloadBrochureFile, downloadBamBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
+import { downloadBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
 import {
   canDownloadStudentForm,
   canStudentDownloadDocuments,
@@ -43,6 +47,7 @@ import {
   downloadPaymentProof,
   downloadPaymentProofFile,
   getPaymentProofSignedUrl,
+  getCachedPaymentProofUrl,
   isPdfProof,
 } from '../utils/paymentProofStorage';
 import {
@@ -178,6 +183,54 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   });
   const [initialPaymentDateInput, setInitialPaymentDateInput] = useState(studentData.initialPaymentDate || new Date().toISOString().split('T')[0]);
   const [initialPaymentAmountInput, setInitialPaymentAmountInput] = useState<number | string>(studentData.initialPaymentAmount || '');
+
+  // Signed URL state for proof rendering
+  const [resolvedFormProofUrl, setResolvedFormProofUrl] = useState<string | null>(() => getCachedPaymentProofUrl(studentData.formPaymentProofUrl));
+  const [resolvedBamProofUrl, setResolvedBamProofUrl] = useState<string | null>(() => getCachedPaymentProofUrl(studentData.initialPaymentProofUrl));
+
+  useEffect(() => {
+    const raw = formPaymentProof || studentData.formPaymentProofUrl;
+    if (!raw) {
+      setResolvedFormProofUrl(null);
+      return;
+    }
+    if (raw.startsWith('data:') || raw.startsWith('blob:')) {
+      setResolvedFormProofUrl(raw);
+      return;
+    }
+    const cached = getCachedPaymentProofUrl(raw);
+    if (cached) {
+      setResolvedFormProofUrl(cached);
+      return;
+    }
+    let isMounted = true;
+    getPaymentProofSignedUrl(raw, 3600).then((res) => {
+      if (isMounted && res.url) setResolvedFormProofUrl(res.url);
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, [formPaymentProof, studentData.formPaymentProofUrl]);
+
+  useEffect(() => {
+    const raw = initialPaymentProof || studentData.initialPaymentProofUrl;
+    if (!raw) {
+      setResolvedBamProofUrl(null);
+      return;
+    }
+    if (raw.startsWith('data:') || raw.startsWith('blob:')) {
+      setResolvedBamProofUrl(raw);
+      return;
+    }
+    const cached = getCachedPaymentProofUrl(raw);
+    if (cached) {
+      setResolvedBamProofUrl(cached);
+      return;
+    }
+    let isMounted = true;
+    getPaymentProofSignedUrl(raw, 3600).then((res) => {
+      if (isMounted && res.url) setResolvedBamProofUrl(res.url);
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, [initialPaymentProof, studentData.initialPaymentProofUrl]);
   const [initialPaymentTypeInput, setInitialPaymentTypeInput] = useState<'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3'>('Lunas');
   const [initialPaymentNotesInput, setInitialPaymentNotesInput] = useState(studentData.initialPaymentNotes || '');
   const [showBamImageModal, setShowBamImageModal] = useState(false);
@@ -300,80 +353,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [examTimeLeft, setExamTimeLeft] = useState(5400); // 90 mins = 5400s
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-
-  // CBT Exam Tracking Refs untuk sinkronisasi Realtime Supabase
-  const examStartTimeRef = React.useRef<string | null>(null);
-  const examEndTimeRef = React.useRef<string | null>(null);
-  const activeExamIdRef = React.useRef<string>('29ead736-1ef5-4c3e-b287-05ad404c0d9f');
-
-  // Deteksi Aktivitas Peserta Realtime (Tab switch / Blur / Offline / Reconnect)
-  useEffect(() => {
-    if (!isTakingExam) return;
-
-    const currentExamId = activeExamIdRef.current;
-
-    const handleWindowBlur = () => {
-      recordCbtActivityLogSupabase({
-        examId: currentExamId,
-        participantId: studentData.id,
-        participantName: studentData.fullName,
-        eventType: 'window_blur',
-        title: 'Beralih Tab / Jendela',
-        description: `Peserta beralih ke jendela lain pada soal nomor ${currentQuestionIndex + 1}`,
-        questionNumber: currentQuestionIndex + 1,
-        isSuspicious: true,
-      });
-    };
-
-    const handleWindowFocus = () => {
-      recordCbtActivityLogSupabase({
-        examId: currentExamId,
-        participantId: studentData.id,
-        participantName: studentData.fullName,
-        eventType: 'window_blur',
-        title: 'Kembali ke Layar Ujian',
-        description: `Peserta kembali ke layar ujian pada nomor ${currentQuestionIndex + 1}`,
-        questionNumber: currentQuestionIndex + 1,
-      });
-    };
-
-    const handleOffline = () => {
-      recordCbtActivityLogSupabase({
-        examId: currentExamId,
-        participantId: studentData.id,
-        participantName: studentData.fullName,
-        eventType: 'network_offline',
-        title: 'Koneksi Terputus',
-        description: 'Perangkat peserta kehilangan koneksi internet (offline).',
-        questionNumber: currentQuestionIndex + 1,
-        isSuspicious: true,
-      });
-    };
-
-    const handleOnline = () => {
-      recordCbtActivityLogSupabase({
-        examId: currentExamId,
-        participantId: studentData.id,
-        participantName: studentData.fullName,
-        eventType: 'network_reconnect',
-        title: 'Koneksi Pulih',
-        description: 'Perangkat peserta kembali terhubung ke internet.',
-        questionNumber: currentQuestionIndex + 1,
-      });
-    };
-
-    window.addEventListener('blur', handleWindowBlur);
-    window.addEventListener('focus', handleWindowFocus);
-    window.addEventListener('offline', handleOffline);
-    window.addEventListener('online', handleOnline);
-
-    return () => {
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('focus', handleWindowFocus);
-      window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('online', handleOnline);
-    };
-  }, [isTakingExam, currentQuestionIndex, studentData.id, studentData.fullName]);
+  const [activeUjianDatabaseId, setActiveUjianDatabaseId] = useState<string>('');
 
   // Sinkronisasi Soal Dinamis dari Database Supabase & Realtime Multi-Device
   useEffect(() => {
@@ -402,7 +382,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     };
   }, []);
 
-  // Timer Countdown & Heartbeat Otomatis ke Panitia Admin Supabase (Setiap 15 detik)
+  // Timer Countdown Effect & Heartbeat (dikirim berkala setiap 12 detik ke Supabase)
   useEffect(() => {
     let timer: any;
     if (isTakingExam && examTimeLeft > 0) {
@@ -414,49 +394,121 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             return 0;
           }
 
-          // Kirim Heartbeat ke Supabase setiap 15 detik
-          if (prev % 15 === 0) {
+          const nextSec = prev - 1;
+          // Periodik kirim Heartbeat ke Supabase setiap 12 detik
+          if (nextSec % 12 === 0 && activeUjianDatabaseId) {
             const ansCount = Object.keys(examAnswers).length;
-            const totQ = questionsList.length;
-            const pct = totQ > 0 ? Math.min(100, Math.round((ansCount / totQ) * 100)) : 0;
-            const exId = activeExamIdRef.current;
+            const totQ = questionsList.length || 1;
+            const progPct = Math.min(100, Math.round((ansCount / totQ) * 100));
 
             sendCbtHeartbeatSupabase({
-              exam_id: exId,
+              exam_id: activeUjianDatabaseId,
               participant_id: studentData.id,
               user_id: studentData.id,
-              student_name: studentData.fullName,
-              registration_number: studentData.registrationNumber,
               last_seen_at: new Date().toISOString(),
               current_question: currentQuestionIndex + 1,
               answered_count: ansCount,
               total_questions: totQ,
-              progress_percentage: pct,
-              remaining_seconds: prev - 1,
-              session_id: `ses_${exId}_${studentData.id}`,
+              progress_percentage: progPct,
+              remaining_seconds: nextSec,
+              session_id: `ses_${activeUjianDatabaseId}_${studentData.id}`,
               connection_status: navigator.onLine ? 'online' : 'offline',
-              server_start_time: examStartTimeRef.current || undefined,
-              server_end_time: examEndTimeRef.current || undefined,
-            });
-
-            saveLogUjianSupabase({
-              ujianId: exId,
-              pesertaId: studentData.id,
-              namaPeserta: studentData.fullName,
-              nomorSoalTerakhir: currentQuestionIndex + 1,
-              sisaWaktuDetik: prev - 1,
-              statusOnline: navigator.onLine ? 'ONLINE' : 'OFFLINE',
-              isSubmitted: false,
-              updatedAt: new Date().toISOString(),
-            });
+            }).catch(() => {});
           }
 
-          return prev - 1;
+          return nextSec;
         });
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [isTakingExam, examTimeLeft, examAnswers, questionsList.length, currentQuestionIndex, studentData]);
+  }, [isTakingExam, examTimeLeft, activeUjianDatabaseId, currentQuestionIndex, examAnswers, questionsList.length]);
+
+  // Window Focus, Blur, & Network Activity Detection saat Ujian Berlangsung
+  useEffect(() => {
+    if (!isTakingExam || !activeUjianDatabaseId) return;
+
+    const handleWindowBlur = () => {
+      recordCbtActivityLogSupabase({
+        examId: activeUjianDatabaseId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'window_blur',
+        title: 'Beralih Tab / Jendela',
+        description: `Peserta beralih jendela/tab pada soal nomor ${currentQuestionIndex + 1}`,
+        questionNumber: currentQuestionIndex + 1,
+        isSuspicious: true,
+      });
+
+      toast('⚠️ Peringatan Pengawas: Anda terdeteksi beralih jendela/tab. Aktivitas ini tercatat dalam sistem monitoring ujian!', {
+        icon: '⚠️',
+        duration: 4000,
+        style: { borderRadius: '12px', background: '#1e1b4b', color: '#fde047', fontWeight: 'bold' },
+      });
+    };
+
+    const handleOffline = () => {
+      recordCbtActivityLogSupabase({
+        examId: activeUjianDatabaseId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'network_offline',
+        title: 'Koneksi Terputus (Offline)',
+        description: 'Perangkat peserta kehilangan sambungan internet.',
+        questionNumber: currentQuestionIndex + 1,
+        isSuspicious: true,
+      });
+
+      sendCbtHeartbeatSupabase({
+        exam_id: activeUjianDatabaseId,
+        participant_id: studentData.id,
+        user_id: studentData.id,
+        last_seen_at: new Date().toISOString(),
+        current_question: currentQuestionIndex + 1,
+        answered_count: Object.keys(examAnswers).length,
+        total_questions: questionsList.length,
+        progress_percentage: Math.min(100, Math.round((Object.keys(examAnswers).length / (questionsList.length || 1)) * 100)),
+        remaining_seconds: examTimeLeft,
+        session_id: `ses_${activeUjianDatabaseId}_${studentData.id}`,
+        connection_status: 'offline',
+      });
+    };
+
+    const handleOnline = () => {
+      recordCbtActivityLogSupabase({
+        examId: activeUjianDatabaseId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'network_reconnect',
+        title: 'Koneksi Pulih',
+        description: 'Perangkat peserta kembali online.',
+        questionNumber: currentQuestionIndex + 1,
+      });
+
+      sendCbtHeartbeatSupabase({
+        exam_id: activeUjianDatabaseId,
+        participant_id: studentData.id,
+        user_id: studentData.id,
+        last_seen_at: new Date().toISOString(),
+        current_question: currentQuestionIndex + 1,
+        answered_count: Object.keys(examAnswers).length,
+        total_questions: questionsList.length,
+        progress_percentage: Math.min(100, Math.round((Object.keys(examAnswers).length / (questionsList.length || 1)) * 100)),
+        remaining_seconds: examTimeLeft,
+        session_id: `ses_${activeUjianDatabaseId}_${studentData.id}`,
+        connection_status: 'online',
+      });
+    };
+
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [isTakingExam, activeUjianDatabaseId, currentQuestionIndex, examAnswers, questionsList.length, examTimeLeft]);
 
   const [showRetakeConfirmModal, setShowRetakeConfirmModal] = useState(false);
 
@@ -557,13 +609,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
     const duration = activeSched?.durationMinutes || 90;
-    const examId = activeSched?.id || '29ead736-1ef5-4c3e-b287-05ad404c0d9f';
-    activeExamIdRef.current = examId;
-
-    const startTimeIso = new Date().toISOString();
-    const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
-    examStartTimeRef.current = startTimeIso;
-    examEndTimeRef.current = endTimeIso;
 
     const prevRecord = {
       date: new Date().toISOString(),
@@ -592,35 +637,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setHesitantAnswers({});
     setExamTimeLeft(duration * 60);
     setIsTakingExam(true);
-
-    // Kirim sinyal mulai ujian online ke Supabase Live Monitoring
-    sendCbtHeartbeatSupabase({
-      exam_id: examId,
-      participant_id: studentData.id,
-      user_id: studentData.id,
-      student_name: studentData.fullName,
-      registration_number: studentData.registrationNumber,
-      last_seen_at: startTimeIso,
-      current_question: 1,
-      answered_count: 0,
-      total_questions: bank.length,
-      progress_percentage: 0,
-      remaining_seconds: duration * 60,
-      session_id: `ses_${examId}_${studentData.id}`,
-      connection_status: 'online',
-      server_start_time: startTimeIso,
-      server_end_time: endTimeIso,
-    });
-
-    recordCbtActivityLogSupabase({
-      examId,
-      participantId: studentData.id,
-      participantName: studentData.fullName,
-      eventType: 'exam_start',
-      title: 'Memulai Ujian Diulang (Remedial)',
-      description: `Peserta memulai sesi ujian remedial dengan ${bank.length} butir soal.`,
-      questionNumber: 1,
-    });
   };
 
   const handleStartExam = async () => {
@@ -649,13 +665,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
     const duration = activeSched?.durationMinutes || 90;
-    const examId = activeSched?.id || '29ead736-1ef5-4c3e-b287-05ad404c0d9f';
-    activeExamIdRef.current = examId;
 
-    const startTimeIso = new Date().toISOString();
-    const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
-    examStartTimeRef.current = startTimeIso;
-    examEndTimeRef.current = endTimeIso;
+    // Resolve Database Ujian ID for monitoring
+    const validDbUjianId = await getValidDatabaseUjianId(activeSched?.id);
+    setActiveUjianDatabaseId(validDbUjianId);
+
+    // Buka Channel Realtime untuk Peserta
+    getOrCreateParticipantChannel(validDbUjianId);
 
     setQuestionsList(bank);
     setCurrentQuestionIndex(0);
@@ -664,97 +680,96 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setExamTimeLeft(duration * 60);
     setIsTakingExam(true);
 
-    // Kirim sinyal mulai ujian ke Supabase Live Monitoring
+    const startTimeIso = new Date().toISOString();
+    const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
+
+    // 1. Update status murid menjadi isTestActive: true
+    const updatedStudent: StudentData = {
+      ...studentData,
+      isTestActive: true,
+      testSubmitted: false,
+    };
+    onUpdateStudentData(updatedStudent);
+    supabase.from('students').update({
+      is_test_active: true,
+      test_submitted: false,
+      updated_at: startTimeIso,
+    }).eq('id', studentData.id).catch(() => {});
+
+    // 2. Kirim Heartbeat pertama ke Supabase Realtime & Database SSOT
     sendCbtHeartbeatSupabase({
-      exam_id: examId,
+      exam_id: validDbUjianId,
       participant_id: studentData.id,
       user_id: studentData.id,
-      student_name: studentData.fullName,
-      registration_number: studentData.registrationNumber,
       last_seen_at: startTimeIso,
       current_question: 1,
       answered_count: 0,
       total_questions: bank.length,
       progress_percentage: 0,
       remaining_seconds: duration * 60,
-      session_id: `ses_${examId}_${studentData.id}`,
+      session_id: `ses_${validDbUjianId}_${studentData.id}`,
       connection_status: 'online',
       server_start_time: startTimeIso,
       server_end_time: endTimeIso,
-    });
+    }).catch(() => {});
 
+    // 3. Catat aktivitas mulai ujian
     recordCbtActivityLogSupabase({
-      examId,
+      examId: validDbUjianId,
       participantId: studentData.id,
       participantName: studentData.fullName,
       eventType: 'exam_start',
       title: 'Memulai Ujian CBT',
-      description: `Peserta mulai mengerjakan ujian dengan ${bank.length} butir soal.`,
+      description: `Peserta mulai mengerjakan ujian online dengan ${bank.length} butir soal.`,
       questionNumber: 1,
-    });
-
-    saveLogUjianSupabase({
-      ujianId: examId,
-      pesertaId: studentData.id,
-      namaPeserta: studentData.fullName,
-      nomorSoalTerakhir: 1,
-      sisaWaktuDetik: duration * 60,
-      statusOnline: 'ONLINE',
-      isSubmitted: false,
-      updatedAt: startTimeIso,
-    });
+    }).catch(() => {});
   };
 
   const handleSelectOption = (qId: string, optionIdx: number) => {
     const updatedAnswers = { ...examAnswers, [qId]: optionIdx };
     setExamAnswers(updatedAnswers);
+    const qNum = currentQuestionIndex + 1;
+    const optLetter = ['A', 'B', 'C', 'D'][optionIdx] || 'A';
+    const validUjianId = activeUjianDatabaseId || '29ead736-1ef5-4c3e-b287-05ad404c0d9f';
 
-    const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
-    const examId = activeSched?.id || activeExamIdRef.current;
-
-    // 1. Jawaban ujian calon murid langsung masuk ke database Supabase tabel jawaban_peserta
+    // 1. Simpan jawaban ke database Supabase tabel jawaban_peserta
     saveJawabanPesertaSupabase({
-      ujianId: examId,
+      ujianId: validUjianId,
       pesertaId: studentData.id,
       soalId: qId,
       jawabanIndex: optionIdx,
       isRaguRagu: Boolean(hesitantAnswers[qId]),
     }).catch(err => console.warn('saveJawabanPesertaSupabase real-time warning:', err));
 
-    // 2. Kirim update heartbeat live seketika ke Panitia Admin (Live Monitoring)
-    const ansCount = Object.keys(updatedAnswers).length;
-    const totQ = questionsList.length;
-    const pct = totQ > 0 ? Math.min(100, Math.round((ansCount / totQ) * 100)) : 0;
-    const optLetter = ['A', 'B', 'C', 'D'][optionIdx] || 'A';
-    const qNum = currentQuestionIndex + 1;
-
-    sendCbtHeartbeatSupabase({
-      exam_id: examId,
-      participant_id: studentData.id,
-      user_id: studentData.id,
-      student_name: studentData.fullName,
-      registration_number: studentData.registrationNumber,
-      last_seen_at: new Date().toISOString(),
-      current_question: qNum,
-      answered_count: ansCount,
-      total_questions: totQ,
-      progress_percentage: pct,
-      remaining_seconds: examTimeLeft,
-      session_id: `ses_${examId}_${studentData.id}`,
-      connection_status: 'online',
-      server_start_time: examStartTimeRef.current || undefined,
-      server_end_time: examEndTimeRef.current || undefined,
-    });
-
+    // 2. Catat log aktivitas menjawab soal
     recordCbtActivityLogSupabase({
-      examId,
+      examId: validUjianId,
       participantId: studentData.id,
       participantName: studentData.fullName,
       eventType: 'save_answer',
       title: 'Menyimpan Jawaban',
-      description: `Menjawab soal No. ${qNum} (Pilihan ${optLetter})`,
+      description: `Menyimpan jawaban nomor ${qNum} (Pilihan ${optLetter})`,
       questionNumber: qNum,
-    });
+    }).catch(() => {});
+
+    // 3. Kirim heartbeat seketika agar progress bar di layar panitia langsung terupdate real-time
+    const ansCount = Object.keys(updatedAnswers).length;
+    const totQ = questionsList.length || 1;
+    const progPct = Math.min(100, Math.round((ansCount / totQ) * 100));
+
+    sendCbtHeartbeatSupabase({
+      exam_id: validUjianId,
+      participant_id: studentData.id,
+      user_id: studentData.id,
+      last_seen_at: new Date().toISOString(),
+      current_question: qNum,
+      answered_count: ansCount,
+      total_questions: totQ,
+      progress_percentage: progPct,
+      remaining_seconds: examTimeLeft,
+      session_id: `ses_${validUjianId}_${studentData.id}`,
+      connection_status: 'online',
+    }).catch(() => {});
   };
 
   const handleToggleHesitant = (qId: string) => {
@@ -762,11 +777,43 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   const handlePrevQuestion = () => {
-    setCurrentQuestionIndex(prev => Math.max(0, prev - 1));
+    const newIdx = Math.max(0, currentQuestionIndex - 1);
+    setCurrentQuestionIndex(newIdx);
+    if (activeUjianDatabaseId) {
+      sendCbtHeartbeatSupabase({
+        exam_id: activeUjianDatabaseId,
+        participant_id: studentData.id,
+        user_id: studentData.id,
+        last_seen_at: new Date().toISOString(),
+        current_question: newIdx + 1,
+        answered_count: Object.keys(examAnswers).length,
+        total_questions: questionsList.length,
+        progress_percentage: Math.min(100, Math.round((Object.keys(examAnswers).length / (questionsList.length || 1)) * 100)),
+        remaining_seconds: examTimeLeft,
+        session_id: `ses_${activeUjianDatabaseId}_${studentData.id}`,
+        connection_status: 'online',
+      }).catch(() => {});
+    }
   };
 
   const handleNextQuestion = () => {
-    setCurrentQuestionIndex(prev => Math.min(questionsList.length - 1, prev + 1));
+    const newIdx = Math.min(questionsList.length - 1, currentQuestionIndex + 1);
+    setCurrentQuestionIndex(newIdx);
+    if (activeUjianDatabaseId) {
+      sendCbtHeartbeatSupabase({
+        exam_id: activeUjianDatabaseId,
+        participant_id: studentData.id,
+        user_id: studentData.id,
+        last_seen_at: new Date().toISOString(),
+        current_question: newIdx + 1,
+        answered_count: Object.keys(examAnswers).length,
+        total_questions: questionsList.length,
+        progress_percentage: Math.min(100, Math.round((Object.keys(examAnswers).length / (questionsList.length || 1)) * 100)),
+        remaining_seconds: examTimeLeft,
+        session_id: `ses_${activeUjianDatabaseId}_${studentData.id}`,
+        connection_status: 'online',
+      }).catch(() => {});
+    }
   };
 
   const handleAutoSubmitExam = () => {
@@ -803,6 +850,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       (diagnosticScore * 0.3) + (generalScore * 0.4) + (religiousScore * 0.3)
     );
 
+    const validUjianId = activeUjianDatabaseId || '29ead736-1ef5-4c3e-b287-05ad404c0d9f';
+    const isPass = finalScore >= 70;
+
     const updatedStudent: StudentData = {
       ...studentData,
       diagnosticScore,
@@ -818,12 +868,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setIsTakingExam(false);
     setShowSubmitModal(false);
 
-    // 3. JAWABAN UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE jawaban_peserta
-    const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
-    const examId = activeSched?.id || activeExamIdRef.current;
-
+    // 1. JAWABAN UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE jawaban_peserta
     saveAllJawabanPesertaSupabase({
-      ujianId: examId,
+      ujianId: validUjianId,
       pesertaId: studentData.id,
       answers: examAnswers,
       questions: questionsList.map(q => ({
@@ -832,10 +879,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       })),
     }).catch(err => console.warn('saveAllJawabanPesertaSupabase error:', err));
 
-    // 4. HASIL UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE hasil_ujian
+    // 2. HASIL UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE hasil_ujian
     saveHasilUjianSupabase({
-      id: `hasil_${examId || 'cbt'}_${studentData.id}`,
-      ujianId: examId || '29ead736-1ef5-4c3e-b287-05ad404c0d9f',
+      id: `hasil_${validUjianId}_${studentData.id}`,
+      ujianId: validUjianId,
       pesertaId: studentData.id,
       registrationNumber: studentData.registrationNumber || '',
       namaPeserta: studentData.fullName,
@@ -843,47 +890,48 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       nilaiTpu: generalScore,
       nilaiDiniyyah: religiousScore,
       nilaiTotal: finalScore,
-      statusKelulusan: finalScore >= 70 ? 'LULUS' : 'BELUM LULUS',
+      statusKelulusan: isPass ? 'LULUS' : 'BELUM LULUS',
       tanggalUjian: new Date().toISOString().split('T')[0],
     }).catch(err => console.warn('saveHasilUjianSupabase error:', err));
 
-    // 5. UPDATE REAL-TIME LIVE MONITORING BAHWA PESERTA SELESAI
+    // 3. Update tabel students
+    supabase.from('students').update({
+      diagnostic_score: diagnosticScore,
+      general_score: generalScore,
+      religious_score: religiousScore,
+      final_score: finalScore,
+      is_test_active: false,
+      test_submitted: true,
+      status: 'test_completed',
+      updated_at: new Date().toISOString(),
+    }).eq('id', studentData.id).catch(() => {});
+
+    // 4. Catat aktivitas selesai ujian
+    recordCbtActivityLogSupabase({
+      examId: validUjianId,
+      participantId: studentData.id,
+      participantName: studentData.fullName,
+      eventType: 'exam_finish',
+      title: 'Ujian Selesai Disubmit',
+      description: `Peserta menyelesaikan ujian CBT resmi. Skor akhir: ${finalScore} (${isPass ? 'LULUS' : 'BELUM LULUS'}).`,
+      questionNumber: questionsList.length,
+    }).catch(() => {});
+
+    // 5. Kirim final heartbeat status SELESAI
     sendCbtHeartbeatSupabase({
-      exam_id: examId,
+      exam_id: validUjianId,
       participant_id: studentData.id,
       user_id: studentData.id,
-      student_name: studentData.fullName,
-      registration_number: studentData.registrationNumber,
       last_seen_at: new Date().toISOString(),
       current_question: questionsList.length,
       answered_count: Object.keys(examAnswers).length,
       total_questions: questionsList.length,
       progress_percentage: 100,
       remaining_seconds: 0,
-      session_id: `ses_${examId}_${studentData.id}`,
-      connection_status: 'online',
-    });
-
-    recordCbtActivityLogSupabase({
-      examId,
-      participantId: studentData.id,
-      participantName: studentData.fullName,
-      eventType: 'exam_submit',
-      title: 'Ujian Selesai Dikirim',
-      description: `Peserta telah menyelesaikan seluruh pengerjaan soal dengan skor akhir ${finalScore}.`,
-      questionNumber: questionsList.length,
-    });
-
-    saveLogUjianSupabase({
-      ujianId: examId,
-      pesertaId: studentData.id,
-      namaPeserta: studentData.fullName,
-      nomorSoalTerakhir: questionsList.length,
-      sisaWaktuDetik: 0,
-      statusOnline: 'OFFLINE',
       isSubmitted: true,
-      updatedAt: new Date().toISOString(),
-    });
+      session_id: `ses_${validUjianId}_${studentData.id}`,
+      connection_status: 'offline',
+    }).catch(() => {});
 
     safeConfetti({
       particleCount: 150,
@@ -891,7 +939,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       origin: { y: 0.5 }
     });
 
-    // 6. SETELAH CALON MURID SELESAI MENGERJAKAN UJIAN, TAMPILKAN FITUR DOWNLOAD HASIL UJIAN
+    // 5. SETELAH CALON MURID SELESAI MENGERJAKAN UJIAN, TAMPILKAN FITUR DOWNLOAD HASIL UJIAN
     setShowSuccessModal(true);
     alert('Terimakasih anda telah mengirimkan jawaban, semoga lulus\n\nJawaban & hasil ujian telah berhasil tersimpan di database Supabase.\nSilakan gunakan tombol "Download Hasil Ujian (PDF)" untuk mengunduh bukti perolehan nilai Anda.');
   };
@@ -2001,15 +2049,38 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <div className="text-[11px] text-slate-500 font-mono">
                             {formProofMeta.fileName || 'dokumen_bukti.pdf'}
                           </div>
+                          {resolvedFormProofUrl && (
+                            <a
+                              href={resolvedFormProofUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-xs font-bold mt-2"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> Buka File PDF
+                            </a>
+                          )}
                         </div>
                       ) : (
-                        <div className="max-h-52 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-1 relative group">
-                          <img
-                            src={formPaymentProof}
-                            alt="Pratinjau Bukti Transfer"
-                            className="max-h-48 object-contain rounded"
-                            referrerPolicy="no-referrer"
-                          />
+                        <div className="max-h-52 min-h-36 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-1 relative group">
+                          {resolvedFormProofUrl || (formPaymentProof?.startsWith('data:') || formPaymentProof?.startsWith('blob:') || formPaymentProof?.startsWith('http')) ? (
+                            <img
+                              src={resolvedFormProofUrl || formPaymentProof}
+                              alt="Pratinjau Bukti Transfer"
+                              className="max-h-48 object-contain rounded"
+                              onError={() => {
+                                const raw = formPaymentProof || studentData.formPaymentProofUrl;
+                                if (raw) {
+                                  getPaymentProofSignedUrl(raw, 3600, true).then(r => r.url && setResolvedFormProofUrl(r.url));
+                                }
+                              }}
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center gap-1 text-slate-400 p-4">
+                              <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
+                              <span className="text-[11px] font-semibold">Memuat berkas bukti transfer...</span>
+                            </div>
+                          )}
                           <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                             <button
                               type="button"
@@ -2021,7 +2092,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             </button>
                             <button
                               type="button"
-                              onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
+                              onClick={() => downloadPaymentProofFile(resolvedFormProofUrl || formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
                               className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shadow cursor-pointer"
                             >
                               <Download className="w-3.5 h-3.5" />
@@ -3360,14 +3431,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                     <div className="pt-2 space-y-2">
                       {schoolInfo.bamBrochureUrl && (
-                        <button
-                          type="button"
-                          onClick={() => downloadBamBrochureFile(schoolInfo)}
+                        <a
+                          href={schoolInfo.bamBrochureUrl}
+                          download={schoolInfo.bamBrochureFileName || 'Rincian_Biaya_Awal_Masuk_BAM.pdf'}
                           className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow cursor-pointer"
                         >
                           <Download className="w-4 h-4 text-amber-300" />
                           <span>Unduh Dokumen SK Rincian Biaya BAM Resmi</span>
-                        </button>
+                        </a>
                       )}
 
                       <button
@@ -3597,15 +3668,38 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             <div className="text-[11px] text-slate-500 font-mono">
                               {bamProofMeta.fileName || 'dokumen_bukti_bam.pdf'}
                             </div>
+                            {resolvedBamProofUrl && (
+                              <a
+                                href={resolvedBamProofUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-xs font-bold mt-2"
+                              >
+                                <Eye className="w-3.5 h-3.5" /> Buka File PDF
+                              </a>
+                            )}
                           </div>
                         ) : (
-                          <div className="max-h-56 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-2 relative group">
-                            <img
-                              src={initialPaymentProof}
-                              alt="Bukti Transfer BAM"
-                              className="max-h-52 object-contain rounded-lg"
-                              referrerPolicy="no-referrer"
-                            />
+                          <div className="max-h-56 min-h-36 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center p-2 relative group">
+                            {resolvedBamProofUrl || (initialPaymentProof?.startsWith('data:') || initialPaymentProof?.startsWith('blob:') || initialPaymentProof?.startsWith('http')) ? (
+                              <img
+                                src={resolvedBamProofUrl || initialPaymentProof}
+                                alt="Bukti Transfer BAM"
+                                className="max-h-52 object-contain rounded-lg"
+                                onError={() => {
+                                  const raw = initialPaymentProof || studentData.initialPaymentProofUrl;
+                                  if (raw) {
+                                    getPaymentProofSignedUrl(raw, 3600, true).then(r => r.url && setResolvedBamProofUrl(r.url));
+                                  }
+                                }}
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center gap-1 text-slate-400 p-4">
+                                <RefreshCw className="w-5 h-5 animate-spin text-emerald-600" />
+                                <span className="text-[11px] font-semibold">Memuat berkas bukti transfer BAM...</span>
+                              </div>
+                            )}
                             <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                               <button
                                 type="button"
@@ -3617,7 +3711,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
+                                onClick={() => downloadPaymentProofFile(resolvedBamProofUrl || initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
                                 className="px-3 py-1.5 bg-emerald-600 text-white font-bold text-[10px] rounded-lg shadow flex items-center gap-1 cursor-pointer"
                               >
                                 <Download className="w-3.5 h-3.5" />
@@ -3959,20 +4053,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               {/* Image Viewport */}
               <div className="max-h-[65vh] overflow-auto bg-slate-950 rounded-xl p-4 flex items-center justify-center">
-                <div
-                  style={{
-                    transform: `scale(${formZoomScale}) rotate(${formRotate}deg)`,
-                    transition: 'transform 0.2s ease-in-out',
-                  }}
-                  className="inline-block"
-                >
-                  <img
-                    src={formPaymentProof}
-                    alt="Bukti Transfer Formulir Full"
-                    className="max-h-[60vh] max-w-full object-contain rounded"
-                    referrerPolicy="no-referrer"
+                {isPdfProof(formPaymentProof, formProofMeta.fileType || formProofMeta.fileName) ? (
+                  <iframe
+                    src={`${resolvedFormProofUrl || formPaymentProof}#toolbar=0`}
+                    className="w-full h-[58vh] rounded-lg border border-slate-700 bg-white"
+                    title="Pratinjau PDF Bukti Formulir"
                   />
-                </div>
+                ) : (
+                  <div
+                    style={{
+                      transform: `scale(${formZoomScale}) rotate(${formRotate}deg)`,
+                      transition: 'transform 0.2s ease-in-out',
+                    }}
+                    className="inline-block"
+                  >
+                    <img
+                      src={resolvedFormProofUrl || formPaymentProof}
+                      alt="Bukti Transfer Formulir Full"
+                      className="max-h-[60vh] max-w-full object-contain rounded"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Modal Footer Actions */}
@@ -3983,7 +4085,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => downloadPaymentProof(formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
+                    onClick={() => downloadPaymentProofFile(resolvedFormProofUrl || formPaymentProof, `Bukti_Formulir_${studentData.fullName || 'Siswa'}.jpg`)}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
@@ -4080,20 +4182,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               {/* Image Viewport */}
               <div className="max-h-[65vh] overflow-auto bg-slate-900 rounded-xl p-4 flex items-center justify-center">
-                <div
-                  style={{
-                    transform: `scale(${bamZoomScale}) rotate(${bamRotate}deg)`,
-                    transition: 'transform 0.2s ease-in-out',
-                  }}
-                  className="inline-block"
-                >
-                  <img
-                    src={initialPaymentProof}
-                    alt="Bukti Transfer BAM Preview"
-                    className="max-h-[60vh] max-w-full object-contain rounded"
-                    referrerPolicy="no-referrer"
+                {isPdfProof(initialPaymentProof, bamProofMeta.fileType || bamProofMeta.fileName) ? (
+                  <iframe
+                    src={`${resolvedBamProofUrl || initialPaymentProof}#toolbar=0`}
+                    className="w-full h-[58vh] rounded-lg border border-slate-700 bg-white"
+                    title="Pratinjau PDF Bukti BAM"
                   />
-                </div>
+                ) : (
+                  <div
+                    style={{
+                      transform: `scale(${bamZoomScale}) rotate(${bamRotate}deg)`,
+                      transition: 'transform 0.2s ease-in-out',
+                    }}
+                    className="inline-block"
+                  >
+                    <img
+                      src={resolvedBamProofUrl || initialPaymentProof}
+                      alt="Bukti Transfer BAM Preview"
+                      className="max-h-[60vh] max-w-full object-contain rounded"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Modal Footer Actions */}
@@ -4104,7 +4214,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => downloadPaymentProof(initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
+                    onClick={() => downloadPaymentProofFile(resolvedBamProofUrl || initialPaymentProof, `Bukti_BAM_${studentData.fullName || 'Siswa'}.jpg`)}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
@@ -4379,7 +4489,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <button
                             key={q.id}
                             type="button"
-                            onClick={() => setCurrentQuestionIndex(idx)}
+                            onClick={() => {
+                              setCurrentQuestionIndex(idx);
+                              if (activeUjianDatabaseId) {
+                                sendCbtHeartbeatSupabase({
+                                  exam_id: activeUjianDatabaseId,
+                                  participant_id: studentData.id,
+                                  user_id: studentData.id,
+                                  last_seen_at: new Date().toISOString(),
+                                  current_question: idx + 1,
+                                  answered_count: Object.keys(examAnswers).length,
+                                  total_questions: questionsList.length,
+                                  progress_percentage: Math.min(100, Math.round((Object.keys(examAnswers).length / (questionsList.length || 1)) * 100)),
+                                  remaining_seconds: examTimeLeft,
+                                  session_id: `ses_${activeUjianDatabaseId}_${studentData.id}`,
+                                  connection_status: 'online',
+                                }).catch(() => {});
+                              }
+                            }}
                             className={`h-10 rounded-xl text-xs flex items-center justify-center transition-all cursor-pointer relative ${tileStyle}`}
                           >
                             <span>{idx + 1}</span>

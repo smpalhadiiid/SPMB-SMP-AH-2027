@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getStoredBamPayments } from '../../utils/storage';
 import { PaymentProofModal, ProofModalData } from './PaymentProofModal';
+import { PaymentProofThumbnail } from './PaymentProofThumbnail';
 import { getStoredPaymentProofs, downloadPaymentProof } from '../../utils/paymentProofStorage';
 
 interface AdminFormPaymentSectionProps {
@@ -527,32 +528,23 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
 
                     {/* Image Thumbnail */}
                     {st.formPaymentProofUrl && (
-                      <div className="relative group rounded-lg overflow-hidden border border-slate-700 bg-slate-950 h-28 flex items-center justify-center p-1">
-                        <img
-                          src={st.formPaymentProofUrl}
-                          alt="Bukti Transfer Formulir"
-                          className="max-h-26 object-contain rounded"
-                          referrerPolicy="no-referrer"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setActiveProofData({
-                            url: st.formPaymentProofUrl!,
-                            studentName: st.fullName,
-                            regNo: st.registrationNumber || 'NO-REG',
-                            paymentType: 'form',
-                            amount: st.formPaymentAmount || 200000,
-                            status: st.formPaymentStatus || 'pending',
-                            date: st.formPaymentDate,
-                            notes: st.formPaymentNotes,
-                            gender: st.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
-                          })}
-                          className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1 cursor-pointer"
-                        >
-                          <Eye className="w-4 h-4 text-amber-300" />
-                          <span>Lihat & Perbesar Gambar</span>
-                        </button>
-                      </div>
+                      <PaymentProofThumbnail
+                        pathOrUrl={st.formPaymentProofUrl}
+                        alt={`Bukti Transfer ${st.fullName}`}
+                        className="w-full h-32"
+                        imgClassName="w-full h-full object-contain p-1"
+                        onClick={() => setActiveProofData({
+                          url: st.formPaymentProofUrl!,
+                          studentName: st.fullName,
+                          regNo: st.registrationNumber || 'NO-REG',
+                          paymentType: 'form',
+                          amount: st.formPaymentAmount || 200000,
+                          status: st.formPaymentStatus || 'pending',
+                          date: st.formPaymentDate,
+                          notes: st.formPaymentNotes,
+                          gender: st.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+                        })}
+                      />
                     )}
                   </div>
 
@@ -747,7 +739,10 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
                       <td className="p-3 text-center">
                         {proofUrl ? (
                           <div className="flex items-center justify-center gap-1.5">
-                            <div
+                            <PaymentProofThumbnail
+                              pathOrUrl={proofUrl}
+                              alt={`Bukti ${r.studentName}`}
+                              className="w-10 h-10 shrink-0"
                               onClick={() => setActiveProofData({
                                 url: proofUrl,
                                 studentName: r.studentName,
@@ -759,19 +754,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
                                 notes: r.notes || linkedStudent?.formPaymentNotes,
                                 gender: r.gender,
                               })}
-                              className="relative group w-9 h-9 rounded-lg border border-slate-300 overflow-hidden bg-slate-900 cursor-pointer shrink-0 hover:ring-2 hover:ring-emerald-500 transition-all shadow-xs"
-                              title="Klik untuk lihat bukti transfer penuh"
-                            >
-                              <img
-                                src={proofUrl}
-                                alt="Bukti"
-                                className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                                referrerPolicy="no-referrer"
-                              />
-                              <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                                <Eye className="w-3.5 h-3.5 text-amber-300" />
-                              </div>
-                            </div>
+                            />
                             <button
                               type="button"
                               onClick={() => setActiveProofData({

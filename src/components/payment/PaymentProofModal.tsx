@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, ZoomIn, ZoomOut, RotateCw, Download, CheckCircle2,
-  XCircle, FileText, AlertCircle, Loader2, Eye, ShieldCheck, MessageSquare
+  XCircle, FileText, AlertCircle, Loader2, Eye, ShieldCheck, MessageSquare, RefreshCw
 } from 'lucide-react';
 import {
   getPaymentProofSignedUrl,
@@ -101,6 +101,24 @@ export const PaymentProofModal: React.FC<PaymentProofModalProps> = ({
         setIsLoadingUrl(false);
       });
   }, [isOpen, targetPathOrUrl]);
+
+  // Handler saat gambar gagal dimuat (misal token kadaluarsa)
+  const handleModalImageError = () => {
+    if (targetPathOrUrl && !targetPathOrUrl.startsWith('data:') && !targetPathOrUrl.startsWith('blob:')) {
+      setIsLoadingUrl(true);
+      getPaymentProofSignedUrl(targetPathOrUrl, 3600, true)
+        .then((res) => {
+          if (res.url) {
+            setResolvedUrl(res.url);
+            setUrlError(null);
+          } else {
+            setUrlError('Gagal memuat ulang berkas bukti transfer.');
+          }
+        })
+        .catch(() => setUrlError('Gagal memuat ulang berkas bukti transfer.'))
+        .finally(() => setIsLoadingUrl(false));
+    }
+  };
 
   if (!isOpen || !data) return null;
 
@@ -307,6 +325,14 @@ export const PaymentProofModal: React.FC<PaymentProofModalProps> = ({
               <p className="text-[11px] text-slate-500 font-mono mt-1 break-all">
                 Path: {targetPathOrUrl}
               </p>
+              <button
+                type="button"
+                onClick={handleModalImageError}
+                className="mt-3 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Muat Ulang Berkas</span>
+              </button>
             </div>
           ) : isPdf && resolvedUrl ? (
             <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-white/5 rounded-xl p-2">
@@ -328,6 +354,7 @@ export const PaymentProofModal: React.FC<PaymentProofModalProps> = ({
                 src={resolvedUrl}
                 alt={`Bukti Transfer ${data.studentName}`}
                 className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-2xl bg-white/5"
+                onError={handleModalImageError}
                 referrerPolicy="no-referrer"
               />
             </div>

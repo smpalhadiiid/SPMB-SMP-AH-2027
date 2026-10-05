@@ -20,6 +20,8 @@ import {
   getStoredPaymentProofs,
   StoredPaymentProof,
 } from '../../utils/paymentProofStorage';
+import { PaymentProofThumbnail } from './PaymentProofThumbnail';
+import { PaymentProofModal, ProofModalData } from './PaymentProofModal';
 
 interface AdminPaymentHistorySectionProps {
   students?: StudentData[];
@@ -880,9 +882,11 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                     </td>
                     <td className="p-3 text-center">
                       {p.proofUrl ? (
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
+                        <div className="flex items-center justify-center gap-1.5">
+                          <PaymentProofThumbnail
+                            pathOrUrl={p.proofUrl}
+                            alt={`Bukti ${p.studentName}`}
+                            className="w-10 h-10 shrink-0"
                             onClick={() => {
                               setPreviewProofData({
                                 url: p.proofUrl || '',
@@ -894,22 +898,15 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                                 date: p.paymentDate || p.createdAt.split('T')[0],
                                 notes: p.notes,
                               });
-                              setPreviewZoom(1);
-                              setPreviewRotate(0);
                             }}
-                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                            title="Lihat Pratinjau Foto Bukti"
-                          >
-                            <Eye className="w-3 h-3 text-blue-600" />
-                            <span>Lihat</span>
-                          </button>
+                          />
                           <button
                             type="button"
                             onClick={() => downloadPaymentProof(p.proofUrl || '', `Bukti_${p.paymentType === 'form' ? 'Formulir' : 'BAM'}_${p.studentName}_${p.registrationNumber}.jpg`)}
-                            className="p-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded transition-colors cursor-pointer"
+                            className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-colors cursor-pointer"
                             title="Unduh File Bukti Transfer"
                           >
-                            <Download className="w-3 h-3" />
+                            <Download className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ) : (
@@ -1221,132 +1218,35 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
         </div>
       )}
 
-      {/* MODAL: PROOF IMAGE PREVIEW (FULLSCREEN / ZOOM / ROTATE / DOWNLOAD) */}
-      {previewProofData && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
-                    previewProofData.paymentType === 'form' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'
-                  }`}>
-                    {previewProofData.paymentType === 'form' ? 'Bukti Formulir' : 'Bukti BAM'}
-                  </span>
-                  <h4 className="font-extrabold text-slate-900 text-sm">
-                    {previewProofData.studentName} ({previewProofData.regNo})
-                  </h4>
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">
-                  Nominal: <b>Rp {(previewProofData.amount || 0).toLocaleString('id-ID')}</b> • Tanggal: <b>{previewProofData.date || '-'}</b> • Status: <b className="uppercase">{previewProofData.status || 'verified'}</b>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setPreviewProofData(null);
-                  setPreviewZoom(1);
-                  setPreviewRotate(0);
-                }}
-                className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 rounded-full cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Toolbar: Zoom & Rotate */}
-            <div className="flex items-center justify-between bg-slate-100 p-2 rounded-xl text-xs">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setPreviewZoom(prev => Math.min(prev + 0.25, 2.5))}
-                  className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
-                  title="Perbesar"
-                >
-                  <ZoomIn className="w-4 h-4 text-blue-600" />
-                  <span>Zoom In</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewZoom(prev => Math.max(prev - 0.25, 0.75))}
-                  className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
-                  title="Perkecil"
-                >
-                  <ZoomOut className="w-4 h-4 text-blue-600" />
-                  <span>Zoom Out</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewRotate(prev => (prev + 90) % 360)}
-                  className="p-1.5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
-                  title="Putar 90 Derajat"
-                >
-                  <RotateCw className="w-4 h-4 text-blue-600" />
-                  <span>Putar</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPreviewZoom(1);
-                    setPreviewRotate(0);
-                  }}
-                  className="px-2 py-1.5 bg-white hover:bg-slate-200 text-slate-600 rounded-lg font-semibold text-[11px] cursor-pointer"
-                >
-                  Reset
-                </button>
-              </div>
-              <div className="text-[11px] font-mono text-slate-500">
-                {Math.round(previewZoom * 100)}%
-              </div>
-            </div>
-
-            {/* Image Box */}
-            <div className="max-h-[62vh] overflow-auto flex items-center justify-center bg-slate-950 rounded-xl p-3">
-              <div
-                style={{
-                  transform: `scale(${previewZoom}) rotate(${previewRotate}deg)`,
-                  transition: 'transform 0.2s ease-in-out',
-                }}
-                className="inline-block"
-              >
-                <img
-                  src={previewProofData.url}
-                  alt="Bukti Transfer"
-                  className="max-h-[58vh] max-w-full object-contain rounded-lg shadow"
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="flex items-center justify-between pt-1">
-              <span className="text-[11px] text-slate-500">
-                Tersimpan di Database Supabase • Siap diverifikasi & diunduh
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => downloadPaymentProof(previewProofData.url, `Bukti_${previewProofData.paymentType === 'form' ? 'Formulir' : 'BAM'}_${previewProofData.studentName}_${previewProofData.regNo}.jpg`)}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Unduh File Bukti</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPreviewProofData(null);
-                    setPreviewZoom(1);
-                    setPreviewRotate(0);
-                  }}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: PROOF IMAGE PREVIEW MENGGUNAKAN PAYMENTPROOFMODAL */}
+      <PaymentProofModal
+        isOpen={!!previewProofData}
+        onClose={() => setPreviewProofData(null)}
+        data={previewProofData ? {
+          url: previewProofData.url,
+          studentName: previewProofData.studentName,
+          regNo: previewProofData.regNo,
+          paymentType: previewProofData.paymentType,
+          amount: previewProofData.amount,
+          status: previewProofData.status,
+          date: previewProofData.date,
+          notes: previewProofData.notes,
+        } : null}
+        onVerify={async (isVerified, rejectionReason) => {
+          if (!previewProofData) return;
+          const targetPayment = payments.find(p => p.proofUrl === previewProofData.url || (p.studentName === previewProofData.studentName && p.paymentType === previewProofData.paymentType));
+          if (targetPayment) {
+            await handleQuickStatusChange(targetPayment.id, isVerified ? 'verified' : 'rejected');
+            setFeedback({
+              type: isVerified ? 'success' : 'error',
+              text: isVerified
+                ? `Bukti ${previewProofData.studentName} berhasil diverifikasi LUNAS!`
+                : `Bukti ${previewProofData.studentName} ditolak.${rejectionReason ? ` Alasan: ${rejectionReason}` : ''}`,
+            });
+          }
+          setPreviewProofData(null);
+        }}
+      />
 
       {/* MODAL: ARSIP & GALERI BUKTI PEMBAYARAN (FORMULIR & BAM) */}
       {showProofGalleryModal && (
@@ -1485,11 +1385,12 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                     >
                       {/* Image Thumbnail Box */}
                       <div className="relative h-44 bg-slate-900 flex items-center justify-center overflow-hidden">
-                        <img
-                          src={item.proofUrl}
+                        <PaymentProofThumbnail
+                          pathOrUrl={item.proofUrl}
                           alt={`Bukti ${item.paymentType}`}
-                          className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          referrerPolicy="no-referrer"
+                          className="h-full w-full rounded-none border-none"
+                          imgClassName="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          showOverlayHover={false}
                         />
                         {/* Overlay Type Badge */}
                         <div className="absolute top-2.5 left-2.5">

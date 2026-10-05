@@ -512,11 +512,7 @@ export function getStoredWebsiteConfig(): WebsiteConfig {
   try {
     const parsed = JSON.parse(data);
     if (!parsed || typeof parsed !== 'object') return initialWebsiteConfig;
-    if (
-      !parsed.announcementBannerText ||
-      parsed.announcementBannerText.includes('Gelombang 1 Dapatkan Potongan') ||
-      parsed.announcementBannerText.includes('Pendaftaran SPMB Online Telah')
-    ) {
+    if (!parsed.announcementBannerText || parsed.announcementBannerText === '🔥 SPMB SMP Al-Hadiid Cileungsi segera dibuka') {
       parsed.announcementBannerText = initialWebsiteConfig.announcementBannerText;
       safeSetItem(KEYS.WEBSITE_CONFIG, JSON.stringify(parsed));
     }

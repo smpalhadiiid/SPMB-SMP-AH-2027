@@ -116,19 +116,32 @@ export function isPdfProof(urlOrPath: string, fileType?: string): boolean {
 /**
  * Membersihkan path Supabase Storage agar siap digunakan oleh SDK
  * Mengubah "payment-proofs/student-01/pay-01/file.jpg" menjadi "student-01/pay-01/file.jpg"
+ * Serta mengekstrak path dari URL Supabase public jika ada
  */
 export function extractBucketPath(fullPathOrUrl: string): string {
   if (!fullPathOrUrl) return '';
   let clean = fullPathOrUrl.trim();
-  // Hapus awalan bucket name jika ada
-  if (clean.startsWith('payment-proofs/')) {
+
+  // Ekstrak dari URL Supabase lengkap jika ada
+  if (clean.includes('/storage/v1/object/public/payment-proofs/')) {
+    clean = clean.split('/storage/v1/object/public/payment-proofs/')[1] || '';
+  } else if (clean.includes('/storage/v1/object/sign/payment-proofs/')) {
+    clean = clean.split('/storage/v1/object/sign/payment-proofs/')[1] || '';
+  } else if (clean.includes('/payment-proofs/')) {
+    clean = clean.split('/payment-proofs/')[1] || '';
+  } else if (clean.startsWith('payment-proofs/')) {
     clean = clean.replace('payment-proofs/', '');
-  } else if (clean.startsWith('/payment-proofs/')) {
-    clean = clean.replace('/payment-proofs/', '');
   }
+
   // Hapus query params jika ada
   if (clean.includes('?')) {
     clean = clean.split('?')[0];
+  }
+  clean = clean.replace(/^\/+/, '');
+  try {
+    clean = decodeURIComponent(clean);
+  } catch {
+    // ignore
   }
   return clean;
 }
@@ -241,6 +254,38 @@ export async function cleanupOrphanStorageProof(storagePath: string): Promise<vo
   }
 }
 
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+export function clearPaymentProofCache(pathOrUrl?: string): void {
+  if (!pathOrUrl) {
+    signedUrlCache.clear();
+    return;
+  }
+  const cleanPath = extractBucketPath(pathOrUrl);
+  if (cleanPath) {
+    signedUrlCache.delete(cleanPath);
+  }
+}
+
+/**
+ * Mendapatkan URL bukti transfer dari memori cache jika masih valid
+ */
+export function getCachedPaymentProofUrl(pathOrUrl?: string): string | null {
+  if (!pathOrUrl || pathOrUrl.trim() === '') return null;
+  if (pathOrUrl.startsWith('data:') || pathOrUrl.startsWith('blob:')) return pathOrUrl;
+  if ((pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) && pathOrUrl.includes('token=')) return pathOrUrl;
+  if ((pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) && !pathOrUrl.includes('payment-proofs')) return pathOrUrl;
+
+  const cleanPath = extractBucketPath(pathOrUrl);
+  if (!cleanPath) return null;
+
+  const cached = signedUrlCache.get(cleanPath);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+  return null;
+}
+
 /**
  * MENAMPILKAN BUKTI TRANSFER MENGGUNAKAN SIGNED URL
  * Karena bucket bersifat PRIVATE, admin dan siswa mengakses bukti menggunakan
@@ -248,18 +293,39 @@ export async function cleanupOrphanStorageProof(storagePath: string): Promise<vo
  */
 export async function getPaymentProofSignedUrl(
   pathOrUrl: string,
-  expiresInSeconds = 3600
+  expiresInSeconds = 3600,
+  bypassCache = false
 ): Promise<{ url: string | null; error?: string }> {
-  if (!pathOrUrl) {
+  if (!pathOrUrl || pathOrUrl.trim() === '') {
     return { url: null, error: 'Path bukti transfer tidak ditemukan.' };
   }
 
-  // Jika sudah berupa dataUrl lokal (legacy preview) atau URL http eksternal publik
+  // Jika sudah berupa dataUrl lokal (legacy preview) atau blob:
   if (pathOrUrl.startsWith('data:') || pathOrUrl.startsWith('blob:')) {
     return { url: pathOrUrl };
   }
-  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+
+  // Jika URL eksternal biasa bukan Supabase storage
+  if ((pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) && !pathOrUrl.includes('payment-proofs')) {
     return { url: pathOrUrl };
+  }
+
+  // Jika URL sudah berupa signed URL aktif dari Supabase dan tidak meminta bypass cache
+  if (!bypassCache && (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) && pathOrUrl.includes('token=')) {
+    return { url: pathOrUrl };
+  }
+
+  const cleanPath = extractBucketPath(pathOrUrl);
+  if (!cleanPath) {
+    return { url: null, error: 'Format path storage tidak valid.' };
+  }
+
+  // Cek cache memori jika tidak dipaksa bypass
+  if (!bypassCache) {
+    const cached = signedUrlCache.get(cleanPath);
+    if (cached && cached.expiresAt > Date.now()) {
+      return { url: cached.url };
+    }
   }
 
   if (!isSupabaseConfigured()) {
@@ -267,11 +333,6 @@ export async function getPaymentProofSignedUrl(
   }
 
   try {
-    const cleanPath = extractBucketPath(pathOrUrl);
-    if (!cleanPath) {
-      return { url: null, error: 'Format path storage tidak valid.' };
-    }
-
     const { data, error } = await supabase.storage
       .from(PAYMENT_PROOFS_BUCKET)
       .createSignedUrl(cleanPath, expiresInSeconds);
@@ -283,6 +344,12 @@ export async function getPaymentProofSignedUrl(
         error: error?.message || 'Gagal menghasilkan URL bukti transfer dari storage privat.',
       };
     }
+
+    // Cache URL yang berhasil dibuat (dikurangi 300 detik sebagai buffer)
+    signedUrlCache.set(cleanPath, {
+      url: data.signedUrl,
+      expiresAt: Date.now() + Math.max(60, expiresInSeconds - 300) * 1000,
+    });
 
     return { url: data.signedUrl };
   } catch (err: any) {
@@ -307,14 +374,15 @@ export async function downloadPaymentProofFile(
 
     let downloadUrl = pathOrUrl;
 
-    // Jika berupa path storage, dapatkan signed URL terlebih dahulu
-    if (!pathOrUrl.startsWith('data:') && !pathOrUrl.startsWith('http')) {
-      const { url, error } = await getPaymentProofSignedUrl(pathOrUrl, 300);
-      if (error || !url) {
-        alert(`Gagal menyiapkan link unduh bukti transfer: ${error || 'Unknown error'}`);
+    // Jika berupa path storage atau URL Supabase yang mungkin expired, dapatkan signed URL segar
+    if (pathOrUrl.includes('payment-proofs') || (!pathOrUrl.startsWith('data:') && !pathOrUrl.startsWith('blob:') && !pathOrUrl.startsWith('http'))) {
+      const { url, error } = await getPaymentProofSignedUrl(pathOrUrl, 300, true);
+      if (url) {
+        downloadUrl = url;
+      } else if (error && !pathOrUrl.startsWith('http')) {
+        alert(`Gagal menyiapkan link unduh bukti transfer: ${error}`);
         return;
       }
-      downloadUrl = url;
     }
 
     // Trigger download melalui fetch blob jika dimungkinkan untuk memaksa nama file

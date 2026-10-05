@@ -14,7 +14,7 @@ import {
 import {
   exportAllDataAsBackup, importBackupData, purgeApplicantData, resetAllDataToDefault, getStoredWebsiteConfig,
   getStoredQuestionBank, saveQuestionBank, saveTestSchedules,
-  getStoredBamPayments, saveBamPayments, saveSchoolInfo
+  getStoredBamPayments, saveBamPayments
 } from '../utils/storage';
 import logoSvg from '../assets/logo.svg';
 import {
@@ -32,6 +32,8 @@ import { SupabaseBadge } from './SupabaseBadge';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
 import { SupabaseSyncTab } from './SupabaseSyncTab';
 import { WhatsAppAnnouncementModal } from './WhatsAppAnnouncementModal';
+import { StudentExcelModal } from './StudentExcelModal';
+import { downloadStudentExcelTemplate } from '../utils/studentExcelService';
 import {
   getPrimaryParentContact,
   cleanWhatsAppNumber,
@@ -49,6 +51,9 @@ import { CbtHasilDanRanking } from './cbt/CbtHasilDanRanking';
 import { AdminFormPaymentSection } from './payment/AdminFormPaymentSection';
 import { AdminBamPaymentSection } from './payment/AdminBamPaymentSection';
 import { AdminPaymentHistorySection } from './payment/AdminPaymentHistorySection';
+import { PaymentProofThumbnail } from './payment/PaymentProofThumbnail';
+import { PaymentProofModal, ProofModalData } from './payment/PaymentProofModal';
+import { downloadPaymentProofFile } from '../utils/paymentProofStorage';
 import { UserManagementSection } from './UserManagementSection';
 import { AccountSettingsSection } from './AccountSettingsSection';
 import { FilledClassesSection } from './FilledClassesSection';
@@ -196,6 +201,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
 
+  // State: Export & Import Excel Calon Murid Modal
+  const [showStudentExcelModal, setShowStudentExcelModal] = useState<{ open: boolean; tab: 'import' | 'export' }>({
+    open: false,
+    tab: 'import',
+  });
+
   // State: WhatsApp Announcement Modal & Sent Records
   const [waModalStudent, setWaModalStudent] = useState<StudentData | null>(null);
   const [waDefaultTemplate, setWaDefaultTemplate] = useState<WhatsAppTemplateKey | undefined>(undefined);
@@ -208,6 +219,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [bamVerifyDate, setBamVerifyDate] = useState<string>('');
   const [bamVerifyType, setBamVerifyType] = useState<BamInstallmentType>('Lunas');
   const [bamVerifyNotes, setBamVerifyNotes] = useState<string>('');
+  const [activeProofModalData, setActiveProofModalData] = useState<ProofModalData | null>(null);
 
   React.useEffect(() => {
     if (selectedStudent) {
@@ -288,7 +300,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const [adminBrochurePreviewOpen, setAdminBrochurePreviewOpen] = useState(false);
-  const [isUploadingBamBrochure, setIsUploadingBamBrochure] = useState(false);
 
   const handleBrochureFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -315,7 +326,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         img.onload = () => {
           try {
             // Optimasi resolusi agar pas di localStorage & Supabase tanpa penurunan kualitas tajam
-            const maxDim = 1800;
+            const maxDim = 2400;
             let width = img.width;
             let height = img.height;
             if (width > maxDim || height > maxDim) {
@@ -334,38 +345,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             const ctx = canvas.getContext('2d');
             if (ctx) {
               ctx.drawImage(img, 0, 0, width, height);
-              // Gunakan image/jpeg kualitas tinggi 0.85 untuk kompresi ideal & bebas QuotaExceededError
-              const format = 'image/jpeg';
-              const optimizedBase64 = canvas.toDataURL(format, 0.85);
+              const format = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+              const optimizedBase64 = canvas.toDataURL(format, 0.88);
               const formattedSize = (optimizedBase64.length * 0.75 / (1024 * 1024)).toFixed(2) + ' MB';
-              const safeFileName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
 
               const updatedSchool = {
                 ...schoolForm,
                 brochureUrl: optimizedBase64,
-                brochureFileName: safeFileName,
+                brochureFileName: file.name,
                 brochureFileType: format,
                 brochureFileSize: formattedSize,
               };
 
               setSchoolForm(updatedSchool);
-              onUpdateSchoolInfo(updatedSchool);
-              saveSchoolInfo(updatedSchool);
               setIsUploadingBrochure(false);
-
               Swal.fire({
                 icon: 'success',
-                title: 'Brosur Gambar Berhasil Dipublikasikan!',
+                title: 'Brosur Gambar Berhasil Dimuat!',
                 html: `
                   <div style="text-align: left; font-size: 13px; line-height: 1.6;">
-                    <p>Berkas gambar <strong>${safeFileName}</strong> berhasil diunggah dan disimpan ke sistem.</p>
+                    <p>Berkas gambar <strong>${file.name}</strong> berhasil diproses.</p>
                     <div style="background-color: #f1f5f9; padding: 8px 12px; border-radius: 8px; margin: 8px 0; font-size: 12px;">
                       🖼️ <strong>Dimensi:</strong> ${width} × ${height} px<br/>
                       💾 <strong>Ukuran:</strong> ${formattedSize}<br/>
-                      📄 <strong>Format:</strong> GAMBAR DIGITAL (JPG)
+                      📄 <strong>Format:</strong> ${format.toUpperCase()}
                     </div>
-                    <p style="color: #059669; font-size: 12px; font-weight: bold;">
-                      ✓ Calon murid kini dapat langsung mengunduh dan melihat brosur gambar ini di Halaman Utama SPMB!
+                    <p style="color: #059669; font-size: 12px;">
+                      Klik tombol <em>"Simpan & Publikasikan Brosur"</em> untuk langsung mengaktifkannya bagi calon murid.
                     </p>
                   </div>
                 `,
@@ -378,34 +384,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             console.warn('Canvas optimization fallback:', err);
           }
 
-          // Fallback raw base64 jika canvas gagal
+          // Fallback raw base64
           const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-          const updatedSchool = {
-            ...schoolForm,
+          setSchoolForm((prev) => ({
+            ...prev,
             brochureUrl: rawBase64,
             brochureFileName: file.name,
             brochureFileType: file.type || 'image/jpeg',
             brochureFileSize: formattedSize,
-          };
-          setSchoolForm(updatedSchool);
-          onUpdateSchoolInfo(updatedSchool);
-          saveSchoolInfo(updatedSchool);
+          }));
           setIsUploadingBrochure(false);
-          Swal.fire({
-            icon: 'success',
-            title: 'Brosur Gambar Berhasil Dimuat!',
-            text: `Berkas "${file.name}" berhasil diaktifkan untuk calon murid.`,
-            confirmButtonColor: '#10b981',
-          });
         };
         img.onerror = () => {
           setIsUploadingBrochure(false);
-          Swal.fire({
-            icon: 'error',
-            title: 'Gagal Memproses Gambar',
-            text: 'Format gambar tidak dapat dibaca oleh browser.',
-            confirmButtonColor: '#ef4444',
-          });
         };
         img.src = rawBase64;
       };
@@ -417,135 +408,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         const base64Url = reader.result as string;
         const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
 
-        const updatedSchool = {
-          ...schoolForm,
+        setSchoolForm((prev) => ({
+          ...prev,
           brochureUrl: base64Url,
           brochureFileName: file.name,
           brochureFileType: file.type || 'application/pdf',
           brochureFileSize: formattedSize,
-        };
-        setSchoolForm(updatedSchool);
-        onUpdateSchoolInfo(updatedSchool);
-        saveSchoolInfo(updatedSchool);
+        }));
         setIsUploadingBrochure(false);
         Swal.fire({
           icon: 'success',
-          title: 'Brosur PDF Berhasil Dimuat & Dipublikasikan!',
-          text: `Berkas "${file.name}" (${formattedSize}) siap didownload oleh calon murid di Halaman Utama.`,
-          confirmButtonColor: '#10b981',
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleBamBrochureFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 15 * 1024 * 1024) {
-      Swal.fire({
-        icon: 'warning',
-        title: 'Ukuran Terlalu Besar',
-        text: 'Ukuran file SK BAM maksimal 15 MB.',
-        confirmButtonColor: '#0f766e',
-      });
-      return;
-    }
-
-    setIsUploadingBamBrochure(true);
-    const isImg = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
-
-    if (isImg) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const rawBase64 = event.target?.result as string;
-        const img = new Image();
-        img.onload = () => {
-          try {
-            const maxDim = 1800;
-            let width = img.width;
-            let height = img.height;
-            if (width > maxDim || height > maxDim) {
-              if (width > height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0, width, height);
-              const format = 'image/jpeg';
-              const optimizedBase64 = canvas.toDataURL(format, 0.85);
-              const formattedSize = (optimizedBase64.length * 0.75 / (1024 * 1024)).toFixed(2) + ' MB';
-              const safeFileName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
-
-              const updatedSchool = {
-                ...schoolForm,
-                bamBrochureUrl: optimizedBase64,
-                bamBrochureFileName: safeFileName,
-                bamBrochureFileType: format,
-                bamBrochureFileSize: formattedSize,
-              };
-
-              setSchoolForm(updatedSchool);
-              onUpdateSchoolInfo(updatedSchool);
-              saveSchoolInfo(updatedSchool);
-              setIsUploadingBamBrochure(false);
-
-              Swal.fire({
-                icon: 'success',
-                title: 'Dokumen SK Rincian BAM Berhasil Diunggah!',
-                text: `Berkas gambar "${safeFileName}" (${formattedSize}) siap diunduh calon murid.`,
-                confirmButtonColor: '#10b981',
-              });
-              return;
-            }
-          } catch {}
-
-          const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-          const updatedSchool = {
-            ...schoolForm,
-            bamBrochureUrl: rawBase64,
-            bamBrochureFileName: file.name,
-            bamBrochureFileType: file.type || 'image/jpeg',
-            bamBrochureFileSize: formattedSize,
-          };
-          setSchoolForm(updatedSchool);
-          onUpdateSchoolInfo(updatedSchool);
-          saveSchoolInfo(updatedSchool);
-          setIsUploadingBamBrochure(false);
-        };
-        img.src = rawBase64;
-      };
-      reader.readAsDataURL(file);
-    } else {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64Url = reader.result as string;
-        const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-        const updatedSchool = {
-          ...schoolForm,
-          bamBrochureUrl: base64Url,
-          bamBrochureFileName: file.name,
-          bamBrochureFileType: file.type || 'application/pdf',
-          bamBrochureFileSize: formattedSize,
-        };
-        setSchoolForm(updatedSchool);
-        onUpdateSchoolInfo(updatedSchool);
-        saveSchoolInfo(updatedSchool);
-        setIsUploadingBamBrochure(false);
-        Swal.fire({
-          icon: 'success',
-          title: 'Dokumen SK Rincian BAM PDF Berhasil Dimuat!',
-          text: `Berkas "${file.name}" (${formattedSize}) siap diunduh oleh calon murid.`,
+          title: 'Brosur PDF Berhasil Dimuat!',
+          text: `Berkas "${file.name}" (${formattedSize}) siap disimpan dan didownload oleh calon murid.`,
           confirmButtonColor: '#10b981',
         });
       };
@@ -1562,15 +1436,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <SupabaseSyncButton variant="header" onDataSynced={onRefreshAllData} />
 
             <button
-              onClick={handleExportApplicantsExcel}
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center gap-1.5"
+              onClick={() => setShowStudentExcelModal({ open: true, tab: 'import' })}
+              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Import Data Calon Murid dari File Excel (.xlsx / .xls)"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Import Excel</span>
+            </button>
+
+            <button
+              onClick={() => setShowStudentExcelModal({ open: true, tab: 'export' })}
+              className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Export Data Calon Murid ke Tabel Excel (.xlsx)"
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>Export Excel Pendaftar</span>
+              <span>Export Excel ({students.length})</span>
             </button>
           </div>
         </div>
@@ -1595,6 +1479,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <FileText className="w-4 h-4" />
             <span>Data Pendaftar ({students.length})</span>
+          </button>
+
+          <button
+            onClick={() => setShowStudentExcelModal({ open: true, tab: 'import' })}
+            className="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold cursor-pointer"
+            title="Menu Export dan Import Data Calon Murid format Excel"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+            <span>Export / Import Excel</span>
           </button>
 
           <button
@@ -1906,6 +1799,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
+            {/* Quick Action Banner: Export & Import Excel Calon Murid */}
+            <div className="bg-gradient-to-r from-emerald-900 to-teal-900 text-white p-5 rounded-2xl shadow-md border border-emerald-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold border border-emerald-500/30">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Manajemen Data Excel Calon Murid</span>
+                </div>
+                <h4 className="text-base font-extrabold text-white">
+                  Export & Import Tabel Excel Pendaftar SPMB
+                </h4>
+                <p className="text-xs text-emerald-200 max-w-xl">
+                  Kelola data calon murid secara massal via spreadsheet Excel (.xlsx / .xls). Dilengkapi validasi otomatis, deteksi duplikasi, unduh template resmi, dan sinkronisasi ke Supabase.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+                <button
+                  type="button"
+                  onClick={() => downloadStudentExcelTemplate(schoolInfo)}
+                  className="px-3.5 py-2 bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 rounded-xl text-xs font-bold border border-emerald-600 transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Unduh format template Excel kosong"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Template Excel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowStudentExcelModal({ open: true, tab: 'import' })}
+                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-black shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Import data calon murid dari file Excel"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Import Excel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowStudentExcelModal({ open: true, tab: 'export' })}
+                  className="px-4 py-2 bg-white hover:bg-slate-100 text-emerald-950 rounded-xl text-xs font-black shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Export data calon murid ke file Excel"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Export Excel ({students.length})</span>
+                </button>
+              </div>
+            </div>
+
             {/* Recent Applicants Quick List */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex items-center justify-between mb-4">
@@ -2031,6 +1972,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <Download className="w-3.5 h-3.5" />
                   <span>Siap Unduh Formulir ({students.filter(s => canDownloadStudentForm(s)).length})</span>
                 </button>
+
+                <div className="h-6 w-px bg-slate-300 hidden sm:block mx-1" />
+
+                <button
+                  type="button"
+                  onClick={() => setShowStudentExcelModal({ open: true, tab: 'import' })}
+                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                  title="Import calon murid dari file Excel (.xlsx / .xls)"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Import Excel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowStudentExcelModal({ open: true, tab: 'export' })}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                  title="Export calon murid ke file Excel (.xlsx)"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Export Excel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => downloadStudentExcelTemplate(schoolInfo)}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                  title="Unduh format template Excel kosong untuk diisi data calon murid"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Template</span>
+                </button>
               </div>
             </div>
 
@@ -2061,30 +2034,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="p-3 text-slate-600">{s.previousSchoolName || '-'}</td>
                       <td className="p-3 font-mono">{s.phone}</td>
                       <td className="p-3">
-                        <div className="flex flex-col gap-1">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold w-fit ${
-                              s.formPaymentStatus === 'verified'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : s.formPaymentProofUrl
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {s.formPaymentStatus === 'verified' ? '✓ Bayar Lunas' : s.formPaymentProofUrl ? '⏳ Bukti Terunggah' : 'Belum Bayar'}
-                          </span>
-                          <span className={`text-[10px] font-medium flex items-center gap-1 ${isStudentFormFilled(s) ? 'text-emerald-700 font-bold' : 'text-slate-400 italic'}`}>
-                            {isStudentFormFilled(s) ? '✓ Form Terisi' : '⏳ Form Belum Terisi'}
-                          </span>
-                          {s.isFormVerified || s.status === 'form_verified' ? (
-                            <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5">
-                              ✓ Data Terverifikasi
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-amber-700 font-medium flex items-center gap-0.5">
-                              ⏳ Data Belum Diverifikasi
-                            </span>
+                        <div className="flex items-center gap-2">
+                          {s.formPaymentProofUrl && (
+                            <PaymentProofThumbnail
+                              pathOrUrl={s.formPaymentProofUrl}
+                              alt={`Bukti ${s.fullName}`}
+                              className="w-9 h-9 rounded-lg shrink-0 border border-slate-300 shadow-2xs"
+                              onClick={() => setActiveProofModalData({
+                                url: s.formPaymentProofUrl,
+                                studentName: s.fullName,
+                                regNo: s.registrationNumber,
+                                paymentType: 'form',
+                                amount: s.formPaymentAmount || 200000,
+                                status: s.formPaymentStatus,
+                                date: s.formPaymentDate,
+                                notes: s.formPaymentNotes,
+                                gender: s.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+                              })}
+                            />
                           )}
+                          <div className="flex flex-col gap-1">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold w-fit ${
+                                s.formPaymentStatus === 'verified'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : s.formPaymentProofUrl
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {s.formPaymentStatus === 'verified' ? '✓ Bayar Lunas' : s.formPaymentProofUrl ? '⏳ Bukti Terunggah' : 'Belum Bayar'}
+                            </span>
+                            <span className={`text-[10px] font-medium flex items-center gap-1 ${isStudentFormFilled(s) ? 'text-emerald-700 font-bold' : 'text-slate-400 italic'}`}>
+                              {isStudentFormFilled(s) ? '✓ Form Terisi' : '⏳ Form Belum Terisi'}
+                            </span>
+                            {s.isFormVerified || s.status === 'form_verified' ? (
+                              <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5">
+                                ✓ Data Terverifikasi
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-amber-700 font-medium flex items-center gap-0.5">
+                                ⏳ Data Belum Diverifikasi
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="p-3 font-bold font-mono text-slate-900">{s.finalScore || '-'}</td>
@@ -4278,140 +4271,6 @@ Kunci: B`}
               )}
             </div>
 
-            {/* SECTION 2B: DOKUMEN SK RINCIAN BIAYA BAM (GAMBAR / PDF) */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-              <div className="border-b border-slate-200 pb-3 flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                    <span>2B. Dokumen SK Rincian Biaya Awal Masuk (BAM) (Gambar / PDF)</span>
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    Upload berkas SK rincian pembiayaan BAM resmi sekolah (Format Gambar JPG/PNG atau PDF) yang dapat diunduh calon murid di tabel Biaya Pendidikan Halaman Depan & Dashboard Murid.
-                  </p>
-                </div>
-                {schoolForm.bamBrochureUrl && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onUpdateSchoolInfo(schoolForm);
-                      saveSchoolInfo(schoolForm);
-                      Swal.fire({
-                        icon: 'success',
-                        title: 'SK BAM Berhasil Dipublikasikan!',
-                        text: 'Calon murid kini dapat langsung mengunduh berkas SK BAM ini.',
-                        confirmButtonColor: '#10b981',
-                      });
-                    }}
-                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>Simpan & Publikasikan SK BAM</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <label className="block text-xs font-bold text-slate-700">
-                    Upload Berkas SK Biaya BAM (Gambar JPG/PNG atau PDF, Maks 15MB)
-                  </label>
-                  <div className="border-2 border-dashed border-emerald-200 hover:border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50/80 rounded-2xl p-6 text-center transition-all cursor-pointer relative group">
-                    <input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg,.webp"
-                      onChange={handleBamBrochureFileUpload}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold group-hover:scale-110 transition-transform">
-                        <Upload className="w-6 h-6" />
-                      </div>
-                      <div className="text-xs font-bold text-slate-800">
-                        {isUploadingBamBrochure ? 'Mengunggah & Memproses File SK BAM...' : 'Klik atau Drag & Drop Berkas SK BAM'}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        Mendukung Gambar (PNG, JPG, WEBP) dan PDF SK Resmi BAM
-                      </div>
-                      <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-semibold mt-1">
-                        <Check className="w-3 h-3" />
-                        <span>Langsung aktif di tabel biaya Landing Page</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status Berkas SK BAM</span>
-                      {schoolForm.bamBrochureUrl ? (
-                        <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center gap-1 border border-emerald-200">
-                          <Check className="w-3 h-3" /> Berkas SK Terunggah
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-1 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold">
-                          Belum Ada Berkas SK Khusus
-                        </span>
-                      )}
-                    </div>
-
-                    {schoolForm.bamBrochureUrl ? (
-                      <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
-                        <div className="p-3 bg-emerald-100 text-emerald-700 rounded-lg shrink-0">
-                          {schoolForm.bamBrochureFileType?.startsWith('image/') ? <ImageIcon className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
-                        </div>
-                        <div className="overflow-hidden flex-1">
-                          <div className="text-xs font-bold text-slate-900 truncate">
-                            {schoolForm.bamBrochureFileName || 'SK_Rincian_Biaya_BAM.pdf'}
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            Ukuran: {schoolForm.bamBrochureFileSize || '~1 MB'} | Format: {schoolForm.bamBrochureFileType || 'Dokumen'}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500 text-center">
-                        Upload berkas gambar atau PDF SK rincian biaya BAM resmi sekolah jika ingin calon murid dapat mengunduh dokumen SK asli.
-                      </div>
-                    )}
-                  </div>
-
-                  {schoolForm.bamBrochureUrl && (
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
-                      <a
-                        href={schoolForm.bamBrochureUrl}
-                        download={schoolForm.bamBrochureFileName || 'SK_Rincian_Biaya_BAM.pdf'}
-                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Unduh Berkas SK BAM</span>
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const reset = {
-                            ...schoolForm,
-                            bamBrochureUrl: '',
-                            bamBrochureFileName: '',
-                            bamBrochureFileType: '',
-                            bamBrochureFileSize: '',
-                          };
-                          setSchoolForm(reset);
-                          onUpdateSchoolInfo(reset);
-                          saveSchoolInfo(reset);
-                        }}
-                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold flex items-center gap-1 border border-rose-200 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Hapus SK</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
             {/* SECTION 3: VIDEO PROFIL SEKOLAH */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
               <div className="border-b border-slate-200 pb-3">
@@ -5640,33 +5499,51 @@ Kunci: B`}
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <a
-                        href={selectedStudent.formPaymentProofUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group relative block w-20 h-20 rounded-lg border border-slate-300 overflow-hidden bg-slate-900 shrink-0"
-                        title="Klik untuk membuka gambar ukuran penuh"
-                      >
-                        <img
-                          src={selectedStudent.formPaymentProofUrl}
-                          alt="Bukti Transfer Formulir"
-                          className="w-full h-full object-contain group-hover:scale-105 transition-transform"
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                          <Eye className="w-4 h-4 text-amber-300" />
-                        </div>
-                      </a>
+                      <PaymentProofThumbnail
+                        pathOrUrl={selectedStudent.formPaymentProofUrl}
+                        alt={`Bukti Transfer Formulir ${selectedStudent.fullName}`}
+                        className="w-20 h-20 rounded-xl border border-slate-300 overflow-hidden shrink-0 shadow-xs"
+                        onClick={() => setActiveProofModalData({
+                          url: selectedStudent.formPaymentProofUrl,
+                          studentName: selectedStudent.fullName,
+                          regNo: selectedStudent.registrationNumber,
+                          paymentType: 'form',
+                          amount: selectedStudent.formPaymentAmount || 200000,
+                          status: selectedStudent.formPaymentStatus,
+                          date: selectedStudent.formPaymentDate,
+                          notes: selectedStudent.formPaymentNotes,
+                          gender: selectedStudent.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+                        })}
+                      />
                       <div className="text-xs text-slate-600 space-y-1">
                         <div><span className="font-semibold">Tanggal Upload:</span> {selectedStudent.formPaymentDate || '-'}</div>
                         <div>
                           <span className="font-semibold">Status Pembayaran:</span>{' '}
-                          <span className="font-bold text-emerald-700 uppercase">{selectedStudent.formPaymentStatus}</span>
+                          <span className={`font-bold uppercase ${selectedStudent.formPaymentStatus === 'verified' ? 'text-emerald-700' : 'text-amber-700'}`}>{selectedStudent.formPaymentStatus}</span>
                         </div>
                         {selectedStudent.formPaymentNotes && (
                           <div className="text-slate-500 italic">"{selectedStudent.formPaymentNotes}"</div>
                         )}
                         <div className="pt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setActiveProofModalData({
+                              url: selectedStudent.formPaymentProofUrl,
+                              studentName: selectedStudent.fullName,
+                              regNo: selectedStudent.registrationNumber,
+                              paymentType: 'form',
+                              amount: selectedStudent.formPaymentAmount || 200000,
+                              status: selectedStudent.formPaymentStatus,
+                              date: selectedStudent.formPaymentDate,
+                              notes: selectedStudent.formPaymentNotes,
+                              gender: selectedStudent.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+                            })}
+                            className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                            title="Buka Pratinjau & Verifikasi Bukti"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Buka Bukti</span>
+                          </button>
                           {selectedStudent.formPaymentStatus !== 'verified' ? (
                             <button
                               type="button"
@@ -5705,37 +5582,56 @@ Kunci: B`}
 
                     {selectedStudent.initialPaymentProofUrl && (
                       <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-blue-100">
-                        <a
-                          href={selectedStudent.initialPaymentProofUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="group relative block w-20 h-20 rounded-lg border border-blue-300 overflow-hidden bg-slate-900 shrink-0"
-                          title="Klik untuk membuka gambar ukuran penuh"
-                        >
-                          <img
-                            src={selectedStudent.initialPaymentProofUrl}
-                            alt="Bukti Transfer BAM"
-                            className="w-full h-full object-contain group-hover:scale-105 transition-transform"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                            <Eye className="w-4 h-4 text-amber-300" />
-                          </div>
-                        </a>
+                        <PaymentProofThumbnail
+                          pathOrUrl={selectedStudent.initialPaymentProofUrl}
+                          alt={`Bukti Transfer BAM ${selectedStudent.fullName}`}
+                          className="w-20 h-20 rounded-xl border border-blue-300 overflow-hidden shrink-0 shadow-xs"
+                          onClick={() => setActiveProofModalData({
+                            url: selectedStudent.initialPaymentProofUrl,
+                            studentName: selectedStudent.fullName,
+                            regNo: selectedStudent.registrationNumber,
+                            paymentType: 'bam',
+                            amount: selectedStudent.initialPaymentAmount,
+                            status: selectedStudent.initialPaymentStatus,
+                            date: selectedStudent.initialPaymentDate,
+                            notes: selectedStudent.initialPaymentNotes,
+                            gender: selectedStudent.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+                          })}
+                        />
                         <div className="text-xs text-slate-600 space-y-1">
                           <div><span className="font-semibold">Tanggal Upload Murid:</span> {selectedStudent.initialPaymentDate || '-'}</div>
                           <div>
                             <span className="font-semibold">Catatan Murid:</span>{' '}
                             <span className="italic text-slate-500">{selectedStudent.initialPaymentNotes || 'Tidak ada catatan'}</span>
                           </div>
-                          <a
-                            href={selectedStudent.initialPaymentProofUrl}
-                            download={`Bukti_BAM_${selectedStudent.registrationNumber}.jpg`}
-                            className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 pt-1"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Unduh File Bukti BAM</span>
-                          </a>
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setActiveProofModalData({
+                                url: selectedStudent.initialPaymentProofUrl,
+                                studentName: selectedStudent.fullName,
+                                regNo: selectedStudent.registrationNumber,
+                                paymentType: 'bam',
+                                amount: selectedStudent.initialPaymentAmount,
+                                status: selectedStudent.initialPaymentStatus,
+                                date: selectedStudent.initialPaymentDate,
+                                notes: selectedStudent.initialPaymentNotes,
+                                gender: selectedStudent.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+                              })}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Lihat Bukti Full</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadPaymentProofFile(selectedStudent.initialPaymentProofUrl || '', `Bukti_BAM_${selectedStudent.registrationNumber}.jpg`)}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:text-emerald-800 cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Unduh</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -5889,6 +5785,67 @@ Kunci: B`}
           }}
         />
       )}
+
+      {/* MODAL EXPORT & IMPORT EXCEL CALON MURID */}
+      <StudentExcelModal
+        isOpen={showStudentExcelModal.open}
+        onClose={() => setShowStudentExcelModal((prev) => ({ ...prev, open: false }))}
+        students={students}
+        filteredStudents={filteredStudents}
+        schoolInfo={schoolInfo}
+        onStudentsUpdated={onUpdateStudents}
+        onRefreshAllData={onRefreshAllData}
+        initialTab={showStudentExcelModal.tab}
+      />
+
+      {/* MODAL VERIFIKASI & PRATINJAU BUKTI TRANSFER LENGKAP */}
+      <PaymentProofModal
+        isOpen={!!activeProofModalData}
+        onClose={() => setActiveProofModalData(null)}
+        data={activeProofModalData}
+        onVerify={(isVerified, rejectionReason) => {
+          if (!activeProofModalData) return;
+          const target = students.find(
+            (s) =>
+              s.registrationNumber === activeProofModalData.regNo ||
+              s.fullName === activeProofModalData.studentName ||
+              (activeProofModalData.regNo && s.id === activeProofModalData.regNo)
+          );
+          if (!target) return;
+          if (activeProofModalData.paymentType === 'form') {
+            handleVerifyFormPayment(target.id, isVerified ? 'verified' : 'rejected');
+          } else if (activeProofModalData.paymentType === 'bam') {
+            if (isVerified) {
+              const defaultAmt = activeProofModalData.amount || getTotalBamCost(getStudentCategory(target));
+              handleVerifyAndRecordBamPayment(
+                target,
+                defaultAmt,
+                activeProofModalData.date || new Date().toISOString().split('T')[0],
+                'Lunas',
+                'Verifikasi Pembayaran BAM Panitia SPMB via Modal Bukti Transfer'
+              );
+            } else {
+              const updated = students.map((s) => {
+                if (s.id === target.id) {
+                  return {
+                    ...s,
+                    initialPaymentStatus: 'rejected' as const,
+                    initialPaymentNotes: rejectionReason || 'Bukti pembayaran BAM ditolak panitia.',
+                  };
+                }
+                return s;
+              });
+              onUpdateStudents(updated);
+              StudentRepository.update(target.id, {
+                initialPaymentStatus: 'rejected',
+                initialPaymentNotes: rejectionReason || 'Bukti pembayaran BAM ditolak panitia.',
+              }).catch(() => {});
+              alert(`Status bukti pembayaran BAM untuk ${target.fullName} diubah menjadi Ditolak.`);
+            }
+          }
+          setActiveProofModalData(null);
+        }}
+      />
     </div>
   );
 };

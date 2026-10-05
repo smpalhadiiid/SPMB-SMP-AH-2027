@@ -470,31 +470,27 @@ export function getCbtHasilUjian(): CbtHasilUjian[] {
 
 export function saveCbtHasilUjian(hasilList: CbtHasilUjian[]): void {
   safeSetItem(CBT_KEYS.HASIL, JSON.stringify(hasilList));
-  // Try syncing to Supabase if available
+  // Try syncing to Supabase if available with valid column schema
   try {
     Promise.resolve(
       supabase.from('hasil_ujian').upsert(
         hasilList.map(h => ({
-          id: h.id,
           ujian_id: h.ujianId,
           peserta_id: h.pesertaId,
-          registration_number: h.registrationNumber,
-          nama_peserta: h.namaPeserta,
-          nilai_diagnostik: h.nilaiDiagnostik,
-          nilai_tpu: h.nilaiTpu,
-          nilai_diniyyah: h.nilaiDiniyyah,
-          nilai_total: h.nilaiTotal,
-          status_kelulusan: h.statusKelulusan,
-          ranking: h.ranking,
-          tanggal_ujian: h.tanggalUjian,
+          nilai_diagnostik: h.nilaiDiagnostik || 0,
+          nilai_tpu: h.nilaiTpu || 0,
+          nilai_diniyyah: h.nilaiDiniyyah || 0,
+          nilai_akhir: h.nilaiTotal || 0,
+          status_kelulusan: h.statusKelulusan || 'LULUS',
+          waktu_selesai: new Date().toISOString(),
         })),
-        { onConflict: 'id' }
+        { onConflict: 'ujian_id,peserta_id' }
       )
     ).catch((err) => {
-      console.warn('[cbtStorage] async bank soal sync warning:', err);
+      console.warn('[cbtStorage] async hasil ujian sync warning:', err);
     });
   } catch (err: any) {
-    console.warn('[cbtStorage] saveCbtBankSoal error:', err?.message || err);
+    console.warn('[cbtStorage] saveCbtHasilUjian error:', err?.message || err);
   }
 }
 

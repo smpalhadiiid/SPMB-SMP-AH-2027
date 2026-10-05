@@ -12,9 +12,10 @@ import {
   getStoredWebsiteConfig, saveWebsiteConfig,
   getCurrentUser, setCurrentUser,
   loadDataFromSupabase,
-  safeGetItem, safeSetItem, safeRemoveItem
+  safeGetItem, safeSetItem, safeRemoveItem,
+  KEYS
 } from './utils/storage';
-import { supabase, signOutWithSupabase, getAuthUserProfile, syncCostBreakdownToSupabase } from './utils/supabaseClient';
+import { supabase, signOutWithSupabase, getAuthUserProfile, syncCostBreakdownToSupabase, fetchWebsiteConfigFromSupabase } from './utils/supabaseClient';
 import { StudentRepository } from './repositories/StudentRepository';
 import { ClassQuotaRepository } from './repositories/ClassQuotaRepository';
 import { fetchStudentCredentialsFromSupabase } from './utils/studentCredentials';
@@ -252,6 +253,29 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
+    // 1. Fetch website config immediately in parallel for consistent running text across accounts
+    fetchWebsiteConfigFromSupabase().then((cfg) => {
+      if (isMounted && cfg) {
+        setWebsiteConfig(cfg);
+        safeSetItem(KEYS.WEBSITE_CONFIG, JSON.stringify(cfg));
+      }
+    }).catch(() => {});
+
+    // 2. Realtime listener on spmb_app_state to ensure running text stays synchronized
+    const configChannel = supabase
+      .channel('spmb_website_config_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'spmb_app_state', filter: 'key=eq.website_config' },
+        (payload: any) => {
+          if (isMounted && payload.new && payload.new.payload) {
+            setWebsiteConfig(payload.new.payload);
+            safeSetItem(KEYS.WEBSITE_CONFIG, JSON.stringify(payload.new.payload));
+          }
+        }
+      )
+      .subscribe();
+
     async function loadData() {
       setIsDataLoading(true);
       try {
@@ -325,6 +349,7 @@ export default function App() {
     return () => {
       isMounted = false;
       authListener?.subscription?.unsubscribe();
+      supabase.removeChannel(configChannel);
     };
   }, []);
 
@@ -352,7 +377,7 @@ export default function App() {
     }
   }, [students]);
 
-  // Sync activeRoleView whenever currentUser changes or updates
+  // Sync activeRoleView & websiteConfig whenever currentUser changes or updates
   useEffect(() => {
     const userRole = currentUser?.role || 'student';
     const allowed = getAllowedRoleViews(userRole);
@@ -363,12 +388,24 @@ export default function App() {
       if (defaultRole === 'student') setActiveTab('timeline');
       else setActiveTab('overview');
     }
+
+    // Refresh running text configuration from Supabase so every logged-in account displays the exact same announcement
+    fetchWebsiteConfigFromSupabase().then((cfg) => {
+      if (cfg) {
+        setWebsiteConfig(cfg);
+        safeSetItem(KEYS.WEBSITE_CONFIG, JSON.stringify(cfg));
+      }
+    }).catch(() => {});
   }, [currentUser]);
 
   const handleLoginSuccess = (user: UserAccount) => {
     setCurrentUserLocal(user);
     setCurrentUser(user);
     handleSelectRoleView(user.role, user.role);
+    // Refresh configurations from Supabase so running text and settings are immediately consistent across accounts
+    fetchWebsiteConfigFromSupabase().then(cfg => {
+      if (cfg) setWebsiteConfig(cfg);
+    }).catch(() => {});
   };
 
   const handleLogout = async () => {
@@ -381,6 +418,9 @@ export default function App() {
     setActiveRoleView('student');
     setViewMode('home');
     setActiveTab('timeline');
+    fetchWebsiteConfigFromSupabase().then(cfg => {
+      if (cfg) setWebsiteConfig(cfg);
+    }).catch(() => {});
   };
 
   const handleOpenWhatsApp = () => {
@@ -564,6 +604,7 @@ export default function App() {
           onTabChange={handleTabChange}
           studentData={currentStudentData}
           onRefreshAllData={handleRefreshAllData}
+          websiteConfig={websiteConfig}
         >
           {activeRoleView === 'student' && (
             <StudentDashboard

@@ -62,9 +62,10 @@ import {
   Calendar, DollarSign, Calculator, Trash2, Database, Pencil,
   Upload, Download, Save, AlertCircle, Info, Eye, Layers, ShieldCheck,
   Image as ImageIcon, ZoomIn, RefreshCw, Check, RotateCcw,
-  AlertTriangle, FileSpreadsheet, X, UserCheck, User
+  AlertTriangle, FileSpreadsheet, X, UserCheck, User, CreditCard
 } from 'lucide-react';
 import { PaymentProofModal, ProofModalData } from './PaymentProofModal';
+import { PaymentProofThumbnail } from './PaymentProofThumbnail';
 import { getStoredPaymentProofs } from '../../utils/paymentProofStorage';
 import {
   generatePaymentReceiptPDF,
@@ -1260,18 +1261,23 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                         </td>
                         <td className="p-3 text-center">
                           {s.proofUrl ? (
-                            <button
-                              onClick={() => setActiveProofData({
-                                url: s.proofUrl!,
-                                studentName: s.fullName,
-                                regNo: s.registrationNumber,
-                                paymentType: 'bam',
-                              })}
-                              className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg cursor-pointer"
-                              title="Lihat Bukti Transfer"
-                            >
-                              <ImageIcon className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center justify-center">
+                              <PaymentProofThumbnail
+                                pathOrUrl={s.proofUrl}
+                                alt={`Bukti BAM ${s.fullName}`}
+                                className="w-10 h-10 shrink-0 mx-auto"
+                                onClick={() => setActiveProofData({
+                                  url: s.proofUrl!,
+                                  studentName: s.fullName,
+                                  regNo: s.registrationNumber,
+                                  paymentType: 'bam',
+                                  amount: s.amountPaid,
+                                  status: s.status === 'LUNAS' || s.status === 'SEBAGIAN' ? 'verified' : 'pending',
+                                  date: s.latestPaymentDate,
+                                  notes: s.notes,
+                                })}
+                              />
+                            </div>
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}
@@ -1814,6 +1820,55 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* BUKTI TRANSFER BAM JIKA TERSEDIA */}
+            {selectedStudentSummary.proofUrl && (
+              <div className="bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-200 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-3">
+                  <PaymentProofThumbnail
+                    pathOrUrl={selectedStudentSummary.proofUrl}
+                    alt={`Bukti BAM ${selectedStudentSummary.fullName}`}
+                    className="w-14 h-14 rounded-lg shrink-0 border border-emerald-300"
+                    onClick={() => setActiveProofData({
+                      url: selectedStudentSummary.proofUrl!,
+                      studentName: selectedStudentSummary.fullName,
+                      regNo: selectedStudentSummary.registrationNumber,
+                      paymentType: 'bam',
+                      amount: selectedStudentSummary.amountPaid,
+                      status: selectedStudentSummary.status === 'LUNAS' || selectedStudentSummary.status === 'SEBAGIAN' ? 'verified' : 'pending',
+                      date: selectedStudentSummary.latestPaymentDate,
+                      notes: selectedStudentSummary.notes,
+                    })}
+                  />
+                  <div>
+                    <div className="font-bold text-emerald-950 flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-emerald-600" />
+                      <span>Bukti Transfer BAM Tersedia</span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-0.5">
+                      Klik thumbnail untuk melihat atau memverifikasi bukti dalam ukuran penuh
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveProofData({
+                    url: selectedStudentSummary.proofUrl!,
+                    studentName: selectedStudentSummary.fullName,
+                    regNo: selectedStudentSummary.registrationNumber,
+                    paymentType: 'bam',
+                    amount: selectedStudentSummary.amountPaid,
+                    status: selectedStudentSummary.status === 'LUNAS' || selectedStudentSummary.status === 'SEBAGIAN' ? 'verified' : 'pending',
+                    date: selectedStudentSummary.latestPaymentDate,
+                    notes: selectedStudentSummary.notes,
+                  })}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer shrink-0 shadow-xs"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Lihat Bukti</span>
+                </button>
+              </div>
+            )}
 
             {/* TABEL RINCIAN BAM (SECTION L) */}
             <div>

@@ -3,20 +3,16 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // =====================================================================
 // KONFIGURASI EXPRESS & PORT
 // =====================================================================
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -666,11 +662,32 @@ app.post('/api/cbt/heartbeat', async (req: Request, res: Response) => {
       last_seen_at: payload.last_seen_at || new Date().toISOString(),
     };
 
-    await sb.from('spmb_app_state').upsert({
-      key,
-      payload: sessions,
-      updated_at: new Date().toISOString(),
-    });
+    // Ambil sesi global all exams
+    const { data: globalRow } = await sb.from('spmb_app_state').select('payload').eq('key', 'cbt_live_all_sessions').maybeSingle();
+    const globalSessions = (globalRow?.payload && typeof globalRow.payload === 'object') ? globalRow.payload : {};
+    globalSessions[payload.participant_id] = {
+      ...payload,
+      last_seen_at: payload.last_seen_at || new Date().toISOString(),
+    };
+
+    await Promise.all([
+      sb.from('spmb_app_state').upsert({
+        key,
+        payload: sessions,
+        updated_at: new Date().toISOString(),
+      }),
+      sb.from('spmb_app_state').upsert({
+        key: 'cbt_live_all_sessions',
+        payload: globalSessions,
+        updated_at: new Date().toISOString(),
+      }),
+      // Sinkronkan status ujian di tabel students
+      sb.from('students').update({
+        is_test_active: !payload.isSubmitted && payload.remaining_seconds > 0,
+        test_submitted: Boolean(payload.isSubmitted),
+        updated_at: new Date().toISOString(),
+      }).eq('id', payload.participant_id),
+    ]);
 
     return res.json({ success: true, timestamp: new Date().toISOString() });
   } catch (err: any) {
@@ -722,21 +739,51 @@ app.get('/api/cbt/live/:examId', async (req: Request, res: Response) => {
     const sessionsKey = `cbt_sessions_${examId}`;
     const activitiesKey = `cbt_activities_${examId}`;
 
-    const [sessionsRes, activitiesRes, hasilRes] = await Promise.all([
+    const [sessionsRes, globalSessionsRes, activitiesRes, hasilRes] = await Promise.all([
       sb.from('spmb_app_state').select('payload').eq('key', sessionsKey).maybeSingle(),
+      sb.from('spmb_app_state').select('payload').eq('key', 'cbt_live_all_sessions').maybeSingle(),
       sb.from('spmb_app_state').select('payload').eq('key', activitiesKey).maybeSingle(),
       sb.from('hasil_ujian').select('*').eq('ujian_id', examId),
     ]);
 
+    const mergedSessions = {
+      ...(globalSessionsRes.data?.payload || {}),
+      ...(sessionsRes.data?.payload || {}),
+    };
+
     return res.json({
       success: true,
-      sessions: sessionsRes.data?.payload || {},
+      sessions: mergedSessions,
       activities: activitiesRes.data?.payload || [],
       hasilList: hasilRes.data || [],
       serverTime: new Date().toISOString(),
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Gagal mengambil data monitoring live.' });
+  }
+});
+
+// GET /api/cbt/live-all: Ambil status live monitoring global dari seluruh ujian
+app.get('/api/cbt/live-all', async (req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
+
+  try {
+    const [globalSessionsRes, studentsRes, hasilRes] = await Promise.all([
+      sb.from('spmb_app_state').select('payload').eq('key', 'cbt_live_all_sessions').maybeSingle(),
+      sb.from('students').select('id, full_name, registration_number, gender, is_test_active, test_submitted, final_score, updated_at'),
+      sb.from('hasil_ujian').select('*'),
+    ]);
+
+    return res.json({
+      success: true,
+      sessions: globalSessionsRes.data?.payload || {},
+      students: studentsRes.data || [],
+      hasilList: hasilRes.data || [],
+      serverTime: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Gagal mengambil data monitoring live global.' });
   }
 });
 
@@ -1738,149 +1785,28 @@ async function ensureDefaultSystemAccounts() {
 }
 
 async function startServer() {
-  // Auto-restore .env jika tidak sengaja terhapus
-  const envPath = path.resolve(process.cwd(), '.env');
-  const envExamplePath = path.resolve(process.cwd(), '.env.example');
-  if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
-    try {
-      fs.copyFileSync(envExamplePath, envPath);
-      console.log('[SPMB Server] Berkas .env otomatis dipulihkan dari .env.example');
-    } catch (e) {
-      console.warn('[SPMB Server] Catatan pemulihan .env:', e);
-    }
-  }
+  const distPath = path.join(process.cwd(), 'dist');
+  const distIndexPath = path.join(distPath, 'index.html');
+  const hasDist = fs.existsSync(distIndexPath);
+  const isCloudRun = !!process.env.K_SERVICE || !!process.env.K_REVISION || !!process.env.CLOUD_RUN_JOB;
+  const isProduction = (process.env.NODE_ENV === 'production' || isCloudRun) && hasDist;
 
-  // Deteksi mode: Bedakan antara dev container AI Studio dan live Cloud Run production
-  const isDevContainer =
-    process.env.NODE_ENV === 'development' ||
-    process.env.K_SERVICE?.startsWith('ais-dev') ||
-    !process.env.NODE_ENV;
-
-  const isProduction = !isDevContainer && process.env.NODE_ENV === 'production';
-
-  if (!isProduction) {
-    // ===================================================================
-    // MODE DEVELOPMENT: Gunakan Vite Middleware (React Guidelines Standard)
-    // ===================================================================
-    try {
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: 'spa',
-      });
-      app.use(vite.middlewares);
-
-      // Handler untuk melayani SPA HTML development dengan Vite transformIndexHtml
-      app.use('*', async (req: Request, res: Response, next: NextFunction) => {
-        if (req.originalUrl.startsWith('/api')) {
-          return next();
-        }
-        try {
-          const rootIndexPath = path.resolve(process.cwd(), 'index.html');
-          if (fs.existsSync(rootIndexPath)) {
-            let html = fs.readFileSync(rootIndexPath, 'utf-8');
-            html = await vite.transformIndexHtml(req.originalUrl, html);
-            res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
-          } else {
-            next();
-          }
-        } catch (e: any) {
-          vite.ssrFixStacktrace(e);
-          next(e);
-        }
-      });
-      console.log('[SPMB Server] Vite middleware aktif untuk mode development.');
-    } catch (viteErr) {
-      console.error('[SPMB Server] Vite server initialization error:', viteErr);
-    }
-  } else {
-    // ===================================================================
-    // MODE PRODUCTION: Layani berkas statis dari direktori dist
-    // ===================================================================
-    const candidateDistPaths = [
-      path.resolve(process.cwd(), 'dist'),
-      path.resolve(__dirname, 'dist'),
-      path.resolve('/app/applet/dist'),
-    ];
-
-    let activeDistPath = '';
-    let activeIndexPath = '';
-
-    for (const p of candidateDistPaths) {
-      const indexPath = path.join(p, 'index.html');
-      if (fs.existsSync(indexPath)) {
-        activeDistPath = p;
-        activeIndexPath = indexPath;
-        break;
-      }
-    }
-
-    if (activeDistPath && fs.existsSync(activeDistPath)) {
-      app.use(express.static(activeDistPath));
-    }
-
+  if (isProduction) {
+    app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
-      let targetFile = activeIndexPath;
-      if (!targetFile || !fs.existsSync(targetFile)) {
-        for (const p of candidateDistPaths) {
-          const idx = path.join(p, 'index.html');
-          if (fs.existsSync(idx)) {
-            targetFile = idx;
-            activeIndexPath = idx;
-            break;
-          }
-        }
-      }
-
-      if (targetFile && fs.existsSync(targetFile)) {
-        res.sendFile(targetFile, (err) => {
-          if (err && !res.headersSent) {
-            console.error('[SPMB Server] sendFile error:', err);
-            res.status(500).send('Error loading SPMB Application: ' + (err.message || 'File read error'));
-          }
-        });
+      if (fs.existsSync(distIndexPath)) {
+        res.sendFile(distIndexPath);
       } else {
-        const rootIndexPath = path.resolve(process.cwd(), 'index.html');
-        if (fs.existsSync(rootIndexPath)) {
-          res.sendFile(rootIndexPath);
-        } else {
-          res.status(200).send(`<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SPMB SMP Al-Hadiid Cileungsi</title>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0f172a; color: #fff; text-align: center; }
-    .card { background: #1e293b; padding: 2.5rem; border-radius: 1.5rem; max-width: 500px; border: 1px solid #334155; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #10b981; }
-    p { color: #94a3b8; font-size: 0.95rem; line-height: 1.6; }
-    .btn { display: inline-block; margin-top: 1rem; padding: 0.75rem 1.5rem; background: #10b981; color: #fff; text-decoration: none; border-radius: 0.75rem; font-weight: bold; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>SPMB SMP Al-Hadiid Cileungsi</h1>
-    <p>Aplikasi sedang menginisialisasi atau memuat aset statis. Silakan muat ulang halaman ini dalam beberapa saat.</p>
-    <a href="/" class="btn" onclick="location.reload(); return false;">Muat Ulang Halaman</a>
-  </div>
-</body>
-</html>`);
-        }
+        res.status(404).send('SPMB Application dist/index.html not found. Please run npm run build.');
       }
     });
+  } else {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
   }
-
-  // Global Error Handler agar server tidak crash
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('[SPMB Server Global Error]:', err);
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: err?.message || 'Terjadi kesalahan pada server SPMB.',
-      });
-    }
-  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SPMB Server] Server API aktif di http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);

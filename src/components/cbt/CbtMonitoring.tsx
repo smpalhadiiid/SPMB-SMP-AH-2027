@@ -3,16 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Eye, Clock, CheckCircle2, Wifi, WifiOff, RefreshCw, AlertCircle, Search,
   Filter, AlertTriangle, User, Activity, Layers, X, Info, Sparkles,
-  ChevronRight, ArrowRight, ShieldCheck, ShieldAlert, Database, Code2, Copy, Check, ExternalLink
+  ChevronRight, ArrowRight, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 import { StudentData, CbtUjian, CbtParticipantLiveStatus, CbtLiveMonitoringSummary, CbtActivityLogItem } from '../../types';
-import {
-  fetchUjianSupabase,
-  verifyAndSetupCbtDatabaseSupabase,
-  CBT_SUPABASE_SQL_SCRIPT,
-  CbtDatabaseSetupReport,
-} from '../../services/cbtSupabaseService';
-import { SUPABASE_URL, SUPABASE_PROJECT_ID } from '../../utils/supabaseClient';
+import { fetchUjianSupabase } from '../../services/cbtSupabaseService';
 import {
   fetchCbtLiveMonitoringFromSupabase,
   subscribeToCbtMonitoringChannel,
@@ -68,24 +62,6 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
   }>>([]);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
-  // 5. Database Supabase CBT Modal State
-  const [showDbModal, setShowDbModal] = useState(false);
-  const [dbReport, setDbReport] = useState<CbtDatabaseSetupReport | null>(null);
-  const [isCheckingDb, setIsCheckingDb] = useState(false);
-  const [copiedSql, setCopiedSql] = useState(false);
-
-  const handleRunDatabaseCheck = async () => {
-    setIsCheckingDb(true);
-    try {
-      const rep = await verifyAndSetupCbtDatabaseSupabase();
-      setDbReport(rep);
-    } catch (err: any) {
-      console.warn('DB check error:', err);
-    } finally {
-      setIsCheckingDb(false);
-    }
-  };
-
   // Load / Re-fetch monitoring data directly from Supabase (SSOT)
   const refreshMonitoringData = async (isManual = false) => {
     if (!selectedUjianId) return;
@@ -132,55 +108,26 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
     // 1. Subscribe to Supabase Realtime Channel
     const unsubscribe = subscribeToCbtMonitoringChannel(selectedUjianId, {
       onHeartbeat: (hb) => {
-        setParticipants((prev) => {
-          const diffMs = hb.server_end_time ? new Date(hb.server_end_time).getTime() - Date.now() : 0;
-          const remSec = hb.server_end_time ? Math.max(0, Math.floor(diffMs / 1000)) : hb.remaining_seconds;
-          const exists = prev.some((p) => p.participantId === hb.participant_id);
-
-          if (exists) {
-            return prev.map((p) => {
-              if (p.participantId === hb.participant_id) {
-                return {
-                  ...p,
-                  currentQuestionNumber: hb.current_question,
-                  answeredCount: hb.answered_count,
-                  totalQuestions: hb.total_questions || p.totalQuestions,
-                  progressPercentage: hb.progress_percentage,
-                  remainingSeconds: remSec,
-                  lastSeenAt: hb.last_seen_at,
-                  connectionStatus: hb.connection_status,
-                  status: (remSec === 0 || hb.progress_percentage === 100) && p.isSubmitted ? 'SELESAI' : 'AKTIF',
-                };
-              }
-              return p;
-            });
-          } else {
-            // New participant active! Tambahkan seketika ke daftar
-            const newParticipant: CbtParticipantLiveStatus = {
-              participantId: hb.participant_id,
-              registrationNumber: hb.registration_number || 'REG-SPMB',
-              fullName: hb.student_name || 'Calon Murid',
-              gender: 'Laki-laki',
-              examId: hb.exam_id,
-              status: 'AKTIF',
-              progressPercentage: hb.progress_percentage || 0,
-              answeredCount: hb.answered_count || 0,
-              totalQuestions: hb.total_questions || 30,
-              currentQuestionNumber: hb.current_question || 1,
-              remainingSeconds: remSec,
-              lastSeenAt: hb.last_seen_at || new Date().toISOString(),
-              serverStartTime: hb.server_start_time || null,
-              serverEndTime: hb.server_end_time || null,
-              isSubmitted: false,
-              needsAttention: false,
-              attentionReasons: [],
-              recentActivities: [],
-              connectionStatus: hb.connection_status || 'online',
-              doubtfulCount: 0,
-            };
-            return [newParticipant, ...prev];
-          }
-        });
+        setParticipants((prev) =>
+          prev.map((p) => {
+            if (p.participantId === hb.participant_id) {
+              const diffMs = hb.server_end_time ? new Date(hb.server_end_time).getTime() - Date.now() : 0;
+              const remSec = hb.server_end_time ? Math.max(0, Math.floor(diffMs / 1000)) : hb.remaining_seconds;
+              return {
+                ...p,
+                currentQuestionNumber: hb.current_question,
+                answeredCount: hb.answered_count,
+                totalQuestions: hb.total_questions,
+                progressPercentage: hb.progress_percentage,
+                remainingSeconds: remSec,
+                lastSeenAt: hb.last_seen_at,
+                connectionStatus: hb.connection_status,
+                status: hb.remaining_seconds === 0 && p.isSubmitted ? 'SELESAI' : 'AKTIF',
+              };
+            }
+            return p;
+          })
+        );
       },
       onActivity: (act) => {
         setParticipants((prev) =>
@@ -321,20 +268,6 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
                 ))}
               </select>
             </div>
-
-            {/* Database Supabase CBT Modal Trigger */}
-            <button
-              onClick={() => {
-                setShowDbModal(true);
-                handleRunDatabaseCheck();
-              }}
-              className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 border border-emerald-400/40 cursor-pointer"
-              title="Lihat status tabel, auto-setup, dan skrip SQL database Supabase CBT"
-            >
-              <Database className="w-4 h-4 text-emerald-300" />
-              <span>Database Supabase CBT</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            </button>
 
             {/* Manual Refresh Button */}
             <button
@@ -1000,174 +933,6 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
                 className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition-all"
               >
                 Tutup Rincian
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 6. MODAL DATABASE SUPABASE CBT & SQL SCHEMA */}
-      {showDbModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-teal-950 text-white p-6 flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full text-[10px] font-black tracking-wider uppercase flex items-center gap-1.5">
-                    <Database className="w-3 h-3 text-emerald-400" />
-                    Database Supabase CBT
-                  </span>
-                  <span className="text-xs text-slate-400">• Real-Time SSOT Engine</span>
-                </div>
-                <h3 className="text-xl font-black text-white flex items-center gap-2">
-                  <span>Koneksi & Skrip Database Supabase CBT</span>
-                </h3>
-                <p className="text-xs text-slate-300 max-w-2xl">
-                  Memastikan tabel, relasi, index, dan Row Level Security (RLS) pada database Supabase aktif sehingga pengerjaan ujian calon murid terpantau secara real-time.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setShowDbModal(false)}
-                className="p-2 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-all cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {/* Project Info Banner */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-wrap items-center justify-between gap-4 text-xs">
-                <div className="space-y-1">
-                  <div className="text-slate-500 font-semibold">Supabase Project Endpoint:</div>
-                  <div className="font-mono font-bold text-slate-800 break-all">{SUPABASE_URL}</div>
-                  <div className="text-[11px] text-slate-400 font-mono">Project ID: {SUPABASE_PROJECT_ID}</div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleRunDatabaseCheck}
-                    disabled={isCheckingDb}
-                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingDb ? 'animate-spin' : ''}`} />
-                    <span>{isCheckingDb ? 'Memeriksa...' : 'Cek Status Tabel'}</span>
-                  </button>
-                  <a
-                    href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql/new`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <span>Buka Supabase SQL Editor</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-              </div>
-
-              {/* Status 7 Tabel CBT */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-emerald-600" />
-                    <span>Status 7 Tabel CBT pada Database Supabase:</span>
-                  </h4>
-                  {dbReport && (
-                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                      ✓ {dbReport.summary}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {(dbReport?.tables || [
-                    { tableName: 'kategori_soal', exists: true, rowCount: 3, status: 'ready', message: 'Tabel Kategori Soal' },
-                    { tableName: 'soal', exists: true, rowCount: 20, status: 'ready', message: 'Tabel Bank Soal CBT' },
-                    { tableName: 'ujian', exists: true, rowCount: 1, status: 'ready', message: 'Tabel Jadwal Sesi Ujian' },
-                    { tableName: 'jawaban_peserta', exists: true, rowCount: 0, status: 'ready', message: 'Tabel Auto-Save Jawaban' },
-                    { tableName: 'hasil_ujian', exists: true, rowCount: 0, status: 'ready', message: 'Tabel Nilai & Kelulusan' },
-                    { tableName: 'log_ujian', exists: true, rowCount: 0, status: 'ready', message: 'Tabel Log Heartbeat CBT' },
-                    { tableName: 'spmb_app_state', exists: true, rowCount: 10, status: 'ready', message: 'Tabel SSOT Real-Time Channel' },
-                  ]).map((tb: any) => (
-                    <div
-                      key={tb.tableName}
-                      className={`p-3.5 rounded-2xl border transition-all ${
-                        tb.exists
-                          ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950'
-                          : 'bg-rose-50 border-rose-200 text-rose-950'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono font-bold text-xs">{tb.tableName}</span>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
-                          tb.exists ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'
-                        }`}>
-                          {tb.exists ? 'Aktif' : 'Perlu SQL'}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-600 mt-1">
-                        {tb.message || `${tb.rowCount} baris`}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* SQL Script Viewer & Copy */}
-              <div className="space-y-3 pt-2 border-t border-slate-200">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
-                      <Code2 className="w-4 h-4 text-indigo-600" />
-                      <span>Skrip SQL Schema CBT Supabase (DDL & RLS Policies)</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500">
-                      Skrip ini dapat dijalankan langsung pada menu <b>SQL Editor</b> di Dashboard Supabase Anda jika Anda ingin membuat/memperbarui tabel secara manual.
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(CBT_SUPABASE_SQL_SCRIPT);
-                      setCopiedSql(true);
-                      setTimeout(() => setCopiedSql(false), 2500);
-                    }}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-                  >
-                    {copiedSql ? (
-                      <>
-                        <Check className="w-4 h-4 text-emerald-300" />
-                        <span>SQL Tersalin!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>Salin Script SQL</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <div className="relative rounded-2xl bg-slate-950 p-4 border border-slate-800">
-                  <pre className="font-mono text-xs text-slate-200 max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 whitespace-pre leading-relaxed">
-                    {CBT_SUPABASE_SQL_SCRIPT}
-                  </pre>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div className="text-xs text-slate-500">
-                💡 Seluruh heartbeat dan progres ujian calon murid otomatis disinkronkan ke Supabase Realtime Channel & SSOT.
-              </div>
-              <button
-                onClick={() => setShowDbModal(false)}
-                className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
-              >
-                Selesai / Tutup
               </button>
             </div>
           </div>

@@ -347,8 +347,36 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
       console.warn('fetchStudentsFromSupabase hasil_ujian notice:', hErr);
     }
 
+    // Ambil bukti pembayaran dari public.payments untuk memastikan semua bukti tampil
+    const paymentsProofMap = new Map<string, { formProof?: string; formStatus?: string; formDate?: string; bamProof?: string; bamStatus?: string; bamDate?: string; bamAmount?: number }>();
+    try {
+      const { data: payRows } = await supabase.from('payments').select('*');
+      if (payRows && payRows.length > 0) {
+        payRows.forEach((p: any) => {
+          const keys = [p.student_id, p.registration_number].filter(Boolean);
+          keys.forEach((k: string) => {
+            const curr = paymentsProofMap.get(k) || {};
+            if (p.payment_type === 'formulir' || p.payment_type === 'form') {
+              if (p.proof_url) curr.formProof = p.proof_url;
+              if (p.status) curr.formStatus = p.status;
+              if (p.payment_date) curr.formDate = p.payment_date;
+            } else if (p.payment_type === 'bam' || p.payment_type === 'daftar_ulang') {
+              if (p.proof_url) curr.bamProof = p.proof_url;
+              if (p.status) curr.bamStatus = p.status;
+              if (p.payment_date) curr.bamDate = p.payment_date;
+              if (p.amount) curr.bamAmount = Number(p.amount);
+            }
+            paymentsProofMap.set(k, curr);
+          });
+        });
+      }
+    } catch (pErr) {
+      console.warn('fetchStudentsFromSupabase payments notice:', pErr);
+    }
+
     const mapped: StudentData[] = dbStudents.map((row: any) => {
       const hu = hasilMap.get(row.id);
+      const payInfo = paymentsProofMap.get(row.id) || (row.registration_number ? paymentsProofMap.get(row.registration_number) : null);
       const diagScore = row.diagnostic_score !== null && row.diagnostic_score !== undefined
         ? Number(row.diagnostic_score)
         : (hu && hu.nilai_diagnostik !== null && hu.nilai_diagnostik !== undefined ? Number(hu.nilai_diagnostik) : undefined);
@@ -407,10 +435,12 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
         isFormVerifiedByAdmin: !!(row.is_form_verified || row.form_payment_status === 'verified'),
         fullName: row.full_name,
         phone: row.phone,
-        formPaymentProofUrl: row.form_payment_proof_url,
-        formPaymentDate: row.form_payment_date,
+        formPaymentProofUrl: row.form_payment_proof_url || payInfo?.formProof || undefined,
+        formPaymentDate: row.form_payment_date || payInfo?.formDate || undefined,
         formPaymentAmount: Number(row.form_payment_amount || 200000),
-        formPaymentStatus: row.form_payment_status || 'unpaid',
+        formPaymentStatus: (row.form_payment_status && row.form_payment_status !== 'unpaid')
+          ? row.form_payment_status
+          : (payInfo?.formStatus || row.form_payment_status || 'unpaid'),
         formPaymentNotes: row.form_payment_notes,
         nik: row.nik || '',
         nisn: row.nisn,
@@ -460,10 +490,12 @@ export async function fetchStudentsFromSupabase(): Promise<StudentData[] | null>
         religiousScore: relScore,
         finalScore: finScore,
         testNotes: row.test_notes,
-        initialPaymentProofUrl: row.initial_payment_proof_url,
-        initialPaymentDate: row.initial_payment_date,
-        initialPaymentAmount: Number(row.initial_payment_amount || 0),
-        initialPaymentStatus: row.initial_payment_status || 'unpaid',
+        initialPaymentProofUrl: row.initial_payment_proof_url || payInfo?.bamProof || undefined,
+        initialPaymentDate: row.initial_payment_date || payInfo?.bamDate || undefined,
+        initialPaymentAmount: Number(row.initial_payment_amount || payInfo?.bamAmount || 0),
+        initialPaymentStatus: (row.initial_payment_status && row.initial_payment_status !== 'unpaid')
+          ? row.initial_payment_status
+          : (payInfo?.bamStatus || row.initial_payment_status || 'unpaid'),
         initialPaymentNotes: row.initial_payment_notes,
         assignedClassId: row.assigned_class_id,
         assignedClassName: row.assigned_class_name,

@@ -57,40 +57,21 @@ export function dataUrlToBlob(dataUrl: string): Blob {
 }
 
 /**
- * Trigger pengunduhan Blob langsung secara aman di semua browser & iFrame
+ * Trigger pengunduhan Blob langsung secara aman di semua browser
  */
-function triggerDirectBlobDownload(blob: Blob, fileName: string, fallbackDataUrl?: string) {
-  try {
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = fileName;
-    a.setAttribute('download', fileName);
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      try {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(objectUrl);
-      } catch {}
-    }, 4000);
-  } catch (err) {
-    if (fallbackDataUrl) {
-      try {
-        const a = document.createElement('a');
-        a.href = fallbackDataUrl;
-        a.download = fileName;
-        a.setAttribute('download', fileName);
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          try { document.body.removeChild(a); } catch {}
-        }, 3000);
-      } catch {}
-    }
-  }
+function triggerDirectBlobDownload(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    try {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch {}
+  }, 2500);
 }
 
 /**
@@ -391,7 +372,7 @@ export function generateBrosurSpmbPDF(
     { no: 1, name: 'Dana Awal Pendidikan (DAP)', ikhwan: 'Rp 4.250.000', akhwat: 'Rp 4.250.000', ket: 'Sekali' },
     { no: 2, name: 'Dana Praktik Komputer', ikhwan: 'Rp 150.000', akhwat: 'Rp 150.000', ket: 'Per Tahun' },
     { no: 3, name: 'Dana Praktik IPA', ikhwan: 'Rp 100.000', akhwat: 'Rp 100.000', ket: 'Per Tahun' },
-    { no: 4, name: 'Perlengkapan / Seragam (Paket 4 Stel)*', ikhwan: 'Rp 700.000', akhwat: 'Rp 920.000', ket: 'Sekali', isHighlight: true },
+    { no: 4, name: 'Perlengkapan / Seragam (Paket 3 Stel)*', ikhwan: 'Rp 700.000', akhwat: 'Rp 920.000', ket: 'Sekali', isHighlight: true },
     { no: 5, name: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', ikhwan: 'Rp 425.000', akhwat: 'Rp 425.000', ket: 'Per Bulan (Juli)' },
     { no: 6, name: 'Tabungan Wajib', ikhwan: 'Rp 25.000', akhwat: 'Rp 25.000', ket: 'Per Bulan' },
     { no: 7, name: 'MPLS / Masa Pengenalan Lingkungan Sekolah', ikhwan: 'Rp 100.000', akhwat: 'Rp 100.000', ket: 'Sekali' },
@@ -452,17 +433,16 @@ export function generateBrosurSpmbPDF(
 
   // Catatan Seragam & Skema Cicilan
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
+  doc.setFontSize(6.6);
   doc.setTextColor(71, 85, 105);
   doc.text(
-    '*Catatan Seragam: Paket seragam meliputi 4 stel lengkap (1. Putih Biru, 2. Biru Tosca, 3. Pramuka, 4. Olahraga). Khusus siswi (Akhwat) dilengkapi jilbab & rok panjang syar\'i.',
+    '*Catatan: Paket seragam meliputi 3 stel lengkap (Putih Biru, Biru Tosca, dan Pramuka). Putri (Akhwat) mendapatkan jilbab & rok syar\'i.',
     startX + 1,
     currentY2
   );
   currentY2 += 3.2;
-  const startYear = academicYear.split('/')[0] || '2027';
   doc.text(
-    `*Tahapan Pembayaran BAM: Pilihan 1 Langsung Lunas (Ikhwan Rp 6.670.000 | Akhwat Rp 6.890.000) saat daftar ulang, atau Pilihan 2 Angsuran (DP Awal Rp 4.000.000 saat pendaftaran, pelunasan paling lambat 30 Oktober ${startYear}).`,
+    'Skema Pembayaran: Pilihan 1 Langsung Lunas saat daftar ulang, atau Pilihan 2 Bertahap (Tahap 1 min. Rp 3.500.000 saat daftar ulang, pelunasan sebelum KBM dimulai).',
     startX + 1,
     currentY2
   );
@@ -596,7 +576,7 @@ export async function downloadBrochureFile(
       // Kasus A: Data URL (base64 image atau PDF)
       if (url.startsWith('data:')) {
         const blob = dataUrlToBlob(url);
-        triggerDirectBlobDownload(blob, fileName, url);
+        triggerDirectBlobDownload(blob, fileName);
         return {
           success: true,
           message: `Brosur ${isImage ? 'gambar' : 'dokumen'} (${fileName}) berhasil diunduh.`,
@@ -608,7 +588,7 @@ export async function downloadBrochureFile(
         const response = await fetch(url, { mode: 'cors' });
         if (response.ok) {
           const blob = await response.blob();
-          triggerDirectBlobDownload(blob, fileName, url);
+          triggerDirectBlobDownload(blob, fileName);
           return {
             success: true,
             message: `Brosur ${isImage ? 'gambar' : 'dokumen'} (${fileName}) berhasil diunduh.`,
@@ -650,55 +630,4 @@ export async function downloadBrochureFile(
       };
     }
   }
-}
-
-/**
- * Fungsi untuk mengunduh berkas SK Brosur Rincian Biaya BAM resmi (Gambar atau PDF)
- */
-export async function downloadBamBrochureFile(
-  schoolInfo: SchoolInfo
-): Promise<{ success: boolean; message: string }> {
-  if (schoolInfo.bamBrochureUrl && schoolInfo.bamBrochureUrl.trim() !== '') {
-    const url = schoolInfo.bamBrochureUrl.trim();
-    const isImg =
-      url.startsWith('data:image/') ||
-      /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(url) ||
-      (schoolInfo.bamBrochureFileType && schoolInfo.bamBrochureFileType.startsWith('image/'));
-    const ext = isImg ? '.jpg' : '.pdf';
-    const fileName =
-      schoolInfo.bamBrochureFileName ||
-      `SK_Rincian_Biaya_BAM_${(schoolInfo.academicYear || '2027_2028').replace('/', '_')}${ext}`;
-
-    if (url.startsWith('data:')) {
-      const blob = dataUrlToBlob(url);
-      triggerDirectBlobDownload(blob, fileName, url);
-      return { success: true, message: `Dokumen SK BAM (${fileName}) berhasil diunduh.` };
-    }
-
-    try {
-      const res = await fetch(url, { mode: 'cors' });
-      if (res.ok) {
-        const blob = await res.blob();
-        triggerDirectBlobDownload(blob, fileName, url);
-        return { success: true, message: `Dokumen SK BAM (${fileName}) berhasil diunduh.` };
-      }
-    } catch {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        try {
-          document.body.removeChild(a);
-        } catch {}
-      }, 1500);
-      return { success: true, message: `Membuka berkas SK BAM (${fileName})` };
-    }
-  }
-
-  // Fallback: unduh brosur resmi SPMB yang memuat tabel BAM
-  return await downloadBrochureFile(schoolInfo);
 }
