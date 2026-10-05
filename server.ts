@@ -1738,37 +1738,87 @@ async function ensureDefaultSystemAccounts() {
 }
 
 async function startServer() {
-  const isCloudRun = !!process.env.K_SERVICE || !!process.env.K_REVISION || !!process.env.CLOUD_RUN_JOB;
-  const isProdEnv = process.env.NODE_ENV === 'production' || isCloudRun;
-
-  // Resolusi direktori dist secara komprehensif
-  const candidateDistPaths = [
-    path.resolve(process.cwd(), 'dist'),
-    path.resolve(__dirname, 'dist'),
-    path.resolve('/app/applet/dist'),
-  ];
-
-  let activeDistPath = '';
-  let activeIndexPath = '';
-
-  for (const p of candidateDistPaths) {
-    const indexPath = path.join(p, 'index.html');
-    if (fs.existsSync(indexPath)) {
-      activeDistPath = p;
-      activeIndexPath = indexPath;
-      break;
+  // Auto-restore .env jika tidak sengaja terhapus
+  const envPath = path.resolve(process.cwd(), '.env');
+  const envExamplePath = path.resolve(process.cwd(), '.env.example');
+  if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+    try {
+      fs.copyFileSync(envExamplePath, envPath);
+      console.log('[SPMB Server] Berkas .env otomatis dipulihkan dari .env.example');
+    } catch (e) {
+      console.warn('[SPMB Server] Catatan pemulihan .env:', e);
     }
   }
 
-  const isProduction = isProdEnv || !!activeIndexPath;
+  // Deteksi mode: Bedakan antara dev container AI Studio dan live Cloud Run production
+  const isDevContainer =
+    process.env.NODE_ENV === 'development' ||
+    process.env.K_SERVICE?.startsWith('ais-dev') ||
+    !process.env.NODE_ENV;
 
-  if (activeDistPath && fs.existsSync(activeDistPath)) {
-    app.use(express.static(activeDistPath));
-  }
+  const isProduction = !isDevContainer && process.env.NODE_ENV === 'production';
 
-  if (isProduction) {
+  if (!isProduction) {
+    // ===================================================================
+    // MODE DEVELOPMENT: Gunakan Vite Middleware (React Guidelines Standard)
+    // ===================================================================
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+
+      // Handler untuk melayani SPA HTML development dengan Vite transformIndexHtml
+      app.use('*', async (req: Request, res: Response, next: NextFunction) => {
+        if (req.originalUrl.startsWith('/api')) {
+          return next();
+        }
+        try {
+          const rootIndexPath = path.resolve(process.cwd(), 'index.html');
+          if (fs.existsSync(rootIndexPath)) {
+            let html = fs.readFileSync(rootIndexPath, 'utf-8');
+            html = await vite.transformIndexHtml(req.originalUrl, html);
+            res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+          } else {
+            next();
+          }
+        } catch (e: any) {
+          vite.ssrFixStacktrace(e);
+          next(e);
+        }
+      });
+      console.log('[SPMB Server] Vite middleware aktif untuk mode development.');
+    } catch (viteErr) {
+      console.error('[SPMB Server] Vite server initialization error:', viteErr);
+    }
+  } else {
+    // ===================================================================
+    // MODE PRODUCTION: Layani berkas statis dari direktori dist
+    // ===================================================================
+    const candidateDistPaths = [
+      path.resolve(process.cwd(), 'dist'),
+      path.resolve(__dirname, 'dist'),
+      path.resolve('/app/applet/dist'),
+    ];
+
+    let activeDistPath = '';
+    let activeIndexPath = '';
+
+    for (const p of candidateDistPaths) {
+      const indexPath = path.join(p, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        activeDistPath = p;
+        activeIndexPath = indexPath;
+        break;
+      }
+    }
+
+    if (activeDistPath && fs.existsSync(activeDistPath)) {
+      app.use(express.static(activeDistPath));
+    }
+
     app.get('*', (_req: Request, res: Response) => {
-      // Periksa kembali jika file baru selesai dibangun
       let targetFile = activeIndexPath;
       if (!targetFile || !fs.existsSync(targetFile)) {
         for (const p of candidateDistPaths) {
@@ -1789,7 +1839,11 @@ async function startServer() {
           }
         });
       } else {
-        res.status(200).send(`<!DOCTYPE html>
+        const rootIndexPath = path.resolve(process.cwd(), 'index.html');
+        if (fs.existsSync(rootIndexPath)) {
+          res.sendFile(rootIndexPath);
+        } else {
+          res.status(200).send(`<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
@@ -1811,18 +1865,9 @@ async function startServer() {
   </div>
 </body>
 </html>`);
+        }
       }
     });
-  } else {
-    try {
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: 'spa',
-      });
-      app.use(vite.middlewares);
-    } catch (viteErr) {
-      console.error('[SPMB Server] Vite server initialization error:', viteErr);
-    }
   }
 
   // Global Error Handler agar server tidak crash

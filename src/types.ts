@@ -260,6 +260,8 @@ export interface CbtHeartbeatPayload {
   exam_id: string;
   participant_id: string;
   user_id?: string;
+  student_name?: string;
+  registration_number?: string;
   last_seen_at: string;
   current_question: number;
   answered_count: number;

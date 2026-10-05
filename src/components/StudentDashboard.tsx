@@ -6,7 +6,12 @@ import {
   saveAllJawabanPesertaSupabase,
   saveHasilUjianSupabase,
   fetchHasilUjianSupabase,
+  saveLogUjianSupabase,
 } from '../services/cbtSupabaseService';
+import {
+  sendCbtHeartbeatSupabase,
+  recordCbtActivityLogSupabase,
+} from '../services/cbtMonitoringService';
 import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule } from '../types';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
@@ -296,6 +301,80 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
+  // CBT Exam Tracking Refs untuk sinkronisasi Realtime Supabase
+  const examStartTimeRef = React.useRef<string | null>(null);
+  const examEndTimeRef = React.useRef<string | null>(null);
+  const activeExamIdRef = React.useRef<string>('29ead736-1ef5-4c3e-b287-05ad404c0d9f');
+
+  // Deteksi Aktivitas Peserta Realtime (Tab switch / Blur / Offline / Reconnect)
+  useEffect(() => {
+    if (!isTakingExam) return;
+
+    const currentExamId = activeExamIdRef.current;
+
+    const handleWindowBlur = () => {
+      recordCbtActivityLogSupabase({
+        examId: currentExamId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'window_blur',
+        title: 'Beralih Tab / Jendela',
+        description: `Peserta beralih ke jendela lain pada soal nomor ${currentQuestionIndex + 1}`,
+        questionNumber: currentQuestionIndex + 1,
+        isSuspicious: true,
+      });
+    };
+
+    const handleWindowFocus = () => {
+      recordCbtActivityLogSupabase({
+        examId: currentExamId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'window_blur',
+        title: 'Kembali ke Layar Ujian',
+        description: `Peserta kembali ke layar ujian pada nomor ${currentQuestionIndex + 1}`,
+        questionNumber: currentQuestionIndex + 1,
+      });
+    };
+
+    const handleOffline = () => {
+      recordCbtActivityLogSupabase({
+        examId: currentExamId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'network_offline',
+        title: 'Koneksi Terputus',
+        description: 'Perangkat peserta kehilangan koneksi internet (offline).',
+        questionNumber: currentQuestionIndex + 1,
+        isSuspicious: true,
+      });
+    };
+
+    const handleOnline = () => {
+      recordCbtActivityLogSupabase({
+        examId: currentExamId,
+        participantId: studentData.id,
+        participantName: studentData.fullName,
+        eventType: 'network_reconnect',
+        title: 'Koneksi Pulih',
+        description: 'Perangkat peserta kembali terhubung ke internet.',
+        questionNumber: currentQuestionIndex + 1,
+      });
+    };
+
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [isTakingExam, currentQuestionIndex, studentData.id, studentData.fullName]);
+
   // Sinkronisasi Soal Dinamis dari Database Supabase & Realtime Multi-Device
   useEffect(() => {
     let isMounted = true;
@@ -323,6 +402,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     };
   }, []);
 
+  // Timer Countdown & Heartbeat Otomatis ke Panitia Admin Supabase (Setiap 15 detik)
   useEffect(() => {
     let timer: any;
     if (isTakingExam && examTimeLeft > 0) {
@@ -333,12 +413,50 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             handleAutoSubmitExam();
             return 0;
           }
+
+          // Kirim Heartbeat ke Supabase setiap 15 detik
+          if (prev % 15 === 0) {
+            const ansCount = Object.keys(examAnswers).length;
+            const totQ = questionsList.length;
+            const pct = totQ > 0 ? Math.min(100, Math.round((ansCount / totQ) * 100)) : 0;
+            const exId = activeExamIdRef.current;
+
+            sendCbtHeartbeatSupabase({
+              exam_id: exId,
+              participant_id: studentData.id,
+              user_id: studentData.id,
+              student_name: studentData.fullName,
+              registration_number: studentData.registrationNumber,
+              last_seen_at: new Date().toISOString(),
+              current_question: currentQuestionIndex + 1,
+              answered_count: ansCount,
+              total_questions: totQ,
+              progress_percentage: pct,
+              remaining_seconds: prev - 1,
+              session_id: `ses_${exId}_${studentData.id}`,
+              connection_status: navigator.onLine ? 'online' : 'offline',
+              server_start_time: examStartTimeRef.current || undefined,
+              server_end_time: examEndTimeRef.current || undefined,
+            });
+
+            saveLogUjianSupabase({
+              ujianId: exId,
+              pesertaId: studentData.id,
+              namaPeserta: studentData.fullName,
+              nomorSoalTerakhir: currentQuestionIndex + 1,
+              sisaWaktuDetik: prev - 1,
+              statusOnline: navigator.onLine ? 'ONLINE' : 'OFFLINE',
+              isSubmitted: false,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+
           return prev - 1;
         });
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [isTakingExam, examTimeLeft]);
+  }, [isTakingExam, examTimeLeft, examAnswers, questionsList.length, currentQuestionIndex, studentData]);
 
   const [showRetakeConfirmModal, setShowRetakeConfirmModal] = useState(false);
 
@@ -439,6 +557,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
     const duration = activeSched?.durationMinutes || 90;
+    const examId = activeSched?.id || '29ead736-1ef5-4c3e-b287-05ad404c0d9f';
+    activeExamIdRef.current = examId;
+
+    const startTimeIso = new Date().toISOString();
+    const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
+    examStartTimeRef.current = startTimeIso;
+    examEndTimeRef.current = endTimeIso;
 
     const prevRecord = {
       date: new Date().toISOString(),
@@ -467,6 +592,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setHesitantAnswers({});
     setExamTimeLeft(duration * 60);
     setIsTakingExam(true);
+
+    // Kirim sinyal mulai ujian online ke Supabase Live Monitoring
+    sendCbtHeartbeatSupabase({
+      exam_id: examId,
+      participant_id: studentData.id,
+      user_id: studentData.id,
+      student_name: studentData.fullName,
+      registration_number: studentData.registrationNumber,
+      last_seen_at: startTimeIso,
+      current_question: 1,
+      answered_count: 0,
+      total_questions: bank.length,
+      progress_percentage: 0,
+      remaining_seconds: duration * 60,
+      session_id: `ses_${examId}_${studentData.id}`,
+      connection_status: 'online',
+      server_start_time: startTimeIso,
+      server_end_time: endTimeIso,
+    });
+
+    recordCbtActivityLogSupabase({
+      examId,
+      participantId: studentData.id,
+      participantName: studentData.fullName,
+      eventType: 'exam_start',
+      title: 'Memulai Ujian Diulang (Remedial)',
+      description: `Peserta memulai sesi ujian remedial dengan ${bank.length} butir soal.`,
+      questionNumber: 1,
+    });
   };
 
   const handleStartExam = async () => {
@@ -495,6 +649,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
     const duration = activeSched?.durationMinutes || 90;
+    const examId = activeSched?.id || '29ead736-1ef5-4c3e-b287-05ad404c0d9f';
+    activeExamIdRef.current = examId;
+
+    const startTimeIso = new Date().toISOString();
+    const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
+    examStartTimeRef.current = startTimeIso;
+    examEndTimeRef.current = endTimeIso;
 
     setQuestionsList(bank);
     setCurrentQuestionIndex(0);
@@ -502,19 +663,98 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setHesitantAnswers({});
     setExamTimeLeft(duration * 60);
     setIsTakingExam(true);
+
+    // Kirim sinyal mulai ujian ke Supabase Live Monitoring
+    sendCbtHeartbeatSupabase({
+      exam_id: examId,
+      participant_id: studentData.id,
+      user_id: studentData.id,
+      student_name: studentData.fullName,
+      registration_number: studentData.registrationNumber,
+      last_seen_at: startTimeIso,
+      current_question: 1,
+      answered_count: 0,
+      total_questions: bank.length,
+      progress_percentage: 0,
+      remaining_seconds: duration * 60,
+      session_id: `ses_${examId}_${studentData.id}`,
+      connection_status: 'online',
+      server_start_time: startTimeIso,
+      server_end_time: endTimeIso,
+    });
+
+    recordCbtActivityLogSupabase({
+      examId,
+      participantId: studentData.id,
+      participantName: studentData.fullName,
+      eventType: 'exam_start',
+      title: 'Memulai Ujian CBT',
+      description: `Peserta mulai mengerjakan ujian dengan ${bank.length} butir soal.`,
+      questionNumber: 1,
+    });
+
+    saveLogUjianSupabase({
+      ujianId: examId,
+      pesertaId: studentData.id,
+      namaPeserta: studentData.fullName,
+      nomorSoalTerakhir: 1,
+      sisaWaktuDetik: duration * 60,
+      statusOnline: 'ONLINE',
+      isSubmitted: false,
+      updatedAt: startTimeIso,
+    });
   };
 
   const handleSelectOption = (qId: string, optionIdx: number) => {
-    setExamAnswers(prev => ({ ...prev, [qId]: optionIdx }));
-    // 3. Jawaban ujian calon murid langsung masuk ke database Supabase tabel jawaban_peserta
+    const updatedAnswers = { ...examAnswers, [qId]: optionIdx };
+    setExamAnswers(updatedAnswers);
+
     const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
+    const examId = activeSched?.id || activeExamIdRef.current;
+
+    // 1. Jawaban ujian calon murid langsung masuk ke database Supabase tabel jawaban_peserta
     saveJawabanPesertaSupabase({
-      ujianId: activeSched?.id,
+      ujianId: examId,
       pesertaId: studentData.id,
       soalId: qId,
       jawabanIndex: optionIdx,
       isRaguRagu: Boolean(hesitantAnswers[qId]),
     }).catch(err => console.warn('saveJawabanPesertaSupabase real-time warning:', err));
+
+    // 2. Kirim update heartbeat live seketika ke Panitia Admin (Live Monitoring)
+    const ansCount = Object.keys(updatedAnswers).length;
+    const totQ = questionsList.length;
+    const pct = totQ > 0 ? Math.min(100, Math.round((ansCount / totQ) * 100)) : 0;
+    const optLetter = ['A', 'B', 'C', 'D'][optionIdx] || 'A';
+    const qNum = currentQuestionIndex + 1;
+
+    sendCbtHeartbeatSupabase({
+      exam_id: examId,
+      participant_id: studentData.id,
+      user_id: studentData.id,
+      student_name: studentData.fullName,
+      registration_number: studentData.registrationNumber,
+      last_seen_at: new Date().toISOString(),
+      current_question: qNum,
+      answered_count: ansCount,
+      total_questions: totQ,
+      progress_percentage: pct,
+      remaining_seconds: examTimeLeft,
+      session_id: `ses_${examId}_${studentData.id}`,
+      connection_status: 'online',
+      server_start_time: examStartTimeRef.current || undefined,
+      server_end_time: examEndTimeRef.current || undefined,
+    });
+
+    recordCbtActivityLogSupabase({
+      examId,
+      participantId: studentData.id,
+      participantName: studentData.fullName,
+      eventType: 'save_answer',
+      title: 'Menyimpan Jawaban',
+      description: `Menjawab soal No. ${qNum} (Pilihan ${optLetter})`,
+      questionNumber: qNum,
+    });
   };
 
   const handleToggleHesitant = (qId: string) => {
@@ -580,10 +820,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     // 3. JAWABAN UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE jawaban_peserta
     const activeSched = schedulesList.find(s => s.isOnlineActive === true) || schedulesList[0];
-    const ujianId = activeSched?.id;
+    const examId = activeSched?.id || activeExamIdRef.current;
 
     saveAllJawabanPesertaSupabase({
-      ujianId,
+      ujianId: examId,
       pesertaId: studentData.id,
       answers: examAnswers,
       questions: questionsList.map(q => ({
@@ -594,8 +834,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     // 4. HASIL UJIAN CALON MURID LANGSUNG MASUK KE DATABASE SUPABASE KE TABLE hasil_ujian
     saveHasilUjianSupabase({
-      id: `hasil_${ujianId || 'cbt'}_${studentData.id}`,
-      ujianId: ujianId || '145eacad-ef02-4180-ba26-85b34d1649da',
+      id: `hasil_${examId || 'cbt'}_${studentData.id}`,
+      ujianId: examId || '29ead736-1ef5-4c3e-b287-05ad404c0d9f',
       pesertaId: studentData.id,
       registrationNumber: studentData.registrationNumber || '',
       namaPeserta: studentData.fullName,
@@ -607,13 +847,51 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       tanggalUjian: new Date().toISOString().split('T')[0],
     }).catch(err => console.warn('saveHasilUjianSupabase error:', err));
 
+    // 5. UPDATE REAL-TIME LIVE MONITORING BAHWA PESERTA SELESAI
+    sendCbtHeartbeatSupabase({
+      exam_id: examId,
+      participant_id: studentData.id,
+      user_id: studentData.id,
+      student_name: studentData.fullName,
+      registration_number: studentData.registrationNumber,
+      last_seen_at: new Date().toISOString(),
+      current_question: questionsList.length,
+      answered_count: Object.keys(examAnswers).length,
+      total_questions: questionsList.length,
+      progress_percentage: 100,
+      remaining_seconds: 0,
+      session_id: `ses_${examId}_${studentData.id}`,
+      connection_status: 'online',
+    });
+
+    recordCbtActivityLogSupabase({
+      examId,
+      participantId: studentData.id,
+      participantName: studentData.fullName,
+      eventType: 'exam_submit',
+      title: 'Ujian Selesai Dikirim',
+      description: `Peserta telah menyelesaikan seluruh pengerjaan soal dengan skor akhir ${finalScore}.`,
+      questionNumber: questionsList.length,
+    });
+
+    saveLogUjianSupabase({
+      ujianId: examId,
+      pesertaId: studentData.id,
+      namaPeserta: studentData.fullName,
+      nomorSoalTerakhir: questionsList.length,
+      sisaWaktuDetik: 0,
+      statusOnline: 'OFFLINE',
+      isSubmitted: true,
+      updatedAt: new Date().toISOString(),
+    });
+
     safeConfetti({
       particleCount: 150,
       spread: 90,
       origin: { y: 0.5 }
     });
 
-    // 5. SETELAH CALON MURID SELESAI MENGERJAKAN UJIAN, TAMPILKAN FITUR DOWNLOAD HASIL UJIAN
+    // 6. SETELAH CALON MURID SELESAI MENGERJAKAN UJIAN, TAMPILKAN FITUR DOWNLOAD HASIL UJIAN
     setShowSuccessModal(true);
     alert('Terimakasih anda telah mengirimkan jawaban, semoga lulus\n\nJawaban & hasil ujian telah berhasil tersimpan di database Supabase.\nSilakan gunakan tombol "Download Hasil Ujian (PDF)" untuk mengunduh bukti perolehan nilai Anda.');
   };

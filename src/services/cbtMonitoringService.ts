@@ -123,6 +123,24 @@ export function determineParticipantStatus(params: {
 
 let activeMonitoringChannel: RealtimeChannel | null = null;
 let currentExamChannelId: string | null = null;
+let broadcastChannelCache: Record<string, RealtimeChannel> = {};
+
+function getBroadcastChannel(examId: string): RealtimeChannel {
+  if (activeMonitoringChannel && currentExamChannelId === examId) {
+    return activeMonitoringChannel;
+  }
+  if (!broadcastChannelCache[examId]) {
+    const channel = supabase.channel(`cbt-live-room-${examId}`, {
+      config: {
+        broadcast: { ack: false, self: false },
+        presence: { key: examId },
+      },
+    });
+    channel.subscribe();
+    broadcastChannelCache[examId] = channel;
+  }
+  return broadcastChannelCache[examId];
+}
 
 /**
  * Inisialisasi Supabase Realtime Channel untuk Monitoring Ujian
@@ -225,8 +243,8 @@ let lastSentHeartbeatTime = 0;
  */
 export async function sendCbtHeartbeatSupabase(heartbeat: CbtHeartbeatPayload): Promise<boolean> {
   const now = Date.now();
-  // Hindari spam heartbeat berlebihan (< 2 detik)
-  if (now - lastSentHeartbeatTime < 2000) {
+  // Hindari spam heartbeat berlebihan (< 1.5 detik)
+  if (now - lastSentHeartbeatTime < 1500) {
     return true;
   }
   lastSentHeartbeatTime = now;
@@ -239,22 +257,20 @@ export async function sendCbtHeartbeatSupabase(heartbeat: CbtHeartbeatPayload): 
   activeSessionsCache[examId][participantId] = heartbeat;
 
   // 1. Broadcast langsung melalui Supabase Realtime Channel
-  if (activeMonitoringChannel && currentExamChannelId === examId) {
-    try {
-      activeMonitoringChannel.send({
-        type: 'broadcast',
-        event: 'heartbeat',
-        payload: heartbeat,
-      });
-    } catch (err) {
-      console.warn('Realtime broadcast heartbeat error:', err);
-    }
+  try {
+    const channel = getBroadcastChannel(examId);
+    channel.send({
+      type: 'broadcast',
+      event: 'heartbeat',
+      payload: heartbeat,
+    });
+  } catch (err) {
+    console.warn('Realtime broadcast heartbeat error:', err);
   }
 
   // 2. Simpan secara persisten ke database Supabase (spmb_app_state) sebagai SSOT
   try {
     const key = getSessionsStateKey(examId);
-    // Ambil payload existing dari cache atau database
     const existing = activeSessionsCache[examId] || {};
     existing[participantId] = heartbeat;
 
@@ -312,21 +328,19 @@ export async function recordCbtActivityLogSupabase(activity: Omit<CbtActivityLog
   }
 
   // 1. Broadcast via Realtime Channel
-  if (activeMonitoringChannel && currentExamChannelId === examId) {
-    try {
-      activeMonitoringChannel.send({
-        type: 'broadcast',
-        event: 'activity',
-        payload: fullItem,
-      });
-    } catch {}
-  }
+  try {
+    const channel = getBroadcastChannel(examId);
+    channel.send({
+      type: 'broadcast',
+      event: 'activity',
+      payload: fullItem,
+    });
+  } catch {}
 
   // 2. Persist to Supabase Database spmb_app_state
   try {
     const key = getActivitiesStateKey(examId);
     const existingList = activeActivitiesCache[examId] || [];
-    // Batasi array agar tidak membengkak
     const capped = existingList.slice(0, 150);
 
     await supabase.from('spmb_app_state').upsert({
@@ -473,8 +487,70 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     activitiesByParticipant[act.participantId].push(act);
   });
 
-  // 5. Susun Peserta & Evaluasi Status Live Tiap Calon Murid
-  const participants: CbtParticipantLiveStatus[] = allStudents.map((std) => {
+  // 5. Susun Peserta & Gabungkan Seluruh Sumber Siswa (Memory + Supabase DB + Live Sessions)
+  const mergedCandidateMap = new Map<string, {
+    id: string;
+    fullName: string;
+    registrationNumber: string;
+    gender: 'Laki-laki' | 'Perempuan';
+  }>();
+
+  // A. Tambahkan siswa dari parameter allStudents
+  allStudents.forEach((std) => {
+    mergedCandidateMap.set(std.id, {
+      id: std.id,
+      fullName: std.fullName || 'Calon Murid',
+      registrationNumber: std.registrationNumber || 'REG-SPMB',
+      gender: std.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+    });
+  });
+
+  // B. Tambahkan siswa dari tabel public.students di Supabase jika belum terdaftar
+  try {
+    const { data: dbStudents } = await supabase
+      .from('students')
+      .select('id, full_name, registration_number, gender')
+      .limit(300);
+
+    if (dbStudents && dbStudents.length > 0) {
+      dbStudents.forEach((d: any) => {
+        if (!mergedCandidateMap.has(d.id)) {
+          mergedCandidateMap.set(d.id, {
+            id: d.id,
+            fullName: d.full_name || 'Calon Murid',
+            registrationNumber: d.registration_number || 'REG-SPMB',
+            gender: d.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+          });
+        }
+      });
+    }
+  } catch {}
+
+  // C. Temukan calon murid yang sedang aktif / memiliki sesi / jawaban / hasil tapi belum ada di map
+  const activeIds = new Set<string>([
+    ...Object.keys(liveSessions),
+    ...Object.keys(hasilMap),
+    ...Object.keys(answersCountMap),
+    ...Object.keys(activitiesByParticipant),
+  ]);
+
+  activeIds.forEach((pId) => {
+    if (!mergedCandidateMap.has(pId)) {
+      const sess = liveSessions[pId];
+      const has = hasilMap[pId];
+      const act = activitiesByParticipant[pId]?.[0];
+      mergedCandidateMap.set(pId, {
+        id: pId,
+        fullName: sess?.student_name || has?.namaPeserta || act?.participantName || `Calon Murid (${pId.slice(0, 8)})`,
+        registrationNumber: sess?.registration_number || has?.registrationNumber || 'REG-SPMB',
+        gender: 'Laki-laki',
+      });
+    }
+  });
+
+  // 6. Susun Peserta & Evaluasi Status Live Tiap Calon Murid
+  const candidateList = Array.from(mergedCandidateMap.values());
+  const participants: CbtParticipantLiveStatus[] = candidateList.map((std) => {
     const pId = std.id;
     const session = liveSessions[pId];
     const hasil = hasilMap[pId];

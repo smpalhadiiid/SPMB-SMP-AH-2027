@@ -792,28 +792,331 @@ export async function fetchHasilUjianSupabase(pesertaId?: string): Promise<CbtHa
 // 6. LOG UJIAN SERVICE (SUPABASE)
 // ==========================================
 export async function saveLogUjianSupabase(log: CbtLogUjian): Promise<boolean> {
-  const payload = {
+  const payload1 = {
     id: log.id || `log_${log.ujianId}_${log.pesertaId}`,
     ujian_id: log.ujianId,
     peserta_id: log.pesertaId,
     nama_peserta: log.namaPeserta,
     nomor_soal_terakhir: log.nomorSoalTerakhir,
-    sisa_waktu: log.sisaWaktuDetik,
+    sisa_waktu_detik: log.sisaWaktuDetik,
     status_online: log.statusOnline || 'ONLINE',
     is_submitted: log.isSubmitted,
     updated_at: new Date().toISOString(),
   };
 
   try {
-    const { error } = await supabase.from('log_ujian').upsert(payload);
+    const { error } = await supabase.from('log_ujian').upsert(payload1, { onConflict: 'id' });
     if (error) {
-      await supabase.from('log_ujian').upsert(payload, { onConflict: 'id' });
+      const payload2: any = { ...payload1, sisa_waktu: log.sisaWaktuDetik };
+      delete payload2.sisa_waktu_detik;
+      await supabase.from('log_ujian').upsert(payload2, { onConflict: 'id' });
     }
   } catch (err: any) {
-    console.warn('saveLogUjianSupabase error:', err?.message);
+    // Tolerant: spmb_app_state handles real-time sessions cleanly
   }
 
   saveCbtLogUjian([log]);
   return true;
+}
+
+// =====================================================================
+// 7. VERIFIKASI & OTOMATISASI PENYIAPAN DATABASE SUPABASE CBT
+// =====================================================================
+
+export interface CbtTableCheckResult {
+  tableName: string;
+  exists: boolean;
+  rowCount: number;
+  status: 'ready' | 'empty' | 'error';
+  message: string;
+}
+
+export interface CbtDatabaseSetupReport {
+  success: boolean;
+  timestamp: string;
+  tables: CbtTableCheckResult[];
+  createdDefaults: string[];
+  summary: string;
+}
+
+export const CBT_SUPABASE_SQL_SCRIPT = `-- =====================================================================
+-- SQL SCHEMA DATABASE SUPABASE: MODUL COMPUTER-BASED TEST (CBT) SPMB
+-- SMP AL-HADIID CILEUNGSI (2027/2028)
+-- =====================================================================
+
+-- 0. Function auto updated_at
+CREATE OR REPLACE FUNCTION public.update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 1. TABEL KATEGORI_SOAL
+CREATE TABLE IF NOT EXISTS public.kategori_soal (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nama_kategori VARCHAR(100) NOT NULL UNIQUE,
+  kode_kategori VARCHAR(50) NOT NULL UNIQUE,
+  persentase_bobot DECIMAL(5,2) NOT NULL DEFAULT 30.00 CHECK (persentase_bobot > 0),
+  keterangan TEXT,
+  aktif BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- 2. TABEL SOAL (BANK SOAL CBT)
+CREATE TABLE IF NOT EXISTS public.soal (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kategori_kode VARCHAR(50) NOT NULL REFERENCES public.kategori_soal(kode_kategori) ON DELETE CASCADE ON UPDATE CASCADE,
+  pertanyaan TEXT NOT NULL,
+  gambar_url TEXT,
+  pilihan_a TEXT NOT NULL,
+  pilihan_b TEXT NOT NULL,
+  pilihan_c TEXT NOT NULL,
+  pilihan_d TEXT NOT NULL,
+  jawaban_benar VARCHAR(1) NOT NULL CHECK (jawaban_benar IN ('A', 'B', 'C', 'D')),
+  bobot INT NOT NULL DEFAULT 10 CHECK (bobot > 0),
+  level_kesulitan VARCHAR(20) DEFAULT 'medium' CHECK (level_kesulitan IN ('easy', 'medium', 'hard')),
+  aktif BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- 3. TABEL UJIAN (JADWAL UJIAN CBT)
+CREATE TABLE IF NOT EXISTS public.ujian (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nama_ujian VARCHAR(255) NOT NULL,
+  gelombang VARCHAR(100) NOT NULL DEFAULT 'Gelombang 1',
+  tanggal DATE NOT NULL,
+  jam_mulai TIME NOT NULL DEFAULT '08:00:00',
+  durasi INT NOT NULL DEFAULT 90 CHECK (durasi > 0),
+  status VARCHAR(20) NOT NULL DEFAULT 'aktif' CHECK (status IN ('draft', 'aktif', 'selesai')),
+  jumlah_diagnostik INT NOT NULL DEFAULT 6 CHECK (jumlah_diagnostik >= 0),
+  jumlah_tpu INT NOT NULL DEFAULT 8 CHECK (jumlah_tpu >= 0),
+  jumlah_diniyyah INT NOT NULL DEFAULT 6 CHECK (jumlah_diniyyah >= 0),
+  batas_kelulusan DECIMAL(5,2) DEFAULT 70.00 CHECK (batas_kelulusan >= 0),
+  aktif BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- 4. TABEL JAWABAN_PESERTA (AUTO-SAVE REALTIME)
+CREATE TABLE IF NOT EXISTS public.jawaban_peserta (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ujian_id UUID NOT NULL REFERENCES public.ujian(id) ON DELETE CASCADE,
+  peserta_id VARCHAR(100) NOT NULL,
+  soal_id UUID NOT NULL,
+  jawaban_dipilih VARCHAR(1) CHECK (jawaban_dipilih IN ('A', 'B', 'C', 'D')),
+  is_ragu BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT uq_jawaban_peserta UNIQUE(ujian_id, peserta_id, soal_id)
+);
+
+-- 5. TABEL HASIL_UJIAN (REKAP NILAI & KELULUSAN CBT)
+CREATE TABLE IF NOT EXISTS public.hasil_ujian (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ujian_id UUID NOT NULL REFERENCES public.ujian(id) ON DELETE CASCADE,
+  peserta_id VARCHAR(100) NOT NULL,
+  registration_number VARCHAR(100),
+  nama_peserta VARCHAR(255),
+  nilai_diagnostik DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (nilai_diagnostik >= 0),
+  nilai_tpu DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (nilai_tpu >= 0),
+  nilai_diniyyah DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (nilai_diniyyah >= 0),
+  nilai_akhir DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (nilai_akhir >= 0),
+  status_kelulusan VARCHAR(50) NOT NULL DEFAULT 'BELUM LULUS',
+  tanggal_ujian TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  waktu_mulai TIMESTAMP WITH TIME ZONE,
+  waktu_selesai TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT uq_hasil_ujian UNIQUE(ujian_id, peserta_id)
+);
+
+-- 6. TABEL LOG_UJIAN (REALTIME MONITORING SESI)
+CREATE TABLE IF NOT EXISTS public.log_ujian (
+  id VARCHAR(120) PRIMARY KEY,
+  ujian_id UUID NOT NULL REFERENCES public.ujian(id) ON DELETE CASCADE,
+  peserta_id VARCHAR(100) NOT NULL,
+  nama_peserta VARCHAR(255),
+  nomor_soal_terakhir INT DEFAULT 1,
+  sisa_waktu_detik INT NOT NULL DEFAULT 5400,
+  status_online VARCHAR(20) DEFAULT 'ONLINE' CHECK (status_online IN ('ONLINE', 'OFFLINE')),
+  is_submitted BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- 7. TABEL SPMB_APP_STATE (SSOT PERSISTENT STORE)
+CREATE TABLE IF NOT EXISTS public.spmb_app_state (
+  key VARCHAR(100) PRIMARY KEY,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- RLS & POLICIES (Full Access untuk Admin & Peserta)
+ALTER TABLE public.kategori_soal ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.soal ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ujian ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.jawaban_peserta ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hasil_ujian ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.log_ujian ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.spmb_app_state ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public full access kategori_soal" ON public.kategori_soal;
+CREATE POLICY "Public full access kategori_soal" ON public.kategori_soal FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access soal" ON public.soal;
+CREATE POLICY "Public full access soal" ON public.soal FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access ujian" ON public.ujian;
+CREATE POLICY "Public full access ujian" ON public.ujian FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access jawaban_peserta" ON public.jawaban_peserta;
+CREATE POLICY "Public full access jawaban_peserta" ON public.jawaban_peserta FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access hasil_ujian" ON public.hasil_ujian;
+CREATE POLICY "Public full access hasil_ujian" ON public.hasil_ujian FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access log_ujian" ON public.log_ujian;
+CREATE POLICY "Public full access log_ujian" ON public.log_ujian FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public full access spmb_app_state" ON public.spmb_app_state;
+CREATE POLICY "Public full access spmb_app_state" ON public.spmb_app_state FOR ALL USING (true) WITH CHECK (true);
+
+-- SEED DEFAULT KATEGORI SOAL
+INSERT INTO public.kategori_soal (nama_kategori, kode_kategori, persentase_bobot, keterangan, aktif)
+VALUES 
+  ('Tes Diagnostik', 'diagnostik', 30.00, 'Pengukuran kemampuan dasar dan bakat skolastik (30%)', true),
+  ('Pengetahuan Umum', 'pengetahuan_umum', 40.00, 'Tes Pengetahuan Umum / TPU (40%)', true),
+  ('Diniyyah & Agama', 'diniyyah', 30.00, 'Tes Pemahaman Diniyyah, PAI, & Kemampuan Mengaji (30%)', true)
+ON CONFLICT (kode_kategori) DO UPDATE 
+SET 
+  nama_kategori = EXCLUDED.nama_kategori,
+  persentase_bobot = EXCLUDED.persentase_bobot,
+  aktif = EXCLUDED.aktif;
+`;
+
+/**
+ * Melakukan verifikasi dan inisialisasi tabel-tabel CBT pada database Supabase
+ */
+export async function verifyAndSetupCbtDatabaseSupabase(): Promise<CbtDatabaseSetupReport> {
+  const tableNames = [
+    'kategori_soal',
+    'soal',
+    'ujian',
+    'jawaban_peserta',
+    'hasil_ujian',
+    'log_ujian',
+    'spmb_app_state',
+  ];
+
+  const results: CbtTableCheckResult[] = [];
+  const createdDefaults: string[] = [];
+
+  for (const t of tableNames) {
+    try {
+      const { data, count, error } = await supabase
+        .from(t)
+        .select('*', { count: 'exact', head: false })
+        .limit(5);
+
+      if (error) {
+        results.push({
+          tableName: t,
+          exists: false,
+          rowCount: 0,
+          status: 'error',
+          message: error.message,
+        });
+      } else {
+        const rows = count !== null ? count : (data ? data.length : 0);
+        results.push({
+          tableName: t,
+          exists: true,
+          rowCount: rows,
+          status: rows > 0 ? 'ready' : 'empty',
+          message: rows > 0 ? `${rows} data terdeteksi` : 'Tabel siap (kosong)',
+        });
+      }
+    } catch (err: any) {
+      results.push({
+        tableName: t,
+        exists: false,
+        rowCount: 0,
+        status: 'error',
+        message: err?.message || 'Gagal query tabel',
+      });
+    }
+  }
+
+  // 1. Inisialisasi Kategori Default jika tabel kategori_soal kosong
+  const kategoriRes = results.find(r => r.tableName === 'kategori_soal');
+  if (kategoriRes?.exists && kategoriRes.rowCount === 0) {
+    try {
+      const defaultCats = [
+        { nama_kategori: 'Tes Diagnostik', kode_kategori: 'diagnostik', persentase_bobot: 30, aktif: true },
+        { nama_kategori: 'Pengetahuan Umum', kode_kategori: 'pengetahuan_umum', persentase_bobot: 40, aktif: true },
+        { nama_kategori: 'Diniyyah & Agama', kode_kategori: 'diniyyah', persentase_bobot: 30, aktif: true },
+      ];
+      await supabase.from('kategori_soal').upsert(defaultCats, { onConflict: 'kode_kategori' });
+      createdDefaults.push('3 Kategori Soal Standar (Diagnostik, TPU, Diniyyah)');
+      kategoriRes.rowCount = 3;
+      kategoriRes.status = 'ready';
+    } catch {}
+  }
+
+  // 2. Inisialisasi Jadwal Ujian Default jika tabel ujian kosong
+  const ujianRes = results.find(r => r.tableName === 'ujian');
+  if (ujianRes?.exists && ujianRes.rowCount === 0) {
+    try {
+      const defaultExam = {
+        id: '29ead736-1ef5-4c3e-b287-05ad404c0d9f',
+        nama_ujian: 'Ujian Seleksi SPMB Online 2027/2028',
+        gelombang: 'Gelombang 1',
+        tanggal: new Date().toISOString().split('T')[0],
+        jam_mulai: '08:00:00',
+        durasi: 90,
+        status: 'aktif',
+        jumlah_diagnostik: 10,
+        jumlah_tpu: 10,
+        jumlah_diniyyah: 10,
+        batas_kelulusan: 70,
+        aktif: true,
+      };
+      await supabase.from('ujian').upsert(defaultExam);
+      createdDefaults.push('Jadwal Ujian Aktif (Ujian Seleksi SPMB Online 2027/2028)');
+      ujianRes.rowCount = 1;
+      ujianRes.status = 'ready';
+    } catch {}
+  }
+
+  // 3. Inisialisasi Bank Soal ke public.soal jika kosong
+  const soalRes = results.find(r => r.tableName === 'soal');
+  if (soalRes?.exists && soalRes.rowCount === 0) {
+    try {
+      const defaultSoal = getCbtSoal();
+      if (defaultSoal && defaultSoal.length > 0) {
+        await syncAndSaveSelectedSoalToSupabase(defaultSoal);
+        createdDefaults.push(`${defaultSoal.length} Butir Soal Bank CBT Default`);
+        soalRes.rowCount = defaultSoal.length;
+        soalRes.status = 'ready';
+      }
+    } catch {}
+  }
+
+  const allReady = results.every(r => r.exists);
+
+  return {
+    success: allReady,
+    timestamp: new Date().toISOString(),
+    tables: results,
+    createdDefaults,
+    summary: allReady
+      ? 'Seluruh tabel CBT pada database Supabase telah siap dan aktif terhubung.'
+      : 'Beberapa tabel CBT memerlukan eksekusi skrip SQL di SQL Editor Supabase.',
+  };
 }
 
