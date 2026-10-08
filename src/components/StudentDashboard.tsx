@@ -690,11 +690,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       testSubmitted: false,
     };
     onUpdateStudentData(updatedStudent);
-    supabase.from('students').update({
+    void supabase.from('students').update({
       is_test_active: true,
       test_submitted: false,
       updated_at: startTimeIso,
-    }).eq('id', studentData.id).catch(() => {});
+    }).eq('id', studentData.id);
 
     // 2. Kirim Heartbeat pertama ke Supabase Realtime & Database SSOT
     sendCbtHeartbeatSupabase({
@@ -904,7 +904,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       test_submitted: true,
       status: 'test_completed',
       updated_at: new Date().toISOString(),
-    }).eq('id', studentData.id).catch(() => {});
+    }).eq('id', studentData.id);
 
     // 4. Catat aktivitas selesai ujian
     recordCbtActivityLogSupabase({

@@ -57,6 +57,8 @@ import { downloadPaymentProofFile } from '../utils/paymentProofStorage';
 import { UserManagementSection } from './UserManagementSection';
 import { AccountSettingsSection } from './AccountSettingsSection';
 import { FilledClassesSection } from './FilledClassesSection';
+import { EditStudentModal } from './EditStudentModal';
+import { StudentCredentialsRecapSection } from './StudentCredentialsRecapSection';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { StudentRepository } from '../repositories/StudentRepository';
 import { ClassQuotaRepository } from '../repositories/ClassQuotaRepository';
@@ -112,7 +114,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
 
   const ALL_SUPPORTED_ADMIN_TABS = [
-    'overview', 'user_management', 'account_settings', 'default_credentials', 'applicants', 'payment_form',
+    'overview', 'user_management', 'account_settings', 'default_credentials', 'applicants', 'credentials_recap', 'payment_form',
     'payment_initial', 'payment_history', 'scores', 'announcements', 'quotas',
     'placement', 'filled_classes', 'question_bank', 'gas_sync', 'settings',
     'website_settings', 'database_management', 'cbt_dashboard', 'cbt_kategori',
@@ -200,6 +202,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
+  const [editingStudent, setEditingStudent] = useState<StudentData | null>(null);
 
   // State: Export & Import Excel Calon Murid Modal
   const [showStudentExcelModal, setShowStudentExcelModal] = useState<{ open: boolean; tab: 'import' | 'export' }>({
@@ -1973,6 +1976,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <span>Siap Unduh Formulir ({students.filter(s => canDownloadStudentForm(s)).length})</span>
                 </button>
 
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('credentials_recap')}
+                  className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                  title="Buka Rekap Username & Password Calon Murid"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>Rekap Akun & Password</span>
+                </button>
+
                 <div className="h-6 w-px bg-slate-300 hidden sm:block mx-1" />
 
                 <button
@@ -2131,6 +2144,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </button>
                           <button
                             type="button"
+                            onClick={() => setEditingStudent(s)}
+                            className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+                            title="Update Data Calon Murid (Biodata, Ortu, Status, Username & Password)"
+                          >
+                            <Edit className="w-3 h-3 text-blue-100" />
+                            <span>Update Data</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => {
                               setWaModalStudent(s);
                               setWaDefaultTemplate(
@@ -2155,6 +2177,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </table>
             </div>
           </div>
+        )}
+
+        {/* TAB REKAP USERNAME & PASSWORD CALON MURID */}
+        {activeTab === 'credentials_recap' && (
+          <StudentCredentialsRecapSection
+            students={students}
+            schoolInfo={schoolInfo}
+            onEditStudent={(s) => setEditingStudent(s)}
+            onDownloadExamCard={handleDownloadExamCard}
+            onRefreshAllData={onRefreshAllData}
+          />
         )}
 
         {/* TAB 3: INPUT & VERIFIKASI PEMBAYARAN FORMULIR */}
@@ -5278,7 +5311,7 @@ Kunci: B`}
                 </button>
 
                 {/* Modal Header */}
-                <div className="border-b pb-3 pr-8">
+                <div className="border-b pb-3 pr-8 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-xl bg-slate-900 text-white font-black text-lg flex items-center justify-center shrink-0">
                       {selectedStudent.fullName.charAt(0)}
@@ -5300,6 +5333,20 @@ Kunci: B`}
                       </div>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = selectedStudent;
+                      setSelectedStudent(null);
+                      setEditingStudent(cur);
+                    }}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0 w-fit"
+                    title="Buka form edit biodata, orang tua, status, serta kredensial murid ini"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                    <span>Update Data Murid</span>
+                  </button>
                 </div>
 
                 {/* FITUR VERIFIKASI PEMBAYARAN & DATA CALON MURID */}
@@ -5844,6 +5891,23 @@ Kunci: B`}
             }
           }
           setActiveProofModalData(null);
+        }}
+      />
+
+      {/* MODAL UPDATE & EDIT DATA CALON MURID */}
+      <EditStudentModal
+        isOpen={!!editingStudent}
+        onClose={() => setEditingStudent(null)}
+        student={editingStudent}
+        classQuotas={classQuotas}
+        onSaveSuccess={(updated) => {
+          const updatedList = students.map((s) => (s.id === updated.id ? updated : s));
+          onUpdateStudents(updatedList);
+          setEditingStudent(null);
+          if (selectedStudent && selectedStudent.id === updated.id) {
+            setSelectedStudent(updated);
+          }
+          if (onRefreshAllData) onRefreshAllData();
         }}
       />
     </div>

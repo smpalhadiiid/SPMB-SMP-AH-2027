@@ -260,6 +260,9 @@ export interface CbtHeartbeatPayload {
   exam_id: string;
   participant_id: string;
   user_id?: string;
+  student_name?: string;
+  registration_number?: string;
+  isSubmitted?: boolean;
   last_seen_at: string;
   current_question: number;
   answered_count: number;
@@ -283,7 +286,8 @@ export type CbtActivityEventType =
   | 'network_offline'
   | 'network_reconnect'
   | 'save_failed'
-  | 'exam_submit';
+  | 'exam_submit'
+  | 'exam_finish';
 
 export interface CbtActivityLogItem {
   id: string;
