@@ -109,7 +109,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onTabChange,
 }) => {
   const [internalTab, setInternalTab] = useState<
-    'overview' | 'applicants' | 'payment_form' | 'payment_initial' | 'payment_history' | 'documents' | 'scores' | 'announcements' | 'quotas' | 'placement' | 'reports' | 'gas_sync' | 'settings' | 'website_settings' | 'database_management' | 'question_bank' | 'user_management'
+    'overview' | 'applicants' | 'credentials_recap' | 'payment_form' | 'payment_initial' | 'payment_history' | 'documents' | 'scores' | 'announcements' | 'quotas' | 'placement' | 'reports' | 'gas_sync' | 'settings' | 'website_settings' | 'database_management' | 'question_bank' | 'user_management'
   >('overview');
 
 

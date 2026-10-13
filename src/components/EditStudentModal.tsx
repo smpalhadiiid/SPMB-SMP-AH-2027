@@ -8,6 +8,7 @@ import {
 import { StudentData, ClassQuota, AdmissionStatus } from '../types';
 import { StudentRepository } from '../repositories/StudentRepository';
 import { resolveStudentCredentials, saveStudentAccountCredentials } from '../utils/studentCredentials';
+import { BAM_DISCOUNT_CATEGORIES, getBamDiscountCategory } from '../utils/bamPricing';
 
 interface EditStudentModalProps {
   isOpen: boolean;
@@ -801,6 +802,77 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
                       onChange={(e) => handleChange('initialPaymentAmount', Number(e.target.value))}
                       className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-blue-500 outline-none"
                     />
+                  </div>
+
+                  {/* Kategori & Potongan Biaya Awal Masuk (BAM) */}
+                  <div className="sm:col-span-2 p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between border-b border-amber-200/80 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-600" />
+                        <span className="text-xs font-bold text-amber-900">Kategori & Potongan Biaya Awal Masuk (BAM)</span>
+                      </div>
+                      <span className="text-[10px] bg-amber-200/60 text-amber-900 px-2 py-0.5 rounded font-bold">
+                        Keringanan / Beasiswa
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Pilihan Kategori Potongan
+                        </label>
+                        <select
+                          value={formData.bamDiscountCategory || 'none'}
+                          onChange={(e) => {
+                            const catId = e.target.value;
+                            handleChange('bamDiscountCategory', catId);
+                            const cat = getBamDiscountCategory(catId);
+                            if (catId !== 'custom') {
+                              handleChange('bamDiscountAmount', cat.defaultAmount);
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-bold focus:ring-2 focus:ring-amber-500 outline-none bg-white text-slate-900"
+                        >
+                          {BAM_DISCOUNT_CATEGORIES.map((cat) => (
+                            <option key={cat.id} value={cat.id}>
+                              {cat.name} {cat.defaultAmount > 0 ? `(-Rp ${cat.defaultAmount.toLocaleString('id-ID')})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-amber-800 mt-1">
+                          {getBamDiscountCategory(formData.bamDiscountCategory).description}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Nominal Potongan (Rp)
+                        </label>
+                        <input
+                          type="number"
+                          value={formData.bamDiscountAmount ?? 0}
+                          onChange={(e) => handleChange('bamDiscountAmount', Number(e.target.value))}
+                          className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-mono font-bold text-emerald-800 bg-white focus:ring-2 focus:ring-amber-500 outline-none"
+                          placeholder="0"
+                        />
+                        <span className="text-[10px] text-slate-500 mt-1 block">
+                          Terpotong otomatis dari total kewajiban BAM murid
+                        </span>
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Catatan / Alasan Verifikasi Potongan
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.bamDiscountNotes || ''}
+                          onChange={(e) => handleChange('bamDiscountNotes', e.target.value)}
+                          className="w-full px-3 py-1.5 border border-amber-300 rounded-xl text-xs text-slate-800 bg-white focus:ring-2 focus:ring-amber-500 outline-none"
+                          placeholder="Contoh: Alumni SD Islam Al-Hadiid / Kakak kandung kelas 8B / Sertifikat Tahfidz Juz 30"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div>

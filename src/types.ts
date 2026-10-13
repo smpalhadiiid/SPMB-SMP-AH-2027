@@ -147,12 +147,17 @@ export interface StudentData {
     status: string;
   }>;
 
-  // Step 10: Pembayaran Daftar Ulang (Awal Masuk)
+  // Step 10: Pembayaran Daftar Ulang (Awal Masuk / BAM)
   initialPaymentProofUrl?: string;
   initialPaymentDate?: string;
   initialPaymentAmount: number;
   initialPaymentStatus: 'unpaid' | 'pending' | 'verified' | 'rejected';
   initialPaymentNotes?: string;
+
+  // Kategori & Potongan Biaya Awal Masuk (BAM)
+  bamDiscountCategory?: string; // e.g., 'none' | 'internal' | 'sibling' | 'prestasi' | 'afirmasi' | 'lunas_langsung' | 'yayasan' | 'custom'
+  bamDiscountAmount?: number;   // Nominal potongan dalam Rupiah (e.g., 500000, 1000000)
+  bamDiscountNotes?: string;    // Catatan/alasan verifikasi potongan
 
   // Step 11 & 12: Penempatan Kelas
   assignedClassId?: string;

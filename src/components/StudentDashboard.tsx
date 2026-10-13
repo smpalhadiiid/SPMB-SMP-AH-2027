@@ -54,8 +54,12 @@ import {
   BAM_CONFIG,
   BAM_BREAKDOWN_ITEMS,
   BAM_INSTALLMENT_STEPS,
+  BAM_DISCOUNT_CATEGORIES,
   getStudentCategory,
   getTotalBamCost,
+  getBaseBamCost,
+  getStudentBamDiscountAmount,
+  getBamDiscountCategory,
   calculateBamRemaining,
 } from '../utils/bamPricing';
 
@@ -314,7 +318,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       }, 0)
     : 0;
 
-  const totalBamCost = linkedBamRecord?.totalBamCost || (hasCustomCost ? calculatedCustomTotal : getTotalBamCost(studentCategory));
+  const totalBamCost = linkedBamRecord?.totalBamCost || (hasCustomCost ? calculatedCustomTotal : getTotalBamCost(studentData));
   const currentPaidAmount = (linkedBamRecord && linkedBamRecord.amountPaid > 0)
     ? linkedBamRecord.amountPaid
     : (studentData.initialPaymentAmount || 0);
@@ -1209,7 +1213,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setBamUploadSuccessMsg('');
 
     const category = getStudentCategory(studentData);
-    const totalCost = getTotalBamCost(category);
+    const totalCost = getTotalBamCost(studentData);
     const amountToSave = Number(initialPaymentAmountInput) || totalCost;
     const paymentId = generateUUID();
 
@@ -3456,23 +3460,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
                     {(() => {
                       const category = getStudentCategory(studentData);
-                      const totalBam = getTotalBamCost(category);
-                      const lunasDiscounted = category === 'Internal' ? BAM_CONFIG.totalInternalLunas : BAM_CONFIG.totalExternalLunas;
+                      const baseCost = getBaseBamCost(studentData);
+                      const discountAmount = getStudentBamDiscountAmount(studentData);
+                      const netCost = getTotalBamCost(studentData);
+                      const discountCategoryObj = getBamDiscountCategory(studentData?.bamDiscountCategory);
+                      const lunasDiscounted = Math.max(0, netCost - 500000);
 
                       return (
                         <>
-                          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-2">
                             <div>
                               <div className="text-sm font-bold text-slate-900">Rincian Komponen Biaya Awal Masuk (BAM):</div>
-                              <div className="text-[11px] text-slate-500">Sesuai Brosur & Kebijakan SPMB SMP Al-Hadiid</div>
+                              <div className="text-[11px] text-slate-500">Sesuai Brosur & Kebijakan SPMB SMPS Al-Hadiid ({studentData.gender || 'Ikhwan'})</div>
                             </div>
-                            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
-                              category === 'Internal'
-                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            }`}>
-                              Kategori: {category === 'Internal' ? 'Al-Hadiid (Internal)' : 'Umum (Eksternal)'}
-                            </span>
+                            <div className="flex flex-wrap gap-1.5 items-center">
+                              <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                                category === 'Internal'
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              }`}>
+                                Jalur: {category === 'Internal' ? 'Al-Hadiid (Internal)' : 'Umum (Eksternal)'}
+                              </span>
+                              {discountAmount > 0 && (
+                                <span className="text-[11px] font-bold px-2.5 py-1 rounded-full border bg-amber-50 text-amber-800 border-amber-300">
+                                  Potongan: {discountCategoryObj.shortLabel} (-Rp {discountAmount.toLocaleString('id-ID')})
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="space-y-2 text-xs">
@@ -3491,14 +3505,39 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                               );
                             })}
 
-                            {/* Total Banner */}
+                            {/* Base BAM & Discount Summary */}
+                            {discountAmount > 0 ? (
+                              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl space-y-1.5">
+                                <div className="flex justify-between items-center text-xs text-slate-600">
+                                  <span>Total Pokok Biaya BAM ({studentData.gender || 'Ikhwan'}):</span>
+                                  <span className="font-mono font-semibold">Rp {baseCost.toLocaleString('id-ID')}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs text-amber-800 font-bold">
+                                  <span>Kategori Potongan ({discountCategoryObj.name}):</span>
+                                  <span className="font-mono">-Rp {discountAmount.toLocaleString('id-ID')}</span>
+                                </div>
+                                {studentData.bamDiscountNotes && (
+                                  <div className="text-[10px] text-amber-700 italic border-t border-amber-200/60 pt-1">
+                                    Catatan verifikasi: {studentData.bamDiscountNotes}
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
+
+                            {/* Total Net Banner */}
                             <div className="p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center mt-3 shadow-sm">
                               <div>
-                                <span className="font-bold uppercase text-xs block">Total Biaya Awal Masuk ({category}):</span>
-                                <span className="text-[10px] text-slate-400">Belum termasuk potongan diskon lunas</span>
+                                <span className="font-bold uppercase text-xs block">
+                                  Total Tagihan Bersih BAM:
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {discountAmount > 0
+                                    ? `Sudah termasuk potongan kategori ${discountCategoryObj.shortLabel}`
+                                    : 'Belum termasuk potongan diskon lunas'}
+                                </span>
                               </div>
                               <span className="text-xl font-black font-mono text-amber-300">
-                                Rp {totalBam.toLocaleString('id-ID')}
+                                Rp {netCost.toLocaleString('id-ID')}
                               </span>
                             </div>
 
@@ -3508,7 +3547,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                               <div>
                                 <span className="font-bold">Potongan Khusus Pelunasan Sekaligus (100%):</span>
                                 <p className="text-emerald-800 mt-0.5">
-                                  Bagi calon santri yang melunasi BAM saat daftar ulang berhak mendapatkan potongan <span className="font-bold underline">Rp 500.000</span> sehingga total biaya menjadi <span className="font-bold font-mono">Rp {lunasDiscounted.toLocaleString('id-ID')}</span>.
+                                  Bagi calon santri yang melunasi seluruh BAM saat daftar ulang berhak mendapatkan potongan tambahan <span className="font-bold underline">Rp 500.000</span> sehingga total biaya menjadi <span className="font-bold font-mono">Rp {lunasDiscounted.toLocaleString('id-ID')}</span>.
                                 </p>
                               </div>
                             </div>
@@ -3790,10 +3829,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             4. Nominal Transfer (Rp) <span className="text-rose-500">*</span>
                           </label>
                           {(() => {
-                            const category = getStudentCategory(studentData);
                             return (
                               <span className="text-[10px] text-slate-500">
-                                Target BAM: <span className="font-bold font-mono text-emerald-700">Rp {getTotalBamCost(category).toLocaleString('id-ID')}</span>
+                                Target BAM: <span className="font-bold font-mono text-emerald-700">Rp {getTotalBamCost(studentData).toLocaleString('id-ID')}</span>
                               </span>
                             );
                           })()}
