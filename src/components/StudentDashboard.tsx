@@ -14,9 +14,9 @@ import {
   getOrCreateParticipantChannel,
   CBT_MONITORING_CONFIG,
 } from '../services/cbtMonitoringService';
-import { supabase } from '../utils/supabaseClient';
+import { supabase, fetchBamPaymentsFromSupabase } from '../utils/supabaseClient';
 import toast from 'react-hot-toast';
-import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule } from '../types';
+import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule, BamPaymentRecord } from '../types';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF, generatePaymentReceiptPDF } from '../utils/pdfGenerator';
@@ -37,7 +37,8 @@ import {
   FileText, GraduationCap, Award, Calendar, MapPin, User, Phone,
   School, HelpCircle, Check, ArrowRight, ShieldCheck, Sparkles, Image as ImageIcon,
   ChevronRight, RefreshCw, Send, Lock, Play, Timer, FileQuestion, BarChart,
-  ChevronLeft, Flag, SendHorizontal, X, AlertTriangle, Eye, ZoomIn, ZoomOut, RotateCw, Save
+  ChevronLeft, Flag, SendHorizontal, X, AlertTriangle, Eye, ZoomIn, ZoomOut, RotateCw, Save,
+  ThumbsUp, Star
 } from 'lucide-react';
 import {
   validateProofFile,
@@ -61,6 +62,8 @@ import {
   getStudentBamDiscountAmount,
   getBamDiscountCategory,
   calculateBamRemaining,
+  getBamPaymentStatus,
+  computeStudentBamSummary,
 } from '../utils/bamPricing';
 
 interface StudentDashboardProps {
@@ -297,36 +300,56 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     syncExamResultsFromSupabase();
   }, [studentData?.id]);
 
-  // Lookup data pembayaran BAM yang telah diupload / diverifikasi oleh Admin
-  const linkedBamRecord = useMemo(() => {
-    const allBam = getStoredBamPayments();
-    return allBam.find(
-      b => b.studentId === studentData.id ||
-           (studentData.registrationNumber && b.registrationNumber === studentData.registrationNumber) ||
-           (studentData.fullName && b.studentName && b.studentName.toLowerCase() === studentData.fullName.toLowerCase())
-    );
-  }, [studentData]);
+  // Sinkronisasi data real pembayaran BAM langsung dari Supabase & LocalStorage
+  const [realBamPayments, setRealBamPayments] = useState<BamPaymentRecord[]>(() => getStoredBamPayments());
 
+  // Listen for storage events or window focus to sync immediately when admin adds payment in another tab or role
+  useEffect(() => {
+    const handleSync = () => {
+      setRealBamPayments(getStoredBamPayments());
+    };
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('focus', handleSync);
+    return () => {
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('focus', handleSync);
+    };
+  }, []);
+
+  // Pastikan data pembayaran real BAM selalu termutakhir saat tab dibuka atau data siswa diperbarui
+  useEffect(() => {
+    setRealBamPayments(getStoredBamPayments());
+  }, [activeTab, studentData?.initialPaymentAmount, studentData?.initialPaymentStatus, studentData?.status]);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function syncRealBamFromSupabase() {
+      try {
+        const cloudPayments = await fetchBamPaymentsFromSupabase();
+        if (isMounted && cloudPayments && cloudPayments.length > 0) {
+          setRealBamPayments(cloudPayments);
+          saveBamPayments(cloudPayments);
+        }
+      } catch (err) {
+        console.warn('Sync BAM payments from Supabase notice:', err);
+      }
+    }
+    syncRealBamFromSupabase();
+    return () => { isMounted = false; };
+  }, [studentData?.id, studentData?.registrationNumber]);
+
+  // Perhitungan Real Data Pembayaran BAM Persis Seperti Pada Menu Admin
   const studentCategory = getStudentCategory(studentData);
-  const hasCustomCost = Boolean(costBreakdowns && costBreakdowns.length > 0);
-  const calculatedCustomTotal = hasCustomCost
-    ? costBreakdowns.reduce((acc, curr) => {
-        const val = (studentData.gender === 'Perempuan' && curr.amountAkhwat)
-          ? curr.amountAkhwat
-          : (curr.amountIkhwan || curr.amount || 0);
-        return acc + Number(val);
-      }, 0)
-    : 0;
+  const totalBamCost = getTotalBamCost(studentData);
 
-  const totalBamCost = linkedBamRecord?.totalBamCost || (hasCustomCost ? calculatedCustomTotal : getTotalBamCost(studentData));
-  const currentPaidAmount = (linkedBamRecord && linkedBamRecord.amountPaid > 0)
-    ? linkedBamRecord.amountPaid
-    : (studentData.initialPaymentAmount || 0);
-  const currentRemaining = linkedBamRecord?.remainingBalance !== undefined
-    ? linkedBamRecord.remainingBalance
-    : Math.max(0, totalBamCost - currentPaidAmount);
-  const currentInstallmentType = linkedBamRecord?.installmentType || (currentPaidAmount >= totalBamCost ? 'Lunas' : (currentPaidAmount > 0 ? 'Cicilan 1' : 'Belum Bayar'));
-  const currentNotes = linkedBamRecord?.notes || studentData.initialPaymentNotes || '';
+  const studentBamSummary = useMemo(() => {
+    return computeStudentBamSummary(studentData, realBamPayments);
+  }, [studentData, realBamPayments, totalBamCost]);
+
+  const currentPaidAmount = studentBamSummary.amountPaid;
+  const currentRemaining = studentBamSummary.remaining;
+  const currentInstallmentType = studentBamSummary.installmentName;
+  const currentNotes = studentBamSummary.matchingPayments[0]?.notes || studentData.initialPaymentNotes || '';
 
   // Sinkronisasi data BAM ke input form
   useEffect(() => {
@@ -1427,14 +1450,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     },
     {
       num: 10,
-      title: 'Pembayaran Biaya Awal Masuk',
-      desc: studentData.initialPaymentStatus === 'verified'
-        ? 'Daftar Ulang Lunas'
-        : studentData.initialPaymentStatus === 'pending'
-        ? 'Verifikasi Daftar Ulang'
+      title: 'Pembayaran Biaya Awal Masuk (BAM)',
+      desc: studentBamSummary.isLunas
+        ? 'Lunas ⭐'
+        : studentBamSummary.isAngsuran
+        ? 'Angsuran / Cicilan 👍'
+        : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl
+        ? 'Verifikasi Daftar Ulang ⏳'
         : 'Biaya Masuk (Ikhwan/Akhwat)',
-      isDone: studentData.initialPaymentStatus === 'verified',
-      isCurrent: studentData.status === 'passed' && studentData.initialPaymentStatus !== 'verified',
+      isDone: studentBamSummary.isLunas,
+      isCurrent: studentData.status === 'passed' && !studentBamSummary.isLunas,
     },
     {
       num: 11,
@@ -1604,9 +1629,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           >
             <ShieldCheck className="w-4 h-4" />
             <span>7. Daftar Ulang & BAM</span>
-            {studentData.initialPaymentStatus === 'verified' ? (
-              <span className="ml-1 text-[10px] bg-emerald-500 text-white px-1.5 py-0.5 rounded font-bold">
-                LUNAS ✓
+            {studentBamSummary.isLunas ? (
+              <span className="ml-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 shadow-xs">
+                <span>Lunas</span>
+                <Star className="w-3 h-3 fill-amber-300 text-amber-300" />
+              </span>
+            ) : studentBamSummary.isAngsuran ? (
+              <span className="ml-1 text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 shadow-xs">
+                <span>Angsuran / Cicilan</span>
+                <ThumbsUp className="w-3 h-3 text-white fill-white" />
+              </span>
+            ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
+              <span className="ml-1 text-[10px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1">
+                <span>Verifikasi</span> ⏳
               </span>
             ) : studentData.status === 'passed' ? (
               <span className="ml-1 text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded font-bold">
@@ -3349,32 +3384,94 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               {/* Status Badge */}
               <div className="shrink-0">
-                <span className={`px-3 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 border ${
-                  studentData.initialPaymentStatus === 'verified'
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                    : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl
-                    ? 'bg-amber-50 text-amber-900 border-amber-300'
-                    : 'bg-slate-100 text-slate-700 border-slate-300'
-                }`}>
-                  {studentData.initialPaymentStatus === 'verified' ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>BAM LUNAS & VERIFIED ✓</span>
-                    </>
-                  ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
-                    <>
-                      <Clock className="w-4 h-4 text-amber-600" />
-                      <span>MENUNGGU VERIFIKASI ADMIN ⏳</span>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle className="w-4 h-4 text-slate-500" />
-                      <span>BELUM BAYAR / UPLOAD</span>
-                    </>
-                  )}
-                </span>
+                {studentBamSummary.isLunas ? (
+                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-xs">
+                    <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                    <span>Lunas ⭐ (Terverifikasi Admin)</span>
+                  </span>
+                ) : studentBamSummary.isAngsuran ? (
+                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-300 shadow-xs">
+                    <ThumbsUp className="w-4 h-4 text-amber-600 fill-amber-500" />
+                    <span>Angsuran / Cicilan 👍 (Terverifikasi Admin)</span>
+                  </span>
+                ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
+                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-blue-50 text-blue-900 border border-blue-300 shadow-xs">
+                    <Clock className="w-4 h-4 text-blue-600" />
+                    <span>Menunggu Verifikasi Admin ⏳</span>
+                  </span>
+                ) : (
+                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-300">
+                    <AlertCircle className="w-4 h-4 text-slate-500" />
+                    <span>Belum Ada Pembayaran</span>
+                  </span>
+                )}
               </div>
             </div>
+
+            {/* Banner Status Pembayaran Real Admin */}
+            {studentBamSummary.isLunas && (
+              <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+                    <Star className="w-6 h-6 fill-amber-300 text-amber-300" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-extrabold text-emerald-950 flex items-center gap-2">
+                      <span>Status Pembayaran: Lunas ⭐</span>
+                      <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-bold">Terverifikasi Admin</span>
+                    </div>
+                    <p className="text-xs text-emerald-800 mt-0.5">
+                      Alhamdulillah, Biaya Awal Masuk (BAM) Anda telah lunas sesuai verifikasi data keuangan resmi Panitia. Sisa tunggakan: <b className="font-mono">Rp 0</b>.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    generatePaymentReceiptPDF(
+                      {
+                        id: `PAY-BAM-${studentData.registrationNumber || studentData.id}`,
+                        amount: studentBamSummary.amountPaid,
+                        payment_type: 'daftar_ulang',
+                        payment_date: studentBamSummary.latestPaymentDate || new Date().toISOString(),
+                        payment_method: 'Transfer Bank Syariah Indonesia (BSI)',
+                        status: 'verified',
+                        verified_by: 'Panitia Keuangan SPMB',
+                      },
+                      studentData,
+                      schoolInfo
+                    );
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0 transition-colors"
+                >
+                  <Download className="w-4 h-4 text-amber-300" />
+                  <span>Download Kuitansi Lunas (PDF)</span>
+                </button>
+              </div>
+            )}
+
+            {studentBamSummary.isAngsuran && (
+              <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+                    <ThumbsUp className="w-6 h-6 fill-white text-white" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-extrabold text-amber-950 flex items-center gap-2">
+                      <span>Status Pembayaran: Angsuran / Cicilan 👍</span>
+                      <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-bold">Terverifikasi Admin</span>
+                    </div>
+                    <p className="text-xs text-amber-900 mt-0.5">
+                      Pembayaran angsuran Anda telah diverifikasi oleh Panitia Keuangan. Total Terbayar: <b className="font-mono text-emerald-800">Rp {studentBamSummary.amountPaid.toLocaleString('id-ID')}</b> • Sisa Tunggakan: <b className="font-mono text-rose-700">Rp {studentBamSummary.remaining.toLocaleString('id-ID')}</b>.
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right sm:shrink-0 text-xs font-bold text-amber-900 bg-white/90 px-3.5 py-2 rounded-xl border border-amber-300">
+                  <span className="block text-[10px] text-slate-500 font-normal">Sisa Tagihan BAM:</span>
+                  <span className="font-mono text-rose-600 text-sm font-black">Rp {studentBamSummary.remaining.toLocaleString('id-ID')}</span>
+                </div>
+              </div>
+            )}
 
             {!(studentData.status === 'passed' || studentData.status === 're_registration_paid' || studentData.status === 're_registered' || studentData.status === 'class_assigned' || studentData.status === 'completed') ? (
               <div className="bg-amber-50/80 border-2 border-amber-200 rounded-2xl p-8 text-center space-y-5 max-w-2xl mx-auto my-6 shadow-sm">
@@ -3952,18 +4049,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     </div>
 
                     {/* Status Box */}
-                    <div className="p-4 rounded-xl border text-xs bg-white shadow-inner space-y-1">
-                      <div className="font-semibold text-slate-600">Status Verifikasi Bukti BAM:</div>
-                      <div className="font-extrabold uppercase text-sm flex items-center gap-2">
-                        {studentData.initialPaymentStatus === 'verified' ? (
-                          <span className="text-emerald-700 font-extrabold">✅ LUNAS & TERDAFTAR RESMI MURID</span>
+                    <div className="p-4 rounded-xl border text-xs bg-white shadow-inner space-y-2">
+                      <div className="font-semibold text-slate-600">Status Pembayaran BAM (Data Real Admin):</div>
+                      <div className="font-extrabold text-sm flex items-center gap-2">
+                        {studentBamSummary.isLunas ? (
+                          <span className="text-emerald-700 font-extrabold flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                            <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                            <span>Lunas ⭐</span>
+                            <span className="text-xs text-slate-500 font-normal">| Sisa Tunggakan: Rp 0</span>
+                          </span>
+                        ) : studentBamSummary.isAngsuran ? (
+                          <span className="text-amber-800 font-extrabold flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                            <ThumbsUp className="w-4 h-4 text-amber-600 fill-amber-500" />
+                            <span>Angsuran / Cicilan 👍</span>
+                            <span className="text-xs text-slate-600 font-semibold">| Terbayar: Rp {studentBamSummary.amountPaid.toLocaleString('id-ID')} • Sisa: Rp {studentBamSummary.remaining.toLocaleString('id-ID')}</span>
+                          </span>
                         ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
-                          <span className="text-amber-700 font-extrabold">⏳ MENUNGGU VERIFIKASI ADMIN</span>
+                          <span className="text-blue-700 font-extrabold flex items-center gap-1.5 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
+                            <Clock className="w-4 h-4 text-blue-600" />
+                            <span>Menunggu Verifikasi Admin ⏳</span>
+                          </span>
                         ) : (
-                          <span className="text-rose-700 font-extrabold">❌ BELUM DIBAYAR</span>
+                          <span className="text-rose-700 font-extrabold flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
+                            <AlertCircle className="w-4 h-4 text-rose-600" />
+                            <span>Belum Ada Pembayaran ❌</span>
+                          </span>
                         )}
                       </div>
-                      {studentData.initialPaymentStatus === 'verified' && (
+
+                      {studentBamSummary.amountPaid > 0 && (
                         <div className="pt-2">
                           <button
                             type="button"
@@ -3971,11 +4085,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                               generatePaymentReceiptPDF(
                                 {
                                   id: `PAY-BAM-${studentData.registrationNumber || studentData.id}`,
-                                  amount: studentData.initialPaymentAmount || 11000000,
+                                  amount: studentBamSummary.amountPaid,
                                   payment_type: 'daftar_ulang',
-                                  payment_date: studentData.initialPaymentDate || new Date().toISOString(),
+                                  payment_date: studentBamSummary.latestPaymentDate || new Date().toISOString(),
                                   payment_method: 'Transfer Bank Syariah Indonesia (BSI)',
-                                  status: 'verified',
+                                  status: studentBamSummary.isLunas ? 'verified' : 'pending',
                                   verified_by: 'Panitia Keuangan SPMB',
                                 },
                                 studentData,
@@ -3990,6 +4104,49 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </div>
                       )}
                     </div>
+
+                    {/* Riwayat Pembayaran Real Terverifikasi oleh Panitia Admin */}
+                    {studentBamSummary.matchingPayments.length > 0 && (
+                      <div className="p-3.5 bg-slate-100/90 rounded-xl border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-800">
+                          <span className="flex items-center gap-1.5">
+                            <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Riwayat Pembayaran BAM Terverifikasi Panitia:</span>
+                          </span>
+                          <span className="text-emerald-700 font-mono">
+                            Total: Rp {studentBamSummary.amountPaid.toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {studentBamSummary.matchingPayments.map((p, idx) => (
+                            <div key={p.id || idx} className="p-2 bg-white rounded-lg border border-slate-200 flex items-center justify-between text-[11px]">
+                              <div>
+                                <div className="font-bold text-slate-800 flex items-center gap-1">
+                                  <span>{p.installmentType || `Pembayaran #${idx + 1}`}</span>
+                                  {p.paymentStatus === 'LUNAS' ? (
+                                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-bold flex items-center gap-0.5">
+                                      Lunas <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 font-bold flex items-center gap-0.5">
+                                      Angsuran <ThumbsUp className="w-2.5 h-2.5 text-amber-600 fill-amber-500" />
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  {p.paymentDate || p.createdAt || '-'} • {p.paymentMethod || 'Transfer Bank'}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="font-mono font-bold text-emerald-700">
+                                  Rp {(Number(p.amountPaid) || 0).toLocaleString('id-ID')}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Submit Button */}
                     <button
@@ -4285,7 +4442,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </p>
             </div>
 
-            {!(studentData.initialPaymentStatus === 'verified' || studentData.status === 're_registered' || studentData.status === 'class_assigned' || studentData.status === 'completed') ? (
+            {!(studentData.initialPaymentStatus === 'verified' || studentData.status === 're_registered' || studentData.status === 'class_assigned' || studentData.status === 'completed' || studentBamSummary.isLunas || studentBamSummary.isAngsuran) ? (
               <div className="bg-amber-50/80 border-2 border-amber-200 rounded-2xl p-8 text-center space-y-5 max-w-2xl mx-auto my-6 shadow-sm">
                 <div className="w-16 h-16 bg-amber-100 border border-amber-300 text-amber-700 rounded-2xl flex items-center justify-center mx-auto text-3xl shadow-inner">
                   🔒

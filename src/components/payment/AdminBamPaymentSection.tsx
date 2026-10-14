@@ -920,7 +920,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
             ...s,
             initialPaymentAmount: newTotalPaid,
             initialPaymentDate: inputPaymentDate,
-            initialPaymentStatus: (newStatus === 'LUNAS' ? 'verified' : 'pending') as any,
+            initialPaymentStatus: 'verified' as const,
             initialPaymentNotes: inputPaymentNotes,
             status: newStatus === 'LUNAS' ? ('re_registered' as const) : s.status,
           };

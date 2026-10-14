@@ -11,8 +11,9 @@
 // - Status Pembayaran: BELUM BAYAR | SEBAGIAN | LUNAS
 // =====================================================================
 
-import { StudentData, BamItem, BamGender, BamInstallmentType, BamPaymentStatus } from '../types';
+import { StudentData, BamItem, BamGender, BamInstallmentType, BamPaymentStatus, BamPaymentRecord } from '../types';
 import { fetchBamItemsFromSupabase, saveBamItemsToSupabase } from './supabaseClient';
+import { getStoredBamPayments } from './storage';
 
 export interface BamBreakdownItem {
   id: string;
@@ -409,3 +410,85 @@ export const BAM_INSTALLMENT_STEPS: BamInstallmentStep[] = [
     notes: 'Pelunasan total sisa tagihan Biaya Awal Masuk (BAM)',
   },
 ];
+
+export interface StudentBamSummaryResult {
+  totalBam: number;
+  amountPaid: number;
+  remaining: number;
+  status: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS';
+  isLunas: boolean;
+  isAngsuran: boolean;
+  matchingPayments: BamPaymentRecord[];
+  latestPaymentDate?: string;
+  installmentName: string;
+}
+
+/**
+ * Sinkronisasi & perhitungan real-time status pembayaran BAM calon murid
+ * sesuai data pembayaran terverifikasi Panitia Admin di menu Biaya Awal Masuk.
+ */
+export function computeStudentBamSummary(
+  student?: any,
+  records?: BamPaymentRecord[]
+): StudentBamSummaryResult {
+  if (!student) {
+    return {
+      totalBam: 0,
+      amountPaid: 0,
+      remaining: 0,
+      status: 'BELUM BAYAR',
+      isLunas: false,
+      isAngsuran: false,
+      matchingPayments: [],
+      latestPaymentDate: undefined,
+      installmentName: 'Belum Bayar',
+    };
+  }
+
+  const allRecords = records || (typeof window !== 'undefined' ? getStoredBamPayments() : []);
+  const totalBam = getTotalBamCost(student);
+
+  // Cari seluruh transaksi pembayaran BAM terverifikasi milik siswa ini
+  const matchingPayments = allRecords.filter(
+    b => (student.id && b.studentId === student.id) ||
+         (student.registrationNumber && b.registrationNumber === student.registrationNumber) ||
+         (student.fullName && b.studentName && b.studentName.toLowerCase() === student.fullName.toLowerCase())
+  );
+
+  let paid = matchingPayments.reduce((acc, p) => acc + (Number(p.amountPaid) || 0), 0);
+  if (student.initialPaymentAmount && Number(student.initialPaymentAmount) > paid) {
+    if (student.initialPaymentStatus === 'verified' || student.status === 're_registered' || student.status === 're_registration_paid') {
+      paid = Number(student.initialPaymentAmount) || 0;
+    }
+  }
+
+  const remaining = calculateBamRemaining(totalBam, paid);
+  let paymentStatus: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS' = getBamPaymentStatus(totalBam, paid);
+
+  if (student.status === 're_registered' || student.status === 're_registration_paid' || (remaining <= 0 && paid > 0)) {
+    paymentStatus = 'LUNAS';
+  } else if (matchingPayments.some(p => p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas')) {
+    paymentStatus = 'LUNAS';
+  } else if (paid > 0 && remaining > 0) {
+    paymentStatus = 'SEBAGIAN';
+  } else if (student.initialPaymentStatus === 'verified' && paid > 0) {
+    paymentStatus = remaining <= 0 ? 'LUNAS' : 'SEBAGIAN';
+  }
+
+  const isLunas = paymentStatus === 'LUNAS' || (paid >= totalBam && totalBam > 0);
+  const isAngsuran = !isLunas && (paymentStatus === 'SEBAGIAN' || (paid > 0 && remaining > 0));
+  const latestPaymentDate = matchingPayments[0]?.paymentDate || student.initialPaymentDate || undefined;
+  const installmentName = matchingPayments[0]?.installmentType || (isLunas ? 'Lunas' : (isAngsuran ? 'Angsuran / Cicilan' : 'Belum Bayar'));
+
+  return {
+    totalBam,
+    amountPaid: paid,
+    remaining,
+    status: isLunas ? 'LUNAS' : (isAngsuran ? 'SEBAGIAN' : 'BELUM BAYAR'),
+    isLunas,
+    isAngsuran,
+    matchingPayments,
+    latestPaymentDate,
+    installmentName,
+  };
+}

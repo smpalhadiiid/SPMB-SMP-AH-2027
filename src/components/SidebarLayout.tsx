@@ -5,12 +5,14 @@ import {
   CreditCard, Award, CheckCircle2, School, Clock, LogOut,
   Home, Menu, X, ChevronRight, Sparkles, Bell, User,
   MessageSquare, LayoutDashboard, BarChart3, ChevronDown, Settings,
-  Palette, Database, Calendar, BookOpen, Laptop, Lock, Download, Key
+  Palette, Database, Calendar, BookOpen, Laptop, Lock, Download, Key,
+  Star, ThumbsUp
 } from 'lucide-react';
 import { SchoolLogo } from './SchoolLogo';
 import { SupabaseBadge } from './SupabaseBadge';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
 import { getStoredWebsiteConfig } from '../utils/storage';
+import { computeStudentBamSummary } from '../utils/bamPricing';
 
 interface SidebarLayoutProps {
   currentUser: UserAccount | null;
@@ -372,10 +374,39 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
                       }
                     } else if (item.id === 'payment_initial') {
                       const isBamUnlocked = studentData.status === 'passed' || studentData.status === 're_registration_paid' || studentData.status === 're_registered' || studentData.status === 'class_assigned';
-                      if (!isBamUnlocked) {
-                        studentBadge = <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-0.5 font-bold"><Lock className="w-2.5 h-2.5 text-amber-500" /> TERKUNCI</span>;
-                      } else if (studentData.initialPaymentStatus === 'verified') {
-                        studentBadge = <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">LUNAS</span>;
+                      const bamSummary = computeStudentBamSummary(studentData);
+                      if (bamSummary.isLunas) {
+                        studentBadge = (
+                          <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold flex items-center gap-1 shadow-xs">
+                            <span>Lunas</span>
+                            <Star className="w-2.5 h-2.5 fill-amber-300 text-amber-300" />
+                          </span>
+                        );
+                      } else if (bamSummary.isAngsuran) {
+                        studentBadge = (
+                          <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold flex items-center gap-1 shadow-xs">
+                            <span>Angsuran / Cicilan</span>
+                            <ThumbsUp className="w-2.5 h-2.5 text-amber-300 fill-amber-300" />
+                          </span>
+                        );
+                      } else if (studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl) {
+                        studentBadge = (
+                          <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30 font-bold flex items-center gap-1">
+                            <span>Verifikasi</span> ⏳
+                          </span>
+                        );
+                      } else if (!isBamUnlocked) {
+                        studentBadge = (
+                          <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-0.5 font-bold">
+                            <Lock className="w-2.5 h-2.5 text-amber-500" /> TERKUNCI
+                          </span>
+                        );
+                      } else {
+                        studentBadge = (
+                          <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
+                            BAYAR
+                          </span>
+                        );
                       }
                     } else if (item.id === 'class') {
                       const isClassUnlocked = studentData.initialPaymentStatus === 'verified' || studentData.status === 're_registered' || studentData.status === 'class_assigned';

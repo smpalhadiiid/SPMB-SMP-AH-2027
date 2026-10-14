@@ -457,7 +457,7 @@ export default function App() {
         motherPhone: '',
         fatherEducation: '',
         initialPaymentStatus: 'unpaid',
-        initialPaymentAmount: 8500000,
+        initialPaymentAmount: 0,
         version: 1,
       };
     }
@@ -505,7 +505,7 @@ export default function App() {
       motherPhone: currentUser.phone || '',
       fatherEducation: '',
       initialPaymentStatus: 'unpaid',
-      initialPaymentAmount: 8500000,
+      initialPaymentAmount: 0,
       version: 1,
     };
   }, [currentUser, students, schoolInfo.formFee]);
