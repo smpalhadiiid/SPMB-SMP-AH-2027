@@ -1452,9 +1452,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       num: 10,
       title: 'Pembayaran Biaya Awal Masuk (BAM)',
       desc: studentBamSummary.isLunas
-        ? 'Lunas ⭐'
+        ? 'Lunas ★ (Bintang Hijau)'
         : studentBamSummary.isAngsuran
-        ? 'Angsuran / Cicilan 👍'
+        ? 'Angsuran / Cicilan 👍 (Jempol Kuning)'
         : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl
         ? 'Verifikasi Daftar Ulang ⏳'
         : 'Biaya Masuk (Ikhwan/Akhwat)',
@@ -1630,14 +1630,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <ShieldCheck className="w-4 h-4" />
             <span>7. Daftar Ulang & BAM</span>
             {studentBamSummary.isLunas ? (
-              <span className="ml-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 shadow-xs">
+              <span className="ml-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 shadow-xs border border-emerald-400/40">
                 <span>Lunas</span>
-                <Star className="w-3 h-3 fill-amber-300 text-amber-300" />
+                <Star className="w-3.5 h-3.5 fill-emerald-300 text-emerald-300" />
               </span>
             ) : studentBamSummary.isAngsuran ? (
-              <span className="ml-1 text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 shadow-xs">
+              <span className="ml-1 text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 shadow-xs border border-amber-300/40">
                 <span>Angsuran / Cicilan</span>
-                <ThumbsUp className="w-3 h-3 text-white fill-white" />
+                <ThumbsUp className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300" />
               </span>
             ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
               <span className="ml-1 text-[10px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1">
@@ -3385,14 +3385,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               {/* Status Badge */}
               <div className="shrink-0">
                 {studentBamSummary.isLunas ? (
-                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-xs">
-                    <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
-                    <span>Lunas ⭐ (Terverifikasi Admin)</span>
+                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-400 shadow-xs">
+                    <Star className="w-4 h-4 fill-emerald-500 text-emerald-600" />
+                    <span>Lunas (Tanda Bintang Hijau ★)</span>
                   </span>
                 ) : studentBamSummary.isAngsuran ? (
-                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-300 shadow-xs">
-                    <ThumbsUp className="w-4 h-4 text-amber-600 fill-amber-500" />
-                    <span>Angsuran / Cicilan 👍 (Terverifikasi Admin)</span>
+                  <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-400 shadow-xs">
+                    <ThumbsUp className="w-4 h-4 text-amber-500 fill-amber-400" />
+                    <span>Angsuran / Cicilan (Tanda Jempol Kuning 👍)</span>
                   </span>
                 ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
                   <span className="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-blue-50 text-blue-900 border border-blue-300 shadow-xs">
@@ -3413,11 +3413,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
-                    <Star className="w-6 h-6 fill-amber-300 text-amber-300" />
+                    <Star className="w-6 h-6 fill-emerald-200 text-emerald-200" />
                   </div>
                   <div>
                     <div className="text-sm font-extrabold text-emerald-950 flex items-center gap-2">
-                      <span>Status Pembayaran: Lunas ⭐</span>
+                      <span className="flex items-center gap-1.5">
+                        <span>Status Pembayaran: Lunas</span>
+                        <Star className="w-4 h-4 fill-emerald-600 text-emerald-600 inline" />
+                      </span>
                       <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-bold">Terverifikasi Admin</span>
                     </div>
                     <p className="text-xs text-emerald-800 mt-0.5">
@@ -3454,11 +3457,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
-                    <ThumbsUp className="w-6 h-6 fill-white text-white" />
+                    <ThumbsUp className="w-6 h-6 fill-yellow-200 text-yellow-200" />
                   </div>
                   <div>
                     <div className="text-sm font-extrabold text-amber-950 flex items-center gap-2">
-                      <span>Status Pembayaran: Angsuran / Cicilan 👍</span>
+                      <span className="flex items-center gap-1.5">
+                        <span>Status Pembayaran: Angsuran / Cicilan</span>
+                        <ThumbsUp className="w-4 h-4 fill-amber-500 text-amber-500 inline" />
+                      </span>
                       <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-bold">Terverifikasi Admin</span>
                     </div>
                     <p className="text-xs text-amber-900 mt-0.5">
@@ -4053,15 +4059,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <div className="font-semibold text-slate-600">Status Pembayaran BAM (Data Real Admin):</div>
                       <div className="font-extrabold text-sm flex items-center gap-2">
                         {studentBamSummary.isLunas ? (
-                          <span className="text-emerald-700 font-extrabold flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                            <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
-                            <span>Lunas ⭐</span>
+                          <span className="text-emerald-700 font-extrabold flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-300">
+                            <Star className="w-4 h-4 fill-emerald-500 text-emerald-600" />
+                            <span>Lunas (Tanda Bintang Hijau ★)</span>
                             <span className="text-xs text-slate-500 font-normal">| Sisa Tunggakan: Rp 0</span>
                           </span>
                         ) : studentBamSummary.isAngsuran ? (
-                          <span className="text-amber-800 font-extrabold flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                            <ThumbsUp className="w-4 h-4 text-amber-600 fill-amber-500" />
-                            <span>Angsuran / Cicilan 👍</span>
+                          <span className="text-amber-800 font-extrabold flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
+                            <ThumbsUp className="w-4 h-4 text-amber-500 fill-amber-400" />
+                            <span>Angsuran / Cicilan (Tanda Jempol Kuning 👍)</span>
                             <span className="text-xs text-slate-600 font-semibold">| Terbayar: Rp {studentBamSummary.amountPaid.toLocaleString('id-ID')} • Sisa: Rp {studentBamSummary.remaining.toLocaleString('id-ID')}</span>
                           </span>
                         ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
@@ -4124,12 +4130,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 <div className="font-bold text-slate-800 flex items-center gap-1">
                                   <span>{p.installmentType || `Pembayaran #${idx + 1}`}</span>
                                   {p.paymentStatus === 'LUNAS' ? (
-                                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-bold flex items-center gap-0.5">
-                                      Lunas <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
+                                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-300 font-bold flex items-center gap-1">
+                                      Lunas <Star className="w-2.5 h-2.5 fill-emerald-500 text-emerald-600" />
                                     </span>
                                   ) : (
-                                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 font-bold flex items-center gap-0.5">
-                                      Angsuran <ThumbsUp className="w-2.5 h-2.5 text-amber-600 fill-amber-500" />
+                                    <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-300 font-bold flex items-center gap-1">
+                                      Angsuran <ThumbsUp className="w-2.5 h-2.5 text-amber-500 fill-amber-400" />
                                     </span>
                                   )}
                                 </div>
