@@ -32,6 +32,8 @@ export const CBT_MONITORING_CONFIG = {
   MAX_ACTIVITIES_PER_USER: 40,
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // State key template pada tabel spmb_app_state
 const getSessionsStateKey = (examId: string) => `cbt_sessions_${examId}`;
 const getActivitiesStateKey = (examId: string) => `cbt_activities_${examId}`;
@@ -283,6 +285,16 @@ export async function sendCbtHeartbeatSupabase(heartbeat: CbtHeartbeatPayload): 
       event: 'heartbeat',
       payload: heartbeat,
     });
+
+    // Broadcast juga ke channel monitoring global ALL_EXAMS jika admin sedang memantau mode global
+    if (examId !== 'ALL_EXAMS') {
+      const globalCh = getOrCreateParticipantChannel('ALL_EXAMS');
+      globalCh.send({
+        type: 'broadcast',
+        event: 'heartbeat',
+        payload: heartbeat,
+      });
+    }
   } catch (err) {
     console.warn('Realtime broadcast heartbeat error:', err);
   }
@@ -296,7 +308,7 @@ export async function sendCbtHeartbeatSupabase(heartbeat: CbtHeartbeatPayload): 
     }).catch(() => {});
   } catch {}
 
-  // 3. Simpan secara persisten ke database Supabase (spmb_app_state) sebagai SSOT
+  // 3. Simpan secara persisten ke database Supabase (spmb_app_state & log_ujian) sebagai SSOT
   try {
     const key = getSessionsStateKey(examId);
     // Merge dengan cache
@@ -320,6 +332,18 @@ export async function sendCbtHeartbeatSupabase(heartbeat: CbtHeartbeatPayload): 
         test_submitted: Boolean(heartbeat.isSubmitted),
         updated_at: new Date().toISOString(),
       }).eq('id', participantId),
+      // Simpan catatan heartbeat ke tabel audit log_ujian jika ID UUID valid
+      (UUID_REGEX.test(examId) ? supabase.from('log_ujian').upsert({
+        id: `log_${examId}_${participantId}`,
+        ujian_id: examId,
+        peserta_id: participantId,
+        nama_peserta: heartbeat.user_id || participantId,
+        nomor_soal_terakhir: heartbeat.current_question || 1,
+        sisa_waktu: heartbeat.remaining_seconds || 0,
+        status_online: heartbeat.connection_status === 'online' ? 'ONLINE' : 'OFFLINE',
+        is_submitted: Boolean(heartbeat.isSubmitted),
+        updated_at: new Date().toISOString(),
+      }) : Promise.resolve(null)),
     ]);
   } catch (err) {
     console.warn('Persist heartbeat to Supabase state notice:', err);
@@ -371,6 +395,15 @@ export async function recordCbtActivityLogSupabase(activity: Omit<CbtActivityLog
       event: 'activity',
       payload: fullItem,
     });
+
+    if (examId !== 'ALL_EXAMS') {
+      const globalCh = getOrCreateParticipantChannel('ALL_EXAMS');
+      globalCh.send({
+        type: 'broadcast',
+        event: 'activity',
+        payload: fullItem,
+      });
+    }
   } catch {}
 
   // 2. Sync to Express API
@@ -476,19 +509,25 @@ export async function fetchCbtLiveMonitoringFromSupabase(
   // 3. Fetch Heartbeats Sessions dari spmb_app_state (Exam Session + Global Sessions)
   let liveSessions: Record<string, CbtHeartbeatPayload> = {};
   try {
-    const keysToFetch = isGlobalExam
-      ? ['cbt_live_all_sessions']
-      : [getSessionsStateKey(examId), 'cbt_live_all_sessions'];
+    let stateRows: any[] = [];
+    if (isGlobalExam) {
+      const { data, error } = await supabase
+        .from('spmb_app_state')
+        .select('key, payload')
+        .like('key', 'cbt_%');
+      if (!error && data) stateRows = data;
+    } else {
+      const { data, error } = await supabase
+        .from('spmb_app_state')
+        .select('key, payload')
+        .in('key', [getSessionsStateKey(examId), 'cbt_live_all_sessions']);
+      if (!error && data) stateRows = data;
+    }
 
-    const { data: stateRows, error: stateErr } = await supabase
-      .from('spmb_app_state')
-      .select('key, payload')
-      .in('key', keysToFetch);
-
-    if (!stateErr && stateRows && stateRows.length > 0) {
+    if (stateRows && stateRows.length > 0) {
       isFromSupabase = true;
       stateRows.forEach((row) => {
-        if (row.payload && typeof row.payload === 'object') {
+        if (row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)) {
           liveSessions = { ...liveSessions, ...row.payload };
         }
       });
@@ -503,7 +542,42 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     }
   }
 
-  // 4. Fallback ambil dari Express API live
+  // 4. Tambahan: Baca detak jantung langsung dari tabel log_ujian di Supabase
+  try {
+    let logQuery = supabase.from('log_ujian').select('*');
+    if (!isGlobalExam && UUID_REGEX.test(examId)) {
+      logQuery = logQuery.eq('ujian_id', examId);
+    }
+    const { data: logData, error: logErr } = await logQuery;
+    if (!logErr && logData && logData.length > 0) {
+      isFromSupabase = true;
+      logData.forEach((row: any) => {
+        const pId = row.peserta_id;
+        if (pId && !liveSessions[pId]) {
+          const totQ = totalExamQuestions || 30;
+          const ansC = answersCountMap[pId] || 0;
+          liveSessions[pId] = {
+            exam_id: row.ujian_id || examId,
+            participant_id: pId,
+            user_id: row.nama_peserta || pId,
+            last_seen_at: row.updated_at,
+            current_question: row.nomor_soal_terakhir || 1,
+            answered_count: ansC,
+            total_questions: totQ,
+            progress_percentage: Math.min(100, Math.round((ansC / totQ) * 100)),
+            remaining_seconds: row.sisa_waktu || 0,
+            session_id: row.id,
+            connection_status: row.status_online?.toLowerCase() === 'online' ? 'online' : 'offline',
+            isSubmitted: Boolean(row.is_submitted),
+          };
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('Failed reading log_ujian:', err);
+  }
+
+  // 5. Fallback ambil dari Express API live
   try {
     const apiPath = isGlobalExam ? '/api/cbt/live-all' : `/api/cbt/live/${examId}`;
     const apiRes = await fetch(apiPath);
@@ -515,13 +589,13 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     }
   } catch {}
 
-  // 5. Fetch Activity Logs dari spmb_app_state
+  // 6. Fetch Activity Logs dari spmb_app_state
   let activityLogs: CbtActivityLogItem[] = [];
   try {
     const { data: actData, error: actErr } = await supabase
       .from('spmb_app_state')
       .select('payload')
-      .eq('key', isGlobalExam ? 'cbt_activities_29ead736-1ef5-4c3e-b287-05ad404c0d9f' : getActivitiesStateKey(examId))
+      .eq('key', isGlobalExam ? 'cbt_activities_7c690ee0-7321-4604-a05d-ea664019bcfc' : getActivitiesStateKey(examId))
       .maybeSingle();
 
     if (!actErr && Array.isArray(actData?.payload)) {
@@ -546,8 +620,54 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     activitiesByParticipant[act.participantId].push(act);
   });
 
-  // 6. Susun Peserta & Evaluasi Status Live Tiap Calon Murid
-  const participants: CbtParticipantLiveStatus[] = allStudents.map((std) => {
+  // 7. Siapkan Daftar Calon Murid (Kombinasi data lokal & Supabase Database)
+  let effectiveStudents = [...allStudents];
+  if (effectiveStudents.length === 0) {
+    try {
+      const { data: dbStudents } = await supabase
+        .from('students')
+        .select('*')
+        .order('full_name', { ascending: true });
+      if (dbStudents && dbStudents.length > 0) {
+        effectiveStudents = dbStudents.map((s: any) => ({
+          id: s.id,
+          fullName: s.full_name || s.name || '',
+          registrationNumber: s.registration_number || '',
+          gender: s.gender || 'Laki-laki',
+          phone: s.phone || '',
+          status: s.status || 'draft',
+          isTestActive: Boolean(s.is_test_active),
+          testSubmitted: Boolean(s.test_submitted),
+          diagnosticScore: s.diagnostic_score,
+          generalScore: s.general_score,
+          religiousScore: s.religious_score,
+          finalScore: s.final_score,
+          updatedAt: s.updated_at,
+        } as any));
+      }
+    } catch {}
+  }
+
+  // Sisipkan peserta yang aktif di sesi live namun belum tercatat di array murid
+  const knownStudentIds = new Set(effectiveStudents.map((s) => s.id));
+  Object.keys(liveSessions).forEach((sessionId) => {
+    if (!knownStudentIds.has(sessionId)) {
+      const sessionItem = liveSessions[sessionId];
+      effectiveStudents.push({
+        id: sessionId,
+        fullName: sessionItem.user_id || `Calon Murid ${sessionId.slice(-4)}`,
+        registrationNumber: sessionId.startsWith('std_') ? sessionId.replace('std_', 'SPMB') : sessionId,
+        gender: 'Laki-laki',
+        status: sessionItem.isSubmitted ? 'test_completed' : 'scheduled_test',
+        isTestActive: !sessionItem.isSubmitted,
+        testSubmitted: Boolean(sessionItem.isSubmitted),
+      } as any);
+      knownStudentIds.add(sessionId);
+    }
+  });
+
+  // 8. Susun Peserta & Evaluasi Status Live Tiap Calon Murid
+  const participants: CbtParticipantLiveStatus[] = effectiveStudents.map((std) => {
     const pId = std.id;
     const session = liveSessions[pId] || liveSessions[std.registrationNumber] || (activeSessionsCache[examId] ? activeSessionsCache[examId][pId] : undefined);
     

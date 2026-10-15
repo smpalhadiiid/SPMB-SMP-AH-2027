@@ -11,9 +11,8 @@
 // - Status Pembayaran: BELUM BAYAR | SEBAGIAN | LUNAS
 // =====================================================================
 
-import { StudentData, BamItem, BamGender, BamInstallmentType, BamPaymentStatus, BamPaymentRecord } from '../types';
+import { StudentData, BamItem, BamGender, BamInstallmentType, BamPaymentStatus } from '../types';
 import { fetchBamItemsFromSupabase, saveBamItemsToSupabase } from './supabaseClient';
-import { getStoredBamPayments } from './storage';
 
 export interface BamBreakdownItem {
   id: string;
@@ -36,7 +35,7 @@ export interface BamInstallmentStep {
 // Fallback seed items jika database kosong saat instalasi awal
 export const DEFAULT_BAM_ITEMS_IKHWAN: BamItem[] = [
   { id: 'bam_ikhwan_1', gender: 'ikhwan', nama_item: 'Dana Pengembangan Sarana & Prasarana', nominal: 4500000, urutan: 1, aktif: true, keterangan: 'Pengembangan sarana prasarana, lab multimedia, dan fasilitas pembelajaran digital' },
-  { id: 'bam_ikhwan_2', gender: 'ikhwan', nama_item: 'Paket Seragam Lengkap Ikhwan (4 Stel)', nominal: 1500000, urutan: 2, aktif: true, keterangan: 'Putih Biru, Pramuka, Batik Khas Al-Hadiid, Kaos Olahraga' },
+  { id: 'bam_ikhwan_2', gender: 'ikhwan', nama_item: 'Paket Seragam Lengkap Ikhwan (5 Stel)', nominal: 1500000, urutan: 2, aktif: true, keterangan: 'Putih Biru, Pramuka, Batik Khas Al-Hadiid, Kaos Olahraga, Busana Muslim' },
   { id: 'bam_ikhwan_3', gender: 'ikhwan', nama_item: 'Buku Paket & Modul Pembelajaran (1 Tahun)', nominal: 1600000, urutan: 3, aktif: true, keterangan: 'Buku teks kurikulum nasional, modul keislaman, Al-Qur\'an tahfidz' },
   { id: 'bam_ikhwan_4', gender: 'ikhwan', nama_item: 'Kegiatan MPLS & Orientasi Santri Rabbani', nominal: 500000, urutan: 4, aktif: true, keterangan: 'Masa Pengenalan Lingkungan Sekolah, asesmen awal karakter santri' },
   { id: 'bam_ikhwan_5', gender: 'ikhwan', nama_item: 'Ekstrakurikuler Wajib & Pilihan (1 Tahun)', nominal: 600000, urutan: 5, aktif: true, keterangan: 'Tahfidz intensif, Pramuka SIT, Panahan, Futsal, Silat, Bahasa' },
@@ -46,7 +45,7 @@ export const DEFAULT_BAM_ITEMS_IKHWAN: BamItem[] = [
 
 export const DEFAULT_BAM_ITEMS_AKHWAT: BamItem[] = [
   { id: 'bam_akhwat_1', gender: 'akhwat', nama_item: 'Dana Pengembangan Sarana & Prasarana', nominal: 4500000, urutan: 1, aktif: true, keterangan: 'Pengembangan sarana prasarana, lab multimedia, dan fasilitas pembelajaran digital' },
-  { id: 'bam_akhwat_2', gender: 'akhwat', nama_item: 'Paket Seragam Lengkap Akhwat + Jilbab Syar\'i (4 Stel)', nominal: 1720000, urutan: 2, aktif: true, keterangan: 'Putih Biru + Jilbab, Pramuka, Batik Al-Hadiid, Kaos Olahraga' },
+  { id: 'bam_akhwat_2', gender: 'akhwat', nama_item: 'Paket Seragam Lengkap Akhwat + Jilbab Syar\'i (5 Stel)', nominal: 1720000, urutan: 2, aktif: true, keterangan: 'Putih Biru + Jilbab, Pramuka, Batik Al-Hadiid, Kaos Olahraga, Gamis Muslimah' },
   { id: 'bam_akhwat_3', gender: 'akhwat', nama_item: 'Buku Paket & Modul Pembelajaran (1 Tahun)', nominal: 1600000, urutan: 3, aktif: true, keterangan: 'Buku teks kurikulum nasional, modul keislaman, Al-Qur\'an tahfidz' },
   { id: 'bam_akhwat_4', gender: 'akhwat', nama_item: 'Kegiatan MPLS & Orientasi Santri Rabbani', nominal: 500000, urutan: 4, aktif: true, keterangan: 'Masa Pengenalan Lingkungan Sekolah, asesmen awal karakter santri' },
   { id: 'bam_akhwat_5', gender: 'akhwat', nama_item: 'Ekstrakurikuler Wajib & Keputrian (1 Tahun)', nominal: 600000, urutan: 5, aktif: true, keterangan: 'Tahfidz intensif, Pramuka SIT, Keputrian, Seni Kaligrafi, Bahasa' },
@@ -151,162 +150,33 @@ export function normalizeBamGender(genderOrStudent?: any): BamGender {
   return 'ikhwan';
 }
 
-export interface BamDiscountCategory {
-  id: string;
-  name: string;
-  shortLabel: string;
-  defaultAmount: number;
-  description: string;
-  badgeColor: string;
-}
-
 /**
- * Daftar Resmi Kategori Potongan Biaya Awal Masuk (BAM) SPMB SMPS Al-Hadiid
+ * Mendapatkan Total Tagihan BAM spesifik sesuai data upload/Supabase untuk gender calon murid.
+ * IKHWAN dan AKHWAT dihitung dari item BAM aktif masing-masing gender.
  */
-export const BAM_DISCOUNT_CATEGORIES: BamDiscountCategory[] = [
-  {
-    id: 'none',
-    name: 'Reguler (Tanpa Potongan)',
-    shortLabel: 'Reguler',
-    defaultAmount: 0,
-    description: 'Biaya BAM penuh sesuai ketentuan umum tanpa potongan',
-    badgeColor: 'bg-slate-100 text-slate-700 border-slate-300',
-  },
-  {
-    id: 'internal',
-    name: 'Siswa Internal (Alumni SD Al-Hadiid)',
-    shortLabel: 'Internal SD Al-Hadiid',
-    defaultAmount: 1000000,
-    description: 'Potongan khusus bagi lulusan SD Islam Al-Hadiid Cileungsi',
-    badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-  },
-  {
-    id: 'sibling',
-    name: 'Saudara Kandung (Kakak/Adik di Al-Hadiid)',
-    shortLabel: 'Saudara Kandung',
-    defaultAmount: 500000,
-    description: 'Potongan bagi calon murid yang memiliki saudara kandung aktif bersekolah di Yayasan Al-Hadiid',
-    badgeColor: 'bg-blue-100 text-blue-800 border-blue-300',
-  },
-  {
-    id: 'prestasi',
-    name: 'Jalur Prestasi (Tahfidz / Akademik / Olahraga)',
-    shortLabel: 'Prestasi',
-    defaultAmount: 1000000,
-    description: 'Apresiasi bagi calon murid berprestasi tahfidz minimal 1 Juz, OSN, atau kejuaraan resmi',
-    badgeColor: 'bg-purple-100 text-purple-800 border-purple-300',
-  },
-  {
-    id: 'afirmasi',
-    name: 'Afirmasi (Yatim / Dhuafa / KIP)',
-    shortLabel: 'Afirmasi / Yatim',
-    defaultAmount: 1500000,
-    description: 'Bantuan keringanan biaya bagi santri yatim, keluarga dhuafa, atau penerima KIP',
-    badgeColor: 'bg-amber-100 text-amber-800 border-amber-300',
-  },
-  {
-    id: 'lunas_langsung',
-    name: 'Pelunasan Sekaligus (100% Saat Daftar Ulang)',
-    shortLabel: 'Pelunasan Lunas',
-    defaultAmount: 500000,
-    description: 'Potongan apresiasi bagi calon santri yang melunasi seluruh BAM saat daftar ulang',
-    badgeColor: 'bg-teal-100 text-teal-800 border-teal-300',
-  },
-  {
-    id: 'yayasan',
-    name: 'Khusus / Rekomendasi Pimpinan Yayasan',
-    shortLabel: 'Rekomendasi Yayasan',
-    defaultAmount: 1000000,
-    description: 'Potongan khusus atas pertimbangan kebijakan pimpinan Yayasan Al-Hadiid',
-    badgeColor: 'bg-rose-100 text-rose-800 border-rose-300',
-  },
-  {
-    id: 'custom',
-    name: 'Kategori Lainnya (Nominal Custom)',
-    shortLabel: 'Custom',
-    defaultAmount: 0,
-    description: 'Kategori potongan lain dengan nominal yang ditentukan secara fleksibel',
-    badgeColor: 'bg-indigo-100 text-indigo-800 border-indigo-300',
-  },
-];
-
-/**
- * Mencari data kategori potongan berdasarkan ID atau nama
- */
-export function getBamDiscountCategory(categoryIdOrName?: string): BamDiscountCategory {
-  if (!categoryIdOrName) return BAM_DISCOUNT_CATEGORIES[0];
-  const q = String(categoryIdOrName).toLowerCase().trim();
-  const found = BAM_DISCOUNT_CATEGORIES.find(
-    c => c.id.toLowerCase() === q ||
-         c.name.toLowerCase() === q ||
-         c.shortLabel.toLowerCase() === q
-  );
-  return found || BAM_DISCOUNT_CATEGORIES[0];
-}
-
-/**
- * Menghitung nominal potongan BAM seorang murid
- */
-export function getStudentBamDiscountAmount(student?: Partial<StudentData> | null): number {
-  if (!student) return 0;
-
-  // 1. Jika nominal potongan sudah dispesifikasi eksplisit
-  if (student.bamDiscountAmount !== undefined && student.bamDiscountAmount !== null && !isNaN(Number(student.bamDiscountAmount))) {
-    return Math.max(0, Number(student.bamDiscountAmount));
-  }
-
-  // 2. Jika kategori potongan dipilih
-  if (student.bamDiscountCategory && student.bamDiscountCategory !== 'none') {
-    const cat = getBamDiscountCategory(student.bamDiscountCategory);
-    return cat.defaultAmount || 0;
-  }
-
-  // 3. Jalur Internal SD Al-Hadiid bawaan
-  if (getStudentCategory(student) === 'Internal') {
-    return 1000000;
-  }
-
-  return 0;
-}
-
-/**
- * Mendapatkan Biaya Dasar Pokok BAM sebelum potongan sesuai gender murid dari Supabase
- */
-export function getBaseBamCost(categoryOrStudent?: 'Internal' | 'Eksternal' | Partial<StudentData> | string | null): number {
+export function getTotalBamCost(categoryOrStudent?: 'Internal' | 'Eksternal' | Partial<StudentData> | string | null): number {
   if (!categoryOrStudent) {
     return calculateTotalFromItems(cachedIkhwanItems);
   }
+
+  // Jika input berupa student object
   if (typeof categoryOrStudent === 'object') {
     const gender = normalizeBamGender(categoryOrStudent);
     const items = getLoadedBamItems(gender);
     return calculateTotalFromItems(items);
   }
+
+  // Jika string mengindikasikan gender
   const str = String(categoryOrStudent).toLowerCase();
   if (str.includes('perempuan') || str.includes('akhwat')) {
     return calculateTotalFromItems(cachedAkhwatItems);
   }
+  if (str.includes('laki') || str.includes('ikhwan')) {
+    return calculateTotalFromItems(cachedIkhwanItems);
+  }
+
+  // Fallback ke ikhwan default
   return calculateTotalFromItems(cachedIkhwanItems);
-}
-
-/**
- * Mendapatkan Total Tagihan Bersih BAM setelah dikurangi potongan kategori calon murid.
- * IKHWAN dan AKHWAT dihitung dari item BAM aktif masing-masing gender.
- */
-export function getTotalBamCost(categoryOrStudent?: 'Internal' | 'Eksternal' | Partial<StudentData> | string | null): number {
-  const baseCost = getBaseBamCost(categoryOrStudent);
-
-  // Jika input berupa student object
-  if (typeof categoryOrStudent === 'object' && categoryOrStudent !== null) {
-    const discount = getStudentBamDiscountAmount(categoryOrStudent);
-    return Math.max(0, baseCost - discount);
-  }
-
-  // Kompatibilitas string 'Internal'
-  if (categoryOrStudent === 'Internal') {
-    return Math.max(0, baseCost - 1000000);
-  }
-
-  return baseCost;
 }
 
 /**
@@ -410,85 +280,3 @@ export const BAM_INSTALLMENT_STEPS: BamInstallmentStep[] = [
     notes: 'Pelunasan total sisa tagihan Biaya Awal Masuk (BAM)',
   },
 ];
-
-export interface StudentBamSummaryResult {
-  totalBam: number;
-  amountPaid: number;
-  remaining: number;
-  status: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS';
-  isLunas: boolean;
-  isAngsuran: boolean;
-  matchingPayments: BamPaymentRecord[];
-  latestPaymentDate?: string;
-  installmentName: string;
-}
-
-/**
- * Sinkronisasi & perhitungan real-time status pembayaran BAM calon murid
- * sesuai data pembayaran terverifikasi Panitia Admin di menu Biaya Awal Masuk.
- */
-export function computeStudentBamSummary(
-  student?: any,
-  records?: BamPaymentRecord[]
-): StudentBamSummaryResult {
-  if (!student) {
-    return {
-      totalBam: 0,
-      amountPaid: 0,
-      remaining: 0,
-      status: 'BELUM BAYAR',
-      isLunas: false,
-      isAngsuran: false,
-      matchingPayments: [],
-      latestPaymentDate: undefined,
-      installmentName: 'Belum Bayar',
-    };
-  }
-
-  const allRecords = records || (typeof window !== 'undefined' ? getStoredBamPayments() : []);
-  const totalBam = getTotalBamCost(student);
-
-  // Cari seluruh transaksi pembayaran BAM terverifikasi milik siswa ini
-  const matchingPayments = allRecords.filter(
-    b => (student.id && b.studentId === student.id) ||
-         (student.registrationNumber && b.registrationNumber === student.registrationNumber) ||
-         (student.fullName && b.studentName && b.studentName.toLowerCase() === student.fullName.toLowerCase())
-  );
-
-  let paid = matchingPayments.reduce((acc, p) => acc + (Number(p.amountPaid) || 0), 0);
-  if (student.initialPaymentAmount && Number(student.initialPaymentAmount) > paid) {
-    if (student.initialPaymentStatus === 'verified' || student.status === 're_registered' || student.status === 're_registration_paid') {
-      paid = Number(student.initialPaymentAmount) || 0;
-    }
-  }
-
-  const remaining = calculateBamRemaining(totalBam, paid);
-  let paymentStatus: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS' = getBamPaymentStatus(totalBam, paid);
-
-  if (student.status === 're_registered' || student.status === 're_registration_paid' || (remaining <= 0 && paid > 0)) {
-    paymentStatus = 'LUNAS';
-  } else if (matchingPayments.some(p => p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas')) {
-    paymentStatus = 'LUNAS';
-  } else if (paid > 0 && remaining > 0) {
-    paymentStatus = 'SEBAGIAN';
-  } else if (student.initialPaymentStatus === 'verified' && paid > 0) {
-    paymentStatus = remaining <= 0 ? 'LUNAS' : 'SEBAGIAN';
-  }
-
-  const isLunas = paymentStatus === 'LUNAS' || (paid >= totalBam && totalBam > 0);
-  const isAngsuran = !isLunas && (paymentStatus === 'SEBAGIAN' || (paid > 0 && remaining > 0));
-  const latestPaymentDate = matchingPayments[0]?.paymentDate || student.initialPaymentDate || undefined;
-  const installmentName = matchingPayments[0]?.installmentType || (isLunas ? 'Lunas' : (isAngsuran ? 'Angsuran / Cicilan' : 'Belum Bayar'));
-
-  return {
-    totalBam,
-    amountPaid: paid,
-    remaining,
-    status: isLunas ? 'LUNAS' : (isAngsuran ? 'SEBAGIAN' : 'BELUM BAYAR'),
-    isLunas,
-    isAngsuran,
-    matchingPayments,
-    latestPaymentDate,
-    installmentName,
-  };
-}

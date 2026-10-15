@@ -569,6 +569,9 @@ export function getStoredBamPayments(): BamPaymentRecord[] {
 export function saveBamPayments(records: BamPaymentRecord[]): void {
   safeSetItem(KEYS.BAM_PAYMENTS, JSON.stringify(records));
   syncBamPaymentsToSupabase(records);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('spmb_bam_payments_updated', { detail: records }));
+  }
 }
 
 export function exportAllDataAsBackup(): string {

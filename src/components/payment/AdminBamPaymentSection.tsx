@@ -37,7 +37,6 @@ import {
   saveSchoolInfo,
 } from '../../utils/storage';
 import { PaymentRepository } from '../../repositories/PaymentRepository';
-import { StudentRepository } from '../../repositories/StudentRepository';
 import {
   BAM_CONFIG,
   DEFAULT_BAM_ITEMS_IKHWAN,
@@ -51,9 +50,6 @@ import {
   getBamPaymentStatus,
   normalizeBamGender,
   getStudentCategory,
-  getBamDiscountCategory,
-  getStudentBamDiscountAmount,
-  BAM_DISCOUNT_CATEGORIES,
 } from '../../utils/bamPricing';
 import {
   fetchBamItemsFromSupabase,
@@ -66,7 +62,7 @@ import {
   Calendar, DollarSign, Calculator, Trash2, Database, Pencil,
   Upload, Download, Save, AlertCircle, Info, Eye, Layers, ShieldCheck,
   Image as ImageIcon, ZoomIn, RefreshCw, Check, RotateCcw,
-  AlertTriangle, FileSpreadsheet, X, UserCheck, User, CreditCard, Sparkles
+  AlertTriangle, FileSpreadsheet, X, UserCheck, User, CreditCard
 } from 'lucide-react';
 import { PaymentProofModal, ProofModalData } from './PaymentProofModal';
 import { PaymentProofThumbnail } from './PaymentProofThumbnail';
@@ -521,10 +517,10 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       },
       {
         kategori: 'ikhwan',
-        nama_item: 'Paket Seragam Lengkap Ikhwan (4 Stel)',
+        nama_item: 'Paket Seragam Lengkap Ikhwan (5 Stel)',
         nominal: 1500000,
         urutan: 2,
-        keterangan: 'Putih Biru, Pramuka, Batik, Olahraga',
+        keterangan: 'Putih Biru, Pramuka, Batik, Olahraga, Muslim',
       },
       {
         kategori: 'akhwat',
@@ -535,10 +531,10 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       },
       {
         kategori: 'akhwat',
-        nama_item: 'Paket Seragam Lengkap Akhwat + Jilbab Syar\'i (4 Stel)',
+        nama_item: 'Paket Seragam Lengkap Akhwat + Jilbab Syar\'i (5 Stel)',
         nominal: 1720000,
         urutan: 2,
-        keterangan: 'Putih Biru + Jilbab, Pramuka, Batik, Olahraga',
+        keterangan: 'Putih Biru + Jilbab, Pramuka, Batik, Olahraga, Gamis',
       },
     ];
 
@@ -680,7 +676,6 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
   const [searchStudentQuery, setSearchStudentQuery] = useState('');
   const [filterStudentGender, setFilterStudentGender] = useState<'all' | 'ikhwan' | 'akhwat'>('all');
   const [filterStudentStatus, setFilterStudentStatus] = useState<string>('all');
-  const [filterStudentDiscount, setFilterStudentDiscount] = useState<string>('all');
 
   const filteredStudentSummaries = useMemo(() => {
     return studentBamSummaries.filter(row => {
@@ -690,10 +685,6 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
       // Filter Status
       if (filterStudentStatus !== 'all' && row.status !== filterStudentStatus) return false;
-
-      // Filter Potongan
-      if (filterStudentDiscount === 'has_discount' && getStudentBamDiscountAmount(row.student) <= 0) return false;
-      if (filterStudentDiscount === 'no_discount' && getStudentBamDiscountAmount(row.student) > 0) return false;
 
       // Filter Search
       if (searchStudentQuery.trim()) {
@@ -705,79 +696,18 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
       return true;
     });
-  }, [studentBamSummaries, filterStudentGender, filterStudentStatus, filterStudentDiscount, searchStudentQuery]);
+  }, [studentBamSummaries, filterStudentGender, filterStudentStatus, searchStudentQuery]);
 
   const handleResetStudentFilter = () => {
     setSearchStudentQuery('');
     setFilterStudentGender('all');
     setFilterStudentStatus('all');
-    setFilterStudentDiscount('all');
   };
 
   // -------------------------------------------------------------------
   // 5. MODAL RINCIAN PEMBAYARAN PER CALON MURID (SECTION L & S)
   // -------------------------------------------------------------------
   const [selectedStudentSummary, setSelectedStudentSummary] = useState<StudentBamSummary | null>(null);
-
-  // State khusus pengelolaan kategori potongan oleh Panitia
-  const [isEditingDiscount, setIsEditingDiscount] = useState(false);
-  const [discountCatInput, setDiscountCatInput] = useState<string>('none');
-  const [discountAmtInput, setDiscountAmtInput] = useState<number>(0);
-  const [discountNotesInput, setDiscountNotesInput] = useState<string>('');
-  const [isSavingDiscount, setIsSavingDiscount] = useState(false);
-  const [discountSuccessMsg, setDiscountSuccessMsg] = useState<string>('');
-
-  const handleOpenStudentDetailModal = (summary: StudentBamSummary) => {
-    setSelectedStudentSummary(summary);
-    setDiscountCatInput(summary.student.bamDiscountCategory || 'none');
-    setDiscountAmtInput(summary.student.bamDiscountAmount ?? getStudentBamDiscountAmount(summary.student));
-    setDiscountNotesInput(summary.student.bamDiscountNotes || '');
-    setIsEditingDiscount(false);
-    setDiscountSuccessMsg('');
-  };
-
-  const handleSaveStudentDiscount = async () => {
-    if (!selectedStudentSummary) return;
-    setIsSavingDiscount(true);
-    setDiscountSuccessMsg('');
-    try {
-      const updatedFields: Partial<StudentData> = {
-        bamDiscountCategory: discountCatInput,
-        bamDiscountAmount: Number(discountAmtInput) || 0,
-        bamDiscountNotes: discountNotesInput.trim(),
-      };
-
-      const targetStudent = selectedStudentSummary.student;
-      await StudentRepository.update(targetStudent.id, updatedFields);
-
-      // Sinkronkan ke daftar state students utama
-      const updatedStudents = students.map(st => st.id === targetStudent.id ? { ...st, ...updatedFields } : st);
-      onUpdateStudents(updatedStudents);
-
-      // Hitung ulang ringkasan BAM calon murid untuk modal aktif
-      const updatedStudentObj = { ...targetStudent, ...updatedFields };
-      const newTotalBam = getTotalBamCost(updatedStudentObj);
-      const newRemaining = calculateBamRemaining(newTotalBam, selectedStudentSummary.amountPaid);
-      const newStatus = getBamPaymentStatus(newTotalBam, selectedStudentSummary.amountPaid);
-
-      setSelectedStudentSummary({
-        ...selectedStudentSummary,
-        student: updatedStudentObj,
-        totalBam: newTotalBam,
-        remaining: newRemaining,
-        status: newStatus,
-      });
-
-      setDiscountSuccessMsg('✓ Kategori potongan BAM berhasil diperbarui.');
-      setTimeout(() => setDiscountSuccessMsg(''), 4000);
-      setIsEditingDiscount(false);
-    } catch (err: any) {
-      console.error('Failed to update student BAM discount:', err);
-      alert('Gagal menyimpan potongan: ' + (err?.message || 'Terjadi kesalahan sistem'));
-    } finally {
-      setIsSavingDiscount(false);
-    }
-  };
 
   // Perhitungan rincian item BAM calon murid yang dipilih
   const selectedStudentItemsBreakdown = useMemo(() => {
@@ -920,7 +850,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
             ...s,
             initialPaymentAmount: newTotalPaid,
             initialPaymentDate: inputPaymentDate,
-            initialPaymentStatus: 'verified' as const,
+            initialPaymentStatus: (newStatus === 'LUNAS' ? 'verified' : 'pending') as any,
             initialPaymentNotes: inputPaymentNotes,
             status: newStatus === 'LUNAS' ? ('re_registered' as const) : s.status,
           };
@@ -1232,20 +1162,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 </select>
               </div>
 
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-slate-600">Potongan:</span>
-                <select
-                  value={filterStudentDiscount}
-                  onChange={e => setFilterStudentDiscount(e.target.value)}
-                  className="border border-slate-300 rounded-lg p-2 text-xs bg-white font-semibold"
-                >
-                  <option value="all">Semua</option>
-                  <option value="has_discount">Ada Potongan</option>
-                  <option value="no_discount">Tanpa Potongan</option>
-                </select>
-              </div>
-
-              {(searchStudentQuery || filterStudentGender !== 'all' || filterStudentStatus !== 'all' || filterStudentDiscount !== 'all') && (
+              {(searchStudentQuery || filterStudentGender !== 'all' || filterStudentStatus !== 'all') && (
                 <button
                   onClick={handleResetStudentFilter}
                   className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer"
@@ -1315,15 +1232,8 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                             {s.gender}
                           </span>
                         </td>
-                        <td className="p-3">
-                          <div className="font-semibold text-slate-900">
-                            Rp {s.totalBam.toLocaleString('id-ID')}
-                          </div>
-                          {getStudentBamDiscountAmount(s.student) > 0 && (
-                            <div className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-0.5 inline-block font-medium">
-                              {getBamDiscountCategory(s.student.bamDiscountCategory).shortLabel}: -Rp {getStudentBamDiscountAmount(s.student).toLocaleString('id-ID')}
-                            </div>
-                          )}
+                        <td className="p-3 font-semibold text-slate-700">
+                          Rp {s.totalBam.toLocaleString('id-ID')}
                         </td>
                         <td className="p-3 font-extrabold text-emerald-700">
                           Rp {s.amountPaid.toLocaleString('id-ID')}
@@ -1376,7 +1286,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                           <div className="flex items-center justify-center gap-1.5">
                             {/* Tombol Lihat Rincian Calon Murid (Section L) */}
                             <button
-                              onClick={() => handleOpenStudentDetailModal(s)}
+                              onClick={() => setSelectedStudentSummary(s)}
                               className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg transition-all text-xs flex items-center gap-1 cursor-pointer"
                               title="Lihat Rincian Seluruh BAM Calon Murid"
                             >
@@ -1781,7 +1691,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                   type="text"
                   value={editingItem.nama_item}
                   onChange={e => setEditingItem({ ...editingItem, nama_item: e.target.value })}
-                  placeholder="Contoh: Paket Seragam Lengkap Ikhwan (4 Stel)"
+                  placeholder="Contoh: Paket Seragam Lengkap Ikhwan (5 Stel)"
                   className="w-full p-2.5 border border-slate-300 rounded-xl font-semibold focus:outline-indigo-500"
                 />
               </div>
@@ -1907,105 +1817,6 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                   }`}>
                     {selectedStudentSummary.status}
                   </span>
-                </div>
-                <div className="sm:col-span-2 pt-2 border-t border-slate-200/80 space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                    <div>
-                      <span className="text-slate-500 text-[11px]">Kategori Potongan BAM:</span>{' '}
-                      <span className="font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px]">
-                        {getBamDiscountCategory(selectedStudentSummary.student.bamDiscountCategory).name}
-                      </span>
-                      {getStudentBamDiscountAmount(selectedStudentSummary.student) > 0 && (
-                        <span className="ml-1.5 text-emerald-700 font-extrabold font-mono text-[11px]">
-                          (-Rp {getStudentBamDiscountAmount(selectedStudentSummary.student).toLocaleString('id-ID')})
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingDiscount(!isEditingDiscount)}
-                      className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1 cursor-pointer w-fit"
-                    >
-                      <Pencil className="w-3 h-3" />
-                      <span>{isEditingDiscount ? 'Tutup Form' : 'Atur / Ubah Potongan'}</span>
-                    </button>
-                  </div>
-
-                  {discountSuccessMsg && (
-                    <div className="p-2 bg-emerald-50 border border-emerald-300 rounded-lg text-emerald-800 text-[11px] font-bold">
-                      {discountSuccessMsg}
-                    </div>
-                  )}
-
-                  {isEditingDiscount && (
-                    <div className="p-3 bg-amber-50/80 border border-amber-300 rounded-xl space-y-2 text-xs">
-                      <div className="font-bold text-amber-950 flex items-center gap-1.5 text-[11px]">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Pengaturan Kategori Potongan BAM (Khusus Admin Panitia)</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Pilihan Kategori</label>
-                          <select
-                            value={discountCatInput}
-                            onChange={(e) => {
-                              const catId = e.target.value;
-                              setDiscountCatInput(catId);
-                              const catObj = getBamDiscountCategory(catId);
-                              if (catId !== 'custom') {
-                                setDiscountAmtInput(catObj.defaultAmount);
-                              }
-                            }}
-                            className="w-full p-1.5 border border-amber-300 rounded-lg bg-white text-xs font-bold text-slate-800"
-                          >
-                            {BAM_DISCOUNT_CATEGORIES.map((cat) => (
-                              <option key={cat.id} value={cat.id}>
-                                {cat.name} {cat.defaultAmount > 0 ? `(-Rp ${cat.defaultAmount.toLocaleString('id-ID')})` : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Nominal Potongan (Rp)</label>
-                          <input
-                            type="number"
-                            value={discountAmtInput}
-                            onChange={(e) => setDiscountAmtInput(Number(e.target.value))}
-                            className="w-full p-1.5 border border-amber-300 rounded-lg bg-white text-xs font-mono font-bold text-emerald-800"
-                            min="0"
-                          />
-                        </div>
-                        <div className="sm:col-span-2">
-                          <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Catatan / Alasan Potongan</label>
-                          <input
-                            type="text"
-                            placeholder="Contoh: Alumni SD Islam Al-Hadiid / Rekomendasi Pimpinan"
-                            value={discountNotesInput}
-                            onChange={(e) => setDiscountNotesInput(e.target.value)}
-                            className="w-full p-1.5 border border-amber-300 rounded-lg bg-white text-xs text-slate-800"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex justify-end gap-2 pt-1 border-t border-amber-200">
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingDiscount(false)}
-                          className="px-3 py-1 bg-white border border-slate-300 rounded-lg text-slate-700 text-xs font-semibold cursor-pointer"
-                        >
-                          Batal
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isSavingDiscount}
-                          onClick={handleSaveStudentDiscount}
-                          className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                        >
-                          <Save className="w-3 h-3" />
-                          <span>{isSavingDiscount ? 'Menyimpan...' : 'Simpan Potongan'}</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

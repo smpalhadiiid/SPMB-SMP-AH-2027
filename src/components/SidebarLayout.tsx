@@ -5,14 +5,12 @@ import {
   CreditCard, Award, CheckCircle2, School, Clock, LogOut,
   Home, Menu, X, ChevronRight, Sparkles, Bell, User,
   MessageSquare, LayoutDashboard, BarChart3, ChevronDown, Settings,
-  Palette, Database, Calendar, BookOpen, Laptop, Lock, Download, Key,
-  Star, ThumbsUp
+  Palette, Database, Calendar, BookOpen, Laptop, Lock, Download, Key
 } from 'lucide-react';
 import { SchoolLogo } from './SchoolLogo';
 import { SupabaseBadge } from './SupabaseBadge';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
 import { getStoredWebsiteConfig } from '../utils/storage';
-import { computeStudentBamSummary } from '../utils/bamPricing';
 
 interface SidebarLayoutProps {
   currentUser: UserAccount | null;
@@ -75,7 +73,6 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
         { id: 'overview', label: 'Ringkasan & Statistik', icon: LayoutDashboard },
         { id: 'account_settings', label: 'Pengaturan Akun Pengguna', icon: Lock },
         { id: 'applicants', label: 'Data Seluruh Pendaftar', icon: Users },
-        { id: 'credentials_recap', label: 'Rekap Akun & Password Murid', icon: Key },
         { id: 'payment_form', label: 'Input & Bayar Formulir', icon: CreditCard },
         { id: 'payment_initial', label: 'Biaya Awal Masuk (BAM)', icon: FileText },
         { id: 'payment_history', label: 'Riwayat Pembayaran (L / P)', icon: BarChart3 },
@@ -116,6 +113,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
         { id: 'reports', label: 'Laporan Pembayaran Formulir & BAM', icon: FileText },
         { id: 'filled_classes', label: 'Data Kelas Terisi', icon: Users },
         { id: 'cbt_monitoring', label: 'Live Monitoring Ujian', icon: Clock },
+        { id: 'cbt_ranking', label: 'Ranking & Hasil CBT', icon: Award },
       ],
     },
     super_admin: {
@@ -129,7 +127,6 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
         { id: 'account_settings', label: 'Pengaturan Akun Pengguna', icon: Lock },
         { id: 'default_credentials', label: 'Ubah Login Default', icon: Key },
         { id: 'applicants', label: 'Data Seluruh Pendaftar', icon: Users },
-        { id: 'credentials_recap', label: 'Rekap Akun & Password Murid', icon: Key },
         { id: 'payment_form', label: 'Input & Bayar Formulir', icon: CreditCard },
         { id: 'payment_initial', label: 'Biaya Awal Masuk (BAM)', icon: FileText },
         { id: 'payment_history', label: 'Riwayat Pembayaran (L / P)', icon: BarChart3 },
@@ -374,37 +371,23 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
                       }
                     } else if (item.id === 'payment_initial') {
                       const isBamUnlocked = studentData.status === 'passed' || studentData.status === 're_registration_paid' || studentData.status === 're_registered' || studentData.status === 'class_assigned';
-                      const bamSummary = computeStudentBamSummary(studentData);
-                      if (bamSummary.isLunas) {
+                      const isLunas = studentData.initialPaymentStatus === 'verified' || studentData.status === 're_registered' || (Number(studentData.initialPaymentAmount) >= 10500000);
+                      const isAngsuran = !isLunas && (Number(studentData.initialPaymentAmount) > 0 || studentData.initialPaymentStatus === 'pending' || studentData.status === 're_registration_paid');
+
+                      if (!isBamUnlocked && !isLunas && !isAngsuran) {
+                        studentBadge = <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-0.5 font-bold"><Lock className="w-2.5 h-2.5 text-amber-500" /> TERKUNCI</span>;
+                      } else if (isLunas) {
                         studentBadge = (
-                          <span className="text-[9px] bg-emerald-500/25 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40 font-bold flex items-center gap-1 shadow-xs">
+                          <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded font-black flex items-center gap-1 shadow-xs" title="Lunas (Tanda Bintang Hijau)">
+                            <span className="text-emerald-400">⭐</span>
                             <span>Lunas</span>
-                            <Star className="w-2.5 h-2.5 fill-emerald-400 text-emerald-400" />
                           </span>
                         );
-                      } else if (bamSummary.isAngsuran) {
+                      } else if (isAngsuran) {
                         studentBadge = (
-                          <span className="text-[9px] bg-amber-500/25 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/40 font-bold flex items-center gap-1 shadow-xs">
-                            <span>Angsuran / Cicilan</span>
-                            <ThumbsUp className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400" />
-                          </span>
-                        );
-                      } else if (studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl) {
-                        studentBadge = (
-                          <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30 font-bold flex items-center gap-1">
-                            <span>Verifikasi</span> ⏳
-                          </span>
-                        );
-                      } else if (!isBamUnlocked) {
-                        studentBadge = (
-                          <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-0.5 font-bold">
-                            <Lock className="w-2.5 h-2.5 text-amber-500" /> TERKUNCI
-                          </span>
-                        );
-                      } else {
-                        studentBadge = (
-                          <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
-                            BAYAR
+                          <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.5 rounded font-black flex items-center gap-1 shadow-xs" title="Angsuran / Cicilan (Tanda Jempol Kuning)">
+                            <span className="text-amber-400">👍</span>
+                            <span>Angsuran</span>
                           </span>
                         );
                       }

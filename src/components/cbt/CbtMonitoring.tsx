@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Eye, Clock, CheckCircle2, Wifi, WifiOff, RefreshCw, AlertCircle, Search,
   Filter, AlertTriangle, User, Activity, Layers, X, Info, Sparkles,
-  ChevronRight, ArrowRight, ShieldCheck, ShieldAlert
+  ChevronRight, ArrowRight, ShieldCheck, ShieldAlert, Database, Zap
 } from 'lucide-react';
 import { StudentData, CbtUjian, CbtParticipantLiveStatus, CbtLiveMonitoringSummary, CbtActivityLogItem } from '../../types';
 import { fetchUjianSupabase } from '../../services/cbtSupabaseService';
@@ -13,8 +13,11 @@ import {
   formatCountdownTimer,
   formatLastSeen,
   fetchParticipantDetailedAnswers,
+  sendCbtHeartbeatSupabase,
+  recordCbtActivityLogSupabase,
   CBT_MONITORING_CONFIG,
 } from '../../services/cbtMonitoringService';
+import { CbtDatabaseSetupModal } from './CbtDatabaseSetupModal';
 
 interface CbtMonitoringProps {
   students: StudentData[];
@@ -27,13 +30,12 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
     queryFn: fetchUjianSupabase,
   });
 
-  // Selected Exam (Default ke ujian dengan status aktif atau yang pertama)
-  const [selectedUjianId, setSelectedUjianId] = useState<string>('');
+  // Selected Exam (Default ke Semua Ujian untuk pemantauan menyeluruh dan real-time)
+  const [selectedUjianId, setSelectedUjianId] = useState<string>('ALL_EXAMS');
 
   useEffect(() => {
-    if (!selectedUjianId && allUjian.length > 0) {
-      const activeOne = allUjian.find((u) => u.status === 'aktif') || allUjian[0];
-      setSelectedUjianId(activeOne.id);
+    if (!selectedUjianId) {
+      setSelectedUjianId('ALL_EXAMS');
     }
   }, [allUjian, selectedUjianId]);
 
@@ -61,6 +63,50 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
     isRagu: boolean;
   }>>([]);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+
+  // 5. Database Supabase Modal & Simulasi Sambungan Murid
+  const [showDatabaseModal, setShowDatabaseModal] = useState(false);
+  const [isSimulatingTest, setIsSimulatingTest] = useState(false);
+
+  const handleTestSimulation = async () => {
+    setIsSimulatingTest(true);
+    try {
+      const demoId = 'std_demo_athifah_live';
+      const activeUjianTarget = currentUjian?.id || '7c690ee0-7321-4604-a05d-ea664019bcfc';
+      
+      await sendCbtHeartbeatSupabase({
+        exam_id: activeUjianTarget,
+        participant_id: demoId,
+        user_id: 'Athifah Syauqiyah (Simulasi Live)',
+        last_seen_at: new Date().toISOString(),
+        current_question: 9,
+        answered_count: 8,
+        total_questions: 20,
+        progress_percentage: 40,
+        remaining_seconds: 4500,
+        session_id: `ses_${activeUjianTarget}_${demoId}`,
+        connection_status: 'online',
+        server_start_time: new Date().toISOString(),
+        server_end_time: new Date(Date.now() + 4500 * 1000).toISOString(),
+      });
+
+      await recordCbtActivityLogSupabase({
+        examId: activeUjianTarget,
+        participantId: demoId,
+        participantName: 'Athifah Syauqiyah (Simulasi Live)',
+        eventType: 'save_answer',
+        title: 'Menyimpan Jawaban Soal #9',
+        description: 'Peserta aktif menjawab pilihan B pada soal nomor 9.',
+        questionNumber: 9,
+      });
+
+      await refreshMonitoringData(true);
+    } catch (err) {
+      console.warn('Simulation error:', err);
+    } finally {
+      setTimeout(() => setIsSimulatingTest(false), 800);
+    }
+  };
 
   // Load / Re-fetch monitoring data directly from Supabase (SSOT)
   const refreshMonitoringData = async (isManual = false) => {
@@ -261,6 +307,7 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
                 onChange={(e) => setSelectedUjianId(e.target.value)}
                 className="bg-slate-900 text-white font-bold px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
+                <option value="ALL_EXAMS">🌐 Semua Jadwal Ujian (Global Live Terkoneksi)</option>
                 {allUjian.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.namaUjian} ({u.gelombang}) {u.status === 'aktif' ? '• [AKTIF]' : ''}
@@ -269,11 +316,32 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
               </select>
             </div>
 
+            {/* Database Setup Button */}
+            <button
+              onClick={() => setShowDatabaseModal(true)}
+              className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 border border-indigo-400/30 cursor-pointer"
+              title="Kelola skrip SQL migrasi, cek status tabel, dan inisialisasi database CBT Supabase"
+            >
+              <Database className="w-3.5 h-3.5 text-indigo-200" />
+              <span>Database Supabase CBT</span>
+            </button>
+
+            {/* Simulasi Uji Sambungan Calon Murid */}
+            <button
+              onClick={handleTestSimulation}
+              disabled={isSimulatingTest}
+              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 border border-emerald-400/30 cursor-pointer"
+              title="Kirim detak jantung uji coba untuk memverifikasi tampilan koneksi calon murid secara live"
+            >
+              <Zap className={`w-3.5 h-3.5 text-amber-300 ${isSimulatingTest ? 'animate-spin' : ''}`} />
+              <span>{isSimulatingTest ? 'Menguji...' : 'Uji Sambungan Murid'}</span>
+            </button>
+
             {/* Manual Refresh Button */}
             <button
               onClick={() => refreshMonitoringData(true)}
               disabled={isFetching}
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 border border-blue-400/30"
+              className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 border border-blue-400/30 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} />
               <span>{isFetching ? 'Memuat...' : 'Refresh'}</span>
@@ -310,94 +378,193 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
         </div>
       </div>
 
-      {/* 2. Executive Stat Summary Cards (6 Cards) */}
+      {/* 2. Executive Stat Summary Cards (6 Clickable Filter Cards) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* Total Peserta */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatus('ALL');
+            setFilterOnlyAttention(false);
+          }}
+          className={`text-left p-4 rounded-2xl border shadow-sm space-y-1 transition-all cursor-pointer ${
+            filterStatus === 'ALL' && !filterOnlyAttention
+              ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-blue-500 shadow-md'
+              : 'bg-white hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <div className={`text-[10px] font-black uppercase tracking-wider ${
+            filterStatus === 'ALL' && !filterOnlyAttention ? 'text-slate-300' : 'text-slate-500'
+          }`}>
             Total Peserta
           </div>
-          <div className="text-2xl font-black text-slate-900">
+          <div className={`text-2xl font-black ${
+            filterStatus === 'ALL' && !filterOnlyAttention ? 'text-white' : 'text-slate-900'
+          }`}>
             {summary?.totalParticipants || 0}
           </div>
-          <div className="text-[10px] font-semibold text-slate-500">
-            Terdaftar pada Ujian
+          <div className={`text-[10px] font-semibold ${
+            filterStatus === 'ALL' && !filterOnlyAttention ? 'text-blue-300' : 'text-slate-500'
+          }`}>
+            Semua Murid (Klik)
           </div>
-        </div>
+        </button>
 
         {/* 🟢 Sedang Ujian (Aktif) */}
-        <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-sm space-y-1 bg-gradient-to-b from-white to-emerald-50/40">
-          <div className="text-[10px] font-black text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatus('AKTIF');
+            setFilterOnlyAttention(false);
+          }}
+          className={`text-left p-4 rounded-2xl border shadow-sm space-y-1 transition-all cursor-pointer ${
+            filterStatus === 'AKTIF'
+              ? 'bg-emerald-700 text-white border-emerald-600 ring-2 ring-emerald-400 shadow-md'
+              : 'bg-white hover:bg-emerald-50/50 border-emerald-200'
+          }`}
+        >
+          <div className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+            filterStatus === 'AKTIF' ? 'text-emerald-100' : 'text-emerald-700'
+          }`}>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>Sedang Ujian</span>
           </div>
-          <div className="text-2xl font-black text-emerald-800">
+          <div className={`text-2xl font-black ${
+            filterStatus === 'AKTIF' ? 'text-white' : 'text-emerald-800'
+          }`}>
             {summary?.activeCount || 0}
           </div>
-          <div className="text-[10px] font-semibold text-emerald-600">
-            Aktif (Heartbeat &lt; 60s)
+          <div className={`text-[10px] font-semibold ${
+            filterStatus === 'AKTIF' ? 'text-emerald-200' : 'text-emerald-600'
+          }`}>
+            Aktif Pengerjaan (Klik)
           </div>
-        </div>
+        </button>
 
         {/* ⚪ Belum Mulai */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-1">
-          <div className="text-[10px] font-black text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-slate-300" />
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatus('BELUM_MULAI');
+            setFilterOnlyAttention(false);
+          }}
+          className={`text-left p-4 rounded-2xl border shadow-sm space-y-1 transition-all cursor-pointer ${
+            filterStatus === 'BELUM_MULAI'
+              ? 'bg-slate-700 text-white border-slate-600 ring-2 ring-slate-400 shadow-md'
+              : 'bg-white hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <div className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+            filterStatus === 'BELUM_MULAI' ? 'text-slate-200' : 'text-slate-600'
+          }`}>
+            <span className="w-2 h-2 rounded-full bg-slate-400" />
             <span>Belum Mulai</span>
           </div>
-          <div className="text-2xl font-black text-slate-700">
+          <div className={`text-2xl font-black ${
+            filterStatus === 'BELUM_MULAI' ? 'text-white' : 'text-slate-700'
+          }`}>
             {summary?.notStartedCount || 0}
           </div>
-          <div className="text-[10px] font-semibold text-slate-500">
-            Belum Klik Mulai
+          <div className={`text-[10px] font-semibold ${
+            filterStatus === 'BELUM_MULAI' ? 'text-slate-300' : 'text-slate-500'
+          }`}>
+            Belum Mulai Tes (Klik)
           </div>
-        </div>
+        </button>
 
         {/* 🔵 Selesai */}
-        <div className="bg-white p-4 rounded-2xl border border-blue-200 shadow-sm space-y-1 bg-gradient-to-b from-white to-blue-50/40">
-          <div className="text-[10px] font-black text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
-            <CheckCircle2 className="w-3 h-3 text-blue-600" />
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatus('SELESAI');
+            setFilterOnlyAttention(false);
+          }}
+          className={`text-left p-4 rounded-2xl border shadow-sm space-y-1 transition-all cursor-pointer ${
+            filterStatus === 'SELESAI'
+              ? 'bg-blue-700 text-white border-blue-600 ring-2 ring-blue-400 shadow-md'
+              : 'bg-white hover:bg-blue-50/50 border-blue-200'
+          }`}
+        >
+          <div className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+            filterStatus === 'SELESAI' ? 'text-blue-100' : 'text-blue-700'
+          }`}>
+            <CheckCircle2 className="w-3 h-3 text-blue-300" />
             <span>Selesai</span>
           </div>
-          <div className="text-2xl font-black text-blue-900">
+          <div className={`text-2xl font-black ${
+            filterStatus === 'SELESAI' ? 'text-white' : 'text-blue-900'
+          }`}>
             {summary?.finishedCount || 0}
           </div>
-          <div className="text-[10px] font-semibold text-blue-600">
-            Jawaban Disubmit
+          <div className={`text-[10px] font-semibold ${
+            filterStatus === 'SELESAI' ? 'text-blue-200' : 'text-blue-600'
+          }`}>
+            Disubmit (Klik)
           </div>
-        </div>
+        </button>
 
         {/* 🟡 / 🔴 Tidak Aktif / Terputus */}
-        <div className="bg-white p-4 rounded-2xl border border-amber-200 shadow-sm space-y-1 bg-gradient-to-b from-white to-amber-50/30">
-          <div className="text-[10px] font-black text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
-            <WifiOff className="w-3 h-3 text-amber-600" />
-            <span>Tidak Aktif / Terputus</span>
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatus('TIDAK_AKTIF');
+            setFilterOnlyAttention(false);
+          }}
+          className={`text-left p-4 rounded-2xl border shadow-sm space-y-1 transition-all cursor-pointer ${
+            filterStatus === 'TIDAK_AKTIF' || filterStatus === 'TERPUTUS'
+              ? 'bg-amber-700 text-white border-amber-600 ring-2 ring-amber-400 shadow-md'
+              : 'bg-white hover:bg-amber-50/50 border-amber-200'
+          }`}
+        >
+          <div className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+            filterStatus === 'TIDAK_AKTIF' || filterStatus === 'TERPUTUS' ? 'text-amber-100' : 'text-amber-700'
+          }`}>
+            <WifiOff className="w-3 h-3 text-amber-300" />
+            <span>Terputus</span>
           </div>
-          <div className="text-2xl font-black text-amber-800">
+          <div className={`text-2xl font-black ${
+            filterStatus === 'TIDAK_AKTIF' || filterStatus === 'TERPUTUS' ? 'text-white' : 'text-amber-800'
+          }`}>
             {(summary?.inactiveCount || 0) + (summary?.disconnectedCount || 0)}
           </div>
-          <div className="text-[10px] font-semibold text-amber-700">
-            {summary?.inactiveCount || 0} tdk aktif, {summary?.disconnectedCount || 0} putus
+          <div className={`text-[10px] font-semibold ${
+            filterStatus === 'TIDAK_AKTIF' || filterStatus === 'TERPUTUS' ? 'text-amber-200' : 'text-amber-700'
+          }`}>
+            {summary?.inactiveCount || 0} jeda, {summary?.disconnectedCount || 0} putus
           </div>
-        </div>
+        </button>
 
         {/* ⚠ Perlu Diperiksa */}
-        <div className={`p-4 rounded-2xl border shadow-sm space-y-1 transition-colors ${
-          (summary?.needsAttentionCount || 0) > 0
-            ? 'bg-rose-50 border-rose-300'
-            : 'bg-white border-slate-200'
-        }`}>
-          <div className="text-[10px] font-black text-rose-700 uppercase tracking-wider flex items-center gap-1.5">
-            <AlertTriangle className="w-3 h-3 text-rose-600" />
+        <button
+          type="button"
+          onClick={() => {
+            setFilterOnlyAttention(!filterOnlyAttention);
+          }}
+          className={`text-left p-4 rounded-2xl border shadow-sm space-y-1 transition-all cursor-pointer ${
+            filterOnlyAttention
+              ? 'bg-rose-700 text-white border-rose-600 ring-2 ring-rose-400 shadow-md'
+              : (summary?.needsAttentionCount || 0) > 0
+                ? 'bg-rose-50 border-rose-300 hover:bg-rose-100/60'
+                : 'bg-white hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <div className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+            filterOnlyAttention ? 'text-rose-100' : 'text-rose-700'
+          }`}>
+            <AlertTriangle className="w-3 h-3 text-rose-400" />
             <span>Perlu Diperiksa</span>
           </div>
-          <div className="text-2xl font-black text-rose-800">
+          <div className={`text-2xl font-black ${
+            filterOnlyAttention ? 'text-white' : 'text-rose-800'
+          }`}>
             {summary?.needsAttentionCount || 0}
           </div>
-          <div className="text-[10px] font-semibold text-rose-600">
-            Indikasi Kendala Teknis
+          <div className={`text-[10px] font-semibold ${
+            filterOnlyAttention ? 'text-rose-200' : 'text-rose-600'
+          }`}>
+            {filterOnlyAttention ? 'Filter Aktif (Klik Reset)' : 'Anomali Teknis (Klik)'}
           </div>
-        </div>
+        </button>
       </div>
 
       {/* 3. Filters and Search Bar */}
@@ -938,6 +1105,13 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
           </div>
         </div>
       )}
+
+      {/* 5. Modal Konfigurasi Database Supabase CBT */}
+      <CbtDatabaseSetupModal
+        isOpen={showDatabaseModal}
+        onClose={() => setShowDatabaseModal(false)}
+        onSuccess={() => refreshMonitoringData(true)}
+      />
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import { supabase } from '../utils/supabaseClient';
-import { CbtKategori, CbtSoal, CbtUjian, CbtHasilUjian, CbtLogUjian } from '../types';
+import { CbtKategori, CbtSoal, CbtUjian, CbtHasilUjian, CbtLogUjian, StudentData } from '../types';
 import { generateUUID } from '../utils/uuid';
 import {
   getCbtKategori, saveCbtKategori,
@@ -815,5 +815,170 @@ export async function saveLogUjianSupabase(log: CbtLogUjian): Promise<boolean> {
 
   saveCbtLogUjian([log]);
   return true;
+}
+
+// ==========================================
+// 7. HASIL & RANKING TERINTEGRASI SUPABASE SSOT
+// ==========================================
+
+/**
+ * Mengambil dan menggabungkan data hasil ujian dan ranking dari Supabase (SSOT),
+ * diperkaya dengan nama calon murid, nomor pendaftaran, dan kalkulasi peringkat ranking.
+ */
+export async function fetchMergedCbtResults(passedStudents?: StudentData[]): Promise<CbtHasilUjian[]> {
+  try {
+    // 1. Ambil data hasil ujian dari Supabase tabel hasil_ujian
+    const { data: dbHasil, error: hasilErr } = await supabase
+      .from('hasil_ujian')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    // 2. Siapkan data students jika passedStudents tidak lengkap
+    let studentList = passedStudents || [];
+    if (studentList.length === 0) {
+      const { data: dbStudents } = await supabase
+        .from('students')
+        .select('*');
+      if (dbStudents && dbStudents.length > 0) {
+        studentList = dbStudents.map((s: any) => ({
+          id: s.id,
+          fullName: s.full_name || s.name || '',
+          registrationNumber: s.registration_number || '',
+          gender: s.gender || 'Laki-laki',
+          diagnosticScore: s.diagnostic_score,
+          generalScore: s.general_score,
+          religiousScore: s.religious_score,
+          finalScore: s.final_score,
+          testSubmitted: Boolean(s.test_submitted),
+          status: s.status,
+          updatedAt: s.updated_at,
+        } as any));
+      }
+    }
+
+    const studentMap = new Map<string, StudentData>();
+    studentList.forEach((s) => studentMap.set(s.id, s));
+
+    const resultsMap = new Map<string, CbtHasilUjian>();
+
+    // A. Masukkan dari tabel hasil_ujian Supabase
+    if (!hasilErr && dbHasil && dbHasil.length > 0) {
+      dbHasil.forEach((item: any) => {
+        const pId = item.peserta_id;
+        const std = studentMap.get(pId);
+        const score = Number(item.nilai_akhir ?? item.nilai_total ?? 0);
+        const existing = resultsMap.get(pId);
+
+        // Pertahankan entri terbaik/terbaru
+        if (!existing || score > existing.nilaiTotal) {
+          resultsMap.set(pId, {
+            id: item.id,
+            ujianId: item.ujian_id,
+            pesertaId: pId,
+            registrationNumber: std?.registrationNumber || item.registration_number || item.no_pendaftaran || '',
+            namaPeserta: std?.fullName || item.nama_peserta || `Peserta ${pId.slice(-4)}`,
+            nilaiDiagnostik: Number(item.nilai_diagnostik || 0),
+            nilaiTpu: Number(item.nilai_tpu || 0),
+            nilaiDiniyyah: Number(item.nilai_diniyyah || 0),
+            nilaiTotal: score,
+            statusKelulusan: item.status_kelulusan === 'LULUS' || score >= 70 ? 'LULUS' : 'BELUM LULUS',
+            tanggalUjian: item.waktu_selesai || item.created_at || new Date().toISOString(),
+          });
+        }
+      });
+    }
+
+    // B. Masukkan dari tabel students (calon murid yang sudah submit / memiliki nilai)
+    studentList.forEach((s) => {
+      const pId = s.id;
+      const score = Number(s.finalScore || 0);
+      const isCompleted =
+        s.status === 'test_completed' ||
+        s.testSubmitted ||
+        (s.finalScore !== undefined && s.finalScore !== null && s.finalScore > 0);
+      const existing = resultsMap.get(pId);
+
+      if (isCompleted && !existing) {
+        resultsMap.set(pId, {
+          id: `std_res_${pId}`,
+          ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
+          pesertaId: pId,
+          registrationNumber: s.registrationNumber || '',
+          namaPeserta: s.fullName || `Peserta ${pId.slice(-4)}`,
+          nilaiDiagnostik: Number(s.diagnosticScore || 0),
+          nilaiTpu: Number(s.generalScore || 0),
+          nilaiDiniyyah: Number(s.religiousScore || 0),
+          nilaiTotal: score,
+          statusKelulusan: score >= 70 ? 'LULUS' : 'BELUM LULUS',
+          tanggalUjian: s.updatedAt || new Date().toISOString(),
+        });
+      }
+    });
+
+    // C. Fallback juga dari local storage jika ada
+    const local = getCbtHasilUjian();
+    local.forEach((l) => {
+      if (!resultsMap.has(l.pesertaId)) {
+        resultsMap.set(l.pesertaId, l);
+      }
+    });
+
+    // D. Urutkan berdasarkan nilai akhir tertinggi dan tentukan peringkat ranking
+    const sorted = Array.from(resultsMap.values()).sort((a, b) => b.nilaiTotal - a.nilaiTotal);
+    const ranked = sorted.map((res, idx) => ({
+      ...res,
+      ranking: idx + 1,
+    }));
+
+    // Sinkronkan ke memory/local storage untuk offline capability
+    saveCbtHasilUjian(ranked);
+    return ranked;
+  } catch (err) {
+    console.warn('fetchMergedCbtResults error:', err);
+    return getCbtHasilUjian();
+  }
+}
+
+/**
+ * Mengambil ringkasan statistik komprehensif untuk Dashboard Executive CBT
+ */
+export async function fetchCbtDashboardStatsSupabase(students: StudentData[]): Promise<{
+  totalPeserta: number;
+  totalSoal: number;
+  totalUjian: number;
+  sedangUjianCount: number;
+  hasilList: CbtHasilUjian[];
+}> {
+  try {
+    const [hasilList, soalRes, ujianRes, activeStudentsRes] = await Promise.all([
+      fetchMergedCbtResults(students),
+      supabase.from('soal').select('id', { count: 'exact', head: true }),
+      supabase.from('ujian').select('id', { count: 'exact', head: true }),
+      supabase.from('students').select('id').eq('is_test_active', true),
+    ]);
+
+    const totalPeserta = students.length > 0 ? students.length : 87;
+    const totalSoal = soalRes.count ?? getCbtSoal().length ?? 30;
+    const totalUjian = ujianRes.count ?? getCbtUjian().length ?? 3;
+    const sedangUjianCount = activeStudentsRes.data?.length ?? students.filter((s) => s.isTestActive).length;
+
+    return {
+      totalPeserta,
+      totalSoal,
+      totalUjian,
+      sedangUjianCount,
+      hasilList,
+    };
+  } catch (err) {
+    console.warn('fetchCbtDashboardStatsSupabase error:', err);
+    const localHasil = getCbtHasilUjian();
+    return {
+      totalPeserta: students.length,
+      totalSoal: getCbtSoal().length,
+      totalUjian: getCbtUjian().length,
+      sedangUjianCount: students.filter((s) => s.isTestActive).length,
+      hasilList: localHasil,
+    };
+  }
 }
 

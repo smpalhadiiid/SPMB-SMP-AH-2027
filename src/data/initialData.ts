@@ -49,7 +49,7 @@ export const initialSchoolInfo: SchoolInfo = {
 
 export const initialCostBreakdowns: CostBreakdown[] = [
   { id: 'c1', title: 'Dana Sarana & Prasarana', amount: 4500000, amountIkhwan: 4500000, amountAkhwat: 5500000, period: 'Sekali', description: 'Internal: Rp 4.500.000 / Eksternal: Rp 5.500.000 (Fasilitas Multimedia, Lab Komputer & Sarana Belajar)', isMandatory: true },
-  { id: 'c2', title: 'Paket Seragam Lengkap (4 Stel)', amount: 1500000, amountIkhwan: 1500000, amountAkhwat: 1500000, period: 'Sekali', description: 'Sekali - 4 Stel: Putih Biru, Pramuka, Biru Tosca / Batik Al-Hadiid, Olahraga', isMandatory: true },
+  { id: 'c2', title: 'Paket Seragam Lengkap (5 Stel)', amount: 1500000, amountIkhwan: 1500000, amountAkhwat: 1500000, period: 'Sekali', description: 'Sekali - 5 Stel: Putih Biru, Pramuka, Batik Al-Hadiid, Olahraga, Gamis/Koko Rabbani', isMandatory: true },
   { id: 'c3', title: 'Buku Paket & Modul Pembelajaran (1 Tahun)', amount: 1600000, amountIkhwan: 1600000, amountAkhwat: 1600000, period: 'Per Tahun', description: 'Per Tahun - Buku Kurikulum Nasional & Modul Diniyyah Salafush Sholih', isMandatory: true },
   { id: 'c4', title: 'Kegiatan MPLS & Penguatan Karakter', amount: 500000, amountIkhwan: 500000, amountAkhwat: 500000, period: 'Sekali', description: 'Sekali - Masa Pengenalan Lingkungan Sekolah & Orientasi Keislaman', isMandatory: true },
   { id: 'c5', title: 'Ekstrakurikuler Wajib & Pilihan (1 Tahun)', amount: 600000, amountIkhwan: 600000, amountAkhwat: 600000, period: 'Per Tahun', description: 'Per Tahun - Tahfidz Al-Qur\'an, Pramuka SIT, Panahan, Futsal, Robotic Club', isMandatory: true },

@@ -227,16 +227,6 @@ export function mapRowToStudent(
     initialPaymentDate: row.initial_payment_date || undefined,
     initialPaymentNotes: row.initial_payment_notes || undefined,
 
-    // Kategori & Potongan BAM
-    bamDiscountCategory: testAnswersObj?._bamDiscount?.category ||
-      (typeof window !== 'undefined' ? localStorage.getItem(`spmb_bam_disc_cat_${row.id}`) : undefined) ||
-      undefined,
-    bamDiscountAmount: testAnswersObj?._bamDiscount?.amount !== undefined ? Number(testAnswersObj._bamDiscount.amount) :
-      (typeof window !== 'undefined' && localStorage.getItem(`spmb_bam_disc_amt_${row.id}`) ? Number(localStorage.getItem(`spmb_bam_disc_amt_${row.id}`)) : undefined),
-    bamDiscountNotes: testAnswersObj?._bamDiscount?.notes ||
-      (typeof window !== 'undefined' ? localStorage.getItem(`spmb_bam_disc_notes_${row.id}`) : undefined) ||
-      undefined,
-
     // Placement
     assignedClassId: row.assigned_class_id || undefined,
     assignedClassName: row.assigned_class_name || undefined,
@@ -431,24 +421,6 @@ export function mapStudentToRow(s: Partial<StudentData>): Record<string, any> {
       password: s.password || testAnswersObj._accountCredentials?.password,
     };
   }
-
-  // Simpan metadata potongan BAM ke jsonb test_answers dan localStorage
-  if (s.bamDiscountCategory !== undefined || s.bamDiscountAmount !== undefined || s.bamDiscountNotes !== undefined) {
-    testAnswersObj._bamDiscount = {
-      category: s.bamDiscountCategory !== undefined ? s.bamDiscountCategory : testAnswersObj._bamDiscount?.category,
-      amount: s.bamDiscountAmount !== undefined ? s.bamDiscountAmount : testAnswersObj._bamDiscount?.amount,
-      notes: s.bamDiscountNotes !== undefined ? s.bamDiscountNotes : testAnswersObj._bamDiscount?.notes,
-    };
-
-    if (typeof window !== 'undefined' && s.id) {
-      try {
-        if (s.bamDiscountCategory !== undefined) localStorage.setItem(`spmb_bam_disc_cat_${s.id}`, s.bamDiscountCategory);
-        if (s.bamDiscountAmount !== undefined) localStorage.setItem(`spmb_bam_disc_amt_${s.id}`, String(s.bamDiscountAmount));
-        if (s.bamDiscountNotes !== undefined) localStorage.setItem(`spmb_bam_disc_notes_${s.id}`, s.bamDiscountNotes || '');
-      } catch {}
-    }
-  }
-
   if (Object.keys(testAnswersObj).length > 0) {
     row.test_answers = testAnswersObj;
   }

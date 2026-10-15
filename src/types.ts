@@ -147,17 +147,12 @@ export interface StudentData {
     status: string;
   }>;
 
-  // Step 10: Pembayaran Daftar Ulang (Awal Masuk / BAM)
+  // Step 10: Pembayaran Daftar Ulang (Awal Masuk)
   initialPaymentProofUrl?: string;
   initialPaymentDate?: string;
   initialPaymentAmount: number;
   initialPaymentStatus: 'unpaid' | 'pending' | 'verified' | 'rejected';
   initialPaymentNotes?: string;
-
-  // Kategori & Potongan Biaya Awal Masuk (BAM)
-  bamDiscountCategory?: string; // e.g., 'none' | 'internal' | 'sibling' | 'prestasi' | 'afirmasi' | 'lunas_langsung' | 'yayasan' | 'custom'
-  bamDiscountAmount?: number;   // Nominal potongan dalam Rupiah (e.g., 500000, 1000000)
-  bamDiscountNotes?: string;    // Catatan/alasan verifikasi potongan
 
   // Step 11 & 12: Penempatan Kelas
   assignedClassId?: string;
@@ -265,9 +260,6 @@ export interface CbtHeartbeatPayload {
   exam_id: string;
   participant_id: string;
   user_id?: string;
-  student_name?: string;
-  registration_number?: string;
-  isSubmitted?: boolean;
   last_seen_at: string;
   current_question: number;
   answered_count: number;
@@ -278,6 +270,8 @@ export interface CbtHeartbeatPayload {
   connection_status: 'online' | 'offline';
   server_start_time?: string;
   server_end_time?: string;
+  isSubmitted?: boolean;
+  is_submitted?: boolean;
 }
 
 export type CbtActivityEventType =

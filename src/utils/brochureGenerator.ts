@@ -92,18 +92,17 @@ export function generateBrosurSpmbPDF(
   const startX = layout.marginLeft;
   const contentWidth = layout.contentWidth;
   const academicYear = schoolInfo.academicYear || '2027/2028';
-  const academicYearClean = academicYear.replace('/', '-');
 
   // ===================================================================
-  // HALAMAN 1: PROFIL, VISI MISI, PROGRAM UNGGULAN & FASILITAS KAMPUS
+  // HALAMAN 1: PROFIL, VISI MISI, PROGRAM UNGGULAN & FASILITAS
   // ===================================================================
   drawWatermark(doc, 'SMPS AL-HADIID');
 
   let currentY = drawOfficialHeader(doc, {
     schoolInfo,
-    documentTitle: 'BROSUR PANDUAN PENERIMAAN MURID BARU (SPMB)',
-    documentSubtitle: `TAHUN PELAJARAN ${academicYear} • KAMPUS ISLAMI BERKARAKTER & BERPRESTASI`,
-    documentNumber: `BROSUR/SPMB/${academicYearClean}`,
+    documentTitle: 'BROSUR INFORMASI PENERIMAAN MURID BARU (SPMB)',
+    documentSubtitle: `TAHUN PELAJARAN ${academicYear} - KAMPUS ISLAMI BERKARAKTER & BERPRESTASI`,
+    documentNumber: `BROSUR/SPMB/${academicYear.replace('/', '-')}`,
     orientation: 'portrait',
   });
 
@@ -111,177 +110,122 @@ export function generateBrosurSpmbPDF(
 
   // A. PROFIL & VISI MISI SEKOLAH
   currentY = drawSectionTitle(doc, 'A. PROFIL & VISI MISI SEKOLAH', currentY, startX, contentWidth);
-  currentY += 4.5; // Jarak aman setelah judul seksi agar teks tidak bertabrakan
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.2);
   doc.setTextColor(30, 41, 59);
 
-  const profilText = `${schoolInfo.name || 'SMPS AL-HADIID CILEUNGSI'} adalah lembaga pendidikan Islam terpadu jenjang Sekolah Menengah Pertama yang berdedikasi membentuk generasi Robbani yang beraqidah lurus, berakhlak mulia sesuai manhaj salafush sholih, unggul dalam prestasi akademik, mandiri, serta menguasai ilmu pengetahuan dan teknologi. Kami memadukan Kurikulum Merdeka Nasional dengan kurikulum diniyyah kepesantrenan terpadu untuk melahirkan generasi yang bertauhid, tangguh, dan berdaya saing global.`;
+  const profilText = `${schoolInfo.name || 'SMPS AL-HADIID CILEUNGSI'} adalah lembaga pendidikan Islam terpadu jenjang Sekolah Menengah Pertama yang berdedikasi membentuk generasi Robbani yang beraqidah lurus, berakhlak mulia sesuai manhaj salafush sholih, unggul dalam prestasi akademik, mandiri, serta menguasai ilmu pengetahuan dan teknologi. Kami memadukan Kurikulum Merdeka Nasional dengan kurikulum diniyyah kepesantrenan terpadu.`;
   const splitProfil = doc.splitTextToSize(profilText, contentWidth - 4);
   doc.text(splitProfil, startX + 2, currentY);
-  currentY += splitProfil.length * 4.1 + 3.0;
+  currentY += splitProfil.length * 4.0 + 2.5;
 
-  // Kotak Visi & Karakter Unggulan (Tinggi Dinamis & Margin Rapi)
-  const visiText = schoolInfo.tagline || 'Terwujudnya Murid yang memiliki Aqidah yang kuat, berakhlak mulia sesuai manhaj salafush sholih serta menguasai ilmu pengetahuan dan teknologi.';
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7.6);
-  const splitVisi = doc.splitTextToSize(`"${visiText}"`, contentWidth - 14);
-
-  const visiBoxHeight = 13.0 + splitVisi.length * 3.8;
-  doc.setFillColor(248, 250, 252); // slate-50
+  // Kotak Visi & Nilai Utama
+  doc.setFillColor(248, 250, 252);
   doc.setDrawColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
   doc.setLineWidth(0.35);
-  doc.roundedRect(startX, currentY, contentWidth, visiBoxHeight, 2, 2, 'FD');
+  doc.roundedRect(startX + 1, currentY, contentWidth - 2, 13.5, 2, 2, 'FD');
 
-  // Strip aksen vertikal di sisi kiri kotak visi
-  doc.setFillColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
-  doc.rect(startX, currentY, 2.5, visiBoxHeight, 'F');
-
-  // Label Visi
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.8);
+  doc.setFontSize(8);
   doc.setTextColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
-  doc.text('VISI & TARGET MUTU PENDIDIKAN:', startX + 5, currentY + 4.8);
+  doc.text('VISI SEKOLAH:', startX + 4, currentY + 4.5);
 
-  // Teks Isi Visi
   doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.6);
   doc.setTextColor(51, 65, 85);
-  doc.text(splitVisi, startX + 5, currentY + 9.0);
-
-  // Pilar Karakter Utama di bawah teks visi
-  const pilarY = currentY + 9.0 + splitVisi.length * 3.8 + 0.5;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.8);
-  doc.setTextColor(PDF_THEME.colors.accent[0], PDF_THEME.colors.accent[1], PDF_THEME.colors.accent[2]);
-  doc.text('• Karakter Adab Salafush Sholih   • Tahfidz Al-Qur\'an 3 Juz Mutqin   • Berpikir Kritis & Melek Digital', startX + 5, pilarY);
-
-  currentY += visiBoxHeight + 4.0;
+  const visiText = schoolInfo.tagline || 'Terwujudnya Murid yang memiliki Aqidah yang kuat, berakhlak mulia sesuai manhaj salafush sholih serta menguasai ilmu pengetahuan dan teknologi.';
+  const splitVisi = doc.splitTextToSize(`"${visiText}"`, contentWidth - 10);
+  doc.text(splitVisi, startX + 4, currentY + 8.5);
+  currentY += 16.5;
 
   // B. 5 PROGRAM KEUNGGULAN UTAMA
-  currentY = drawSectionTitle(doc, 'B. 5 PROGRAM KEUNGGULAN UTAMA SEKOLAH', currentY, startX, contentWidth);
-  currentY += 4.5;
+  currentY = drawSectionTitle(doc, 'B. 5 PROGRAM UNGGULAN & NILAI LEBIH', currentY, startX, contentWidth);
 
   const programs = [
     {
-      no: '1',
-      title: 'Program Tahfidz & Diniyyah Al-Qur\'an',
-      badge: 'Target 3 Juz Mutqin',
-      desc: 'Target hafalan minimal 3 Juz (Juz 28, 29, 30), bimbingan tahsin metode bersanad teruji, Dauroh Al-Qur\'an intensif, serta sertifikasi tahfidz berkala bagi setiap murid.',
+      title: '1. Program Tahfidz & Diniyyah Al-Qur\'an',
+      desc: 'Target hafalan mutqin minimal 3 Juz (Juz 28, 29, 30), bimbingan tahsin metode teruji, Dauroh Qur\'an intensif, serta sertifikasi tahfidz berkala bagi setiap murid.',
     },
     {
-      no: '2',
-      title: 'Kurikulum Merdeka Terpadu & Pembiasaan Adab Islami',
-      badge: 'Karakter & Akhlak',
-      desc: 'Integrasi Kurikulum Nasional dengan adab Islam: sholat lima waktu berjamaah di masjid kampus, sholat Dhuha, dzikir pagi-petang, serta mentoring adab harian.',
+      title: '2. Kurikulum Merdeka Terpadu & Penguatan Karakter Adab',
+      desc: 'Integrasi Kurikulum Nasional dengan pembiasaan adab Islam: sholat lima waktu berjamaah di masjid sekolah, sholat Dhuha, dzikir pagi-petang, dan mentoring kepemimpinan.',
     },
     {
-      no: '3',
-      title: 'Penguasaan Bahasa Asing Komunikatif (Arab & Inggris)',
-      badge: 'Bilingual Habit',
+      title: '3. Penguasaan Bahasa Asing Komunikatif (Arab & Inggris)',
       desc: 'Pembiasaan kosa kata harian (mufradat & vocabulary), Arabic & English Club, kegiatan muhadatsah rutin, serta bimbingan pidato dan lomba dwibahasa.',
     },
     {
-      no: '4',
-      title: 'Literasi Digital, Laboratorium Komputer & CBT Modern',
-      badge: 'Teknologi & CBT',
-      desc: 'Praktikum komputer terstandar, pengenalan logika coding dasar, robotic club, dan implementasi Computer Based Test (CBT) mandiri untuk seluruh evaluasi sekolah.',
+      title: '4. Literasi Digital, Laboratorium Komputer & CBT Modern',
+      desc: 'Pembelajaran praktikum komputer terstandar, pengenalan logika coding dasar, robotic club, dan implementasi Computer Based Test (CBT) mandiri untuk ujian sekolah.',
     },
     {
-      no: '5',
-      title: 'Ekstrakurikuler Minat Bakat Beragam & Berprestasi',
-      badge: 'Bakat & Prestasi',
-      desc: 'Pramuka SIT, Panahan Sunnah, Futsal Academy, Basket, Bulutangkis, Iqra/Al-Qur\'an, PMR, Pasus, Sains Club, dan Jurnalistik Sekolah.',
+      title: '5. Ekstrakurikuler Minat Bakat Beragam & Berprestasi',
+      desc: 'Pramuka SIT, Panahan Sunnah, Futsal Academy, Basket, Bulutangkis, Seni Hadroh/Marawis, PMR, Pasus, Sains Club, dan Jurnalistik Sekolah.',
     },
   ];
 
   programs.forEach((prog) => {
-    // Nomor / Badge
-    doc.setFillColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
-    doc.roundedRect(startX + 1, currentY - 2.8, 4.8, 4.2, 0.8, 0.8, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(255, 255, 255);
-    doc.text(prog.no, startX + 3.4, currentY + 0.1, { align: 'center' });
-
-    // Judul Program
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.0);
+    doc.setFontSize(8);
     doc.setTextColor(PDF_THEME.colors.primaryDark[0], PDF_THEME.colors.primaryDark[1], PDF_THEME.colors.primaryDark[2]);
-    doc.text(prog.title, startX + 7.8, currentY);
-
-    // Tag Kanan
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.4);
-    doc.setTextColor(PDF_THEME.colors.accent[0], PDF_THEME.colors.accent[1], PDF_THEME.colors.accent[2]);
-    doc.text(`[ ${prog.badge} ]`, startX + contentWidth - 2, currentY, { align: 'right' });
-
+    doc.text(prog.title, startX + 2, currentY);
     currentY += 3.6;
 
-    // Deskripsi Program (Wrapped secara rapi dan presisi)
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.4);
+    doc.setFontSize(7.5);
     doc.setTextColor(71, 85, 105);
-    const splitDesc = doc.splitTextToSize(prog.desc, contentWidth - 10);
-    doc.text(splitDesc, startX + 7.8, currentY);
-    currentY += splitDesc.length * 3.6 + 2.3;
+    const splitDesc = doc.splitTextToSize(prog.desc, contentWidth - 8);
+    doc.text(splitDesc, startX + 6, currentY);
+    currentY += splitDesc.length * 3.6 + 2.0;
   });
 
-  currentY += 1.0;
+  currentY += 1.5;
 
   // C. FASILITAS PENDUKUNG PEMBELAJARAN
   currentY = drawSectionTitle(doc, 'C. FASILITAS PENDUKUNG PEMBELAJARAN KAMPUS', currentY, startX, contentWidth);
-  currentY += 4.5;
 
-  const colWidth = (contentWidth - 4) / 2;
-  const col1Fasilitas = [
+  const colWidth = (contentWidth - 6) / 2;
+  const fasilitasCol1 = [
     '• Ruang Kelas Full AC & Proyektor Multimedia',
     '• Laboratorium Komputer CBT Berkecepatan Tinggi',
-    '• Masjid Kampus Luas untuk Sholat & Tahfidz',
+    '• Masjid Luas untuk Sholat Berjamaah & Tahfidz',
     '• Laboratorium Praktik Sains (IPA Terpadu)',
   ];
-  const col2Fasilitas = [
+  const fasilitasCol2 = [
     '• Perpustakaan Lengkap & Pojok Baca Literasi',
     '• Lapangan Olahraga: Futsal, Basket, Voli & Panahan',
-    '• Ruang Medis UKS & Bimbingan Konseling (BK)',
-    '• Kantin Halal Bersih & Area Parkir Terjaga 24 Jam',
+    '• Ruang UKS Medis & Bimbingan Konseling (BK)',
+    '• Kantin Halal & Sehat serta Area Parkir Terjaga',
   ];
 
-  // Kotak Kolom 1
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.setLineWidth(0.25);
-  doc.roundedRect(startX, currentY - 2.5, colWidth, 19, 1.5, 1.5, 'FD');
-
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.4);
+  doc.setFontSize(7.6);
   doc.setTextColor(30, 41, 59);
+
   let tempY1 = currentY;
-  col1Fasilitas.forEach((f) => {
-    doc.text(f, startX + 3, tempY1);
+  fasilitasCol1.forEach((f) => {
+    doc.text(f, startX + 2, tempY1);
     tempY1 += 4.2;
   });
 
-  // Kotak Kolom 2
-  doc.roundedRect(startX + colWidth + 4, currentY - 2.5, colWidth, 19, 1.5, 1.5, 'FD');
   let tempY2 = currentY;
-  col2Fasilitas.forEach((f) => {
-    doc.text(f, startX + colWidth + 7, tempY2);
+  fasilitasCol2.forEach((f) => {
+    doc.text(f, startX + colWidth + 4, tempY2);
     tempY2 += 4.2;
   });
 
-  currentY += 21.0;
+  currentY = Math.max(tempY1, tempY2) + 3;
 
   // Banner Bawah Hal 1 (Transisi ke Hal 2)
-  doc.setFillColor(236, 253, 245);
-  doc.setDrawColor(16, 185, 129);
+  doc.setFillColor(241, 245, 249);
+  doc.setDrawColor(203, 213, 225);
   doc.setLineWidth(0.3);
   doc.roundedRect(startX, currentY, contentWidth, 7.5, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.6);
-  doc.setTextColor(6, 78, 59);
+  doc.setTextColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
   doc.text(
     'Lanjut ke Halaman 2: Alur 8 Tahap Pendaftaran Online, Rincian Biaya (BAM), Rekening & Kontak Resmi ->',
     startX + contentWidth / 2,
@@ -298,111 +242,57 @@ export function generateBrosurSpmbPDF(
   let currentY2 = drawOfficialHeader(doc, {
     schoolInfo,
     documentTitle: 'INFORMASI PENDAFTARAN & KETENTUAN BIAYA SPMB',
-    documentSubtitle: `PETUNJUK TEKNIS SPMB TP ${academicYear} • TAHAPAN SELEKSI & BIAYA AWAL MASUK (BAM)`,
+    documentSubtitle: `PETUNJUK TEKNIS SPMB TP ${academicYear} - ALUR & BIAYA AWAL MASUK (BAM)`,
     orientation: 'portrait',
     compact: true,
   });
 
-  currentY2 += 2.0;
+  currentY2 += 1.5;
 
   // D. ALUR 8 TAHAPAN PENDAFTARAN ONLINE
   currentY2 = drawSectionTitle(doc, 'D. ALUR 8 TAHAP PENDAFTARAN ONLINE (SPMB)', currentY2, startX, contentWidth);
-  currentY2 += 4.2;
 
   const alurSteps = [
-    {
-      step: '1',
-      title: 'Pembuatan Akun Mandiri',
-      desc: 'Calon murid mendaftarkan username & password mandiri pada portal resmi SPMB sekolah.',
-    },
-    {
-      step: '2',
-      title: 'Pembayaran Formulir',
-      desc: `Melakukan pembayaran formulir Rp ${(schoolInfo.formFee || 200000).toLocaleString('id-ID')} & upload bukti transfer ke portal.`,
-    },
-    {
-      step: '3',
-      title: 'Pengisian Formulir',
-      desc: 'Melengkapi data diri siswa, wali murid, dan berkas KK serta Akta Kelahiran secara online.',
-    },
-    {
-      step: '4',
-      title: 'Verifikasi & Unduh Kartu',
-      desc: 'Panitia memverifikasi berkas pendaftaran, kemudian murid mengunduh Kartu Peserta Ujian.',
-    },
-    {
-      step: '5',
-      title: 'Pelaksanaan Ujian CBT',
-      desc: 'Mengikuti tes potensi akademik, literasi numerasi, dan tes kemampuan membaca Al-Qur\'an.',
-    },
-    {
-      step: '6',
-      title: 'Pengumuman Kelulusan',
-      desc: 'Hasil seleksi diumumkan melalui portal SPMB sekolah serta pesan WhatsApp resmi panitia.',
-    },
-    {
-      step: '7',
-      title: 'Daftar Ulang & Biaya BAM',
-      desc: 'Calon murid yang lulus melakukan pelunasan Biaya Awal Masuk (BAM) sesuai skema pilihan.',
-    },
-    {
-      step: '8',
-      title: 'Penetapan Rombel Kelas 7',
-      desc: 'Administrasi dinyatakan lengkap dan murid resmi ditempatkan di rombel kelas 7.',
-    },
+    { step: '1', title: 'Pembuatan Akun Mandiri:', desc: 'Calon murid mendaftarkan username & password mandiri pada portal resmi SPMB.' },
+    { step: '2', title: 'Pembayaran Formulir:', desc: 'Melakukan pembayaran formulir Rp200.000 & upload bukti transfer ke portal.' },
+    { step: '3', title: 'Pengisian Biodata:', desc: 'Melengkapi data diri siswa, data orang tua/wali, serta mengunggah berkas KK & Akta.' },
+    { step: '4', title: 'Verifikasi & Cetak Kartu:', desc: 'Panitia memverifikasi data dan bukti transfer, murid mengunduh Kartu Peserta Ujian.' },
+    { step: '5', title: 'Pelaksanaan Ujian CBT:', desc: 'Mengikuti tes diagnostik, potensi akademik, membaca Al-Qur\'an & hafalan juz amma.' },
+    { step: '6', title: 'Pengumuman Kelulusan:', desc: 'Hasil seleksi diumumkan secara transparan melalui portal SPMB & pesan WhatsApp resmi.' },
+    { step: '7', title: 'Daftar Ulang & Biaya BAM:', desc: 'Calon murid yang dinyatakan lulus melakukan pembayaran Biaya Awal Masuk (BAM).' },
+    { step: '8', title: 'Penetapan Kelas 7 (Rombel):', desc: 'Verifikasi pembayaran BAM selesai dan murid resmi ditempatkan di rombel kelas 7.' },
   ];
 
-  const colDescX = startX + 54;
-  const colDescWidth = contentWidth - 54;
-
-  alurSteps.forEach((item, idx) => {
-    // Zebra striping untuk baris ganjil
-    if (idx % 2 === 1) {
-      doc.setFillColor(248, 250, 252);
-      doc.rect(startX, currentY2 - 3.0, contentWidth, 4.3, 'F');
-    }
-
-    // Badge Lingkaran Penomoran
+  alurSteps.forEach((item) => {
+    // Lingkaran penomoran
     doc.setFillColor(PDF_THEME.colors.primary[0], PDF_THEME.colors.primary[1], PDF_THEME.colors.primary[2]);
-    doc.circle(startX + 3.2, currentY2 - 0.9, 1.9, 'F');
+    doc.circle(startX + 3.5, currentY2 - 0.7, 2.1, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.4);
+    doc.setFontSize(6.5);
     doc.setTextColor(255, 255, 255);
-    doc.text(item.step, startX + 3.2, currentY2 - 0.3, { align: 'center' });
+    doc.text(item.step, startX + 3.5, currentY2 + 0.8, { align: 'center' });
 
-    // Kolom Judul Tahap (Bold)
+    // Judul Tahap (Bold)
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.2);
+    doc.setFontSize(7.4);
     doc.setTextColor(15, 23, 42);
-    doc.text(item.title, startX + 6.8, currentY2);
+    doc.text(item.title, startX + 7.5, currentY2);
 
-    // Titik Pemisah / Bullet
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.0);
-    doc.setTextColor(148, 163, 184);
-    doc.text('•', startX + 51.5, currentY2);
-
-    // Kolom Deskripsi Tahap (Normal, wrap secara presisi dalam kolomnya)
+    // Deskripsi Tahap (Normal, wrap text)
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.1);
     doc.setTextColor(71, 85, 105);
+    const splitDesc = doc.splitTextToSize(item.desc, contentWidth - 52);
+    doc.text(splitDesc, startX + 50, currentY2);
 
-    const descWidth = doc.getTextWidth(item.desc);
-    if (descWidth <= colDescWidth) {
-      doc.text(item.desc, colDescX, currentY2);
-      currentY2 += 4.2;
-    } else {
-      const splitDesc = doc.splitTextToSize(item.desc, colDescWidth);
-      doc.text(splitDesc, colDescX, currentY2);
-      currentY2 += splitDesc.length * 3.4 + 1.0;
-    }
+    const stepHeight = Math.max(4.2, splitDesc.length * 3.4 + 1.0);
+    currentY2 += stepHeight;
   });
 
-  currentY2 += 1.8;
+  currentY2 += 1.5;
 
   // E. RINCIAN BIAYA AWAL MASUK (BAM) & KETENTUAN PEMBAYARAN
   currentY2 = drawSectionTitle(doc, 'E. BIAYA FORMULIR & RINCIAN BIAYA AWAL MASUK (BAM)', currentY2, startX, contentWidth);
-  currentY2 += 3.2;
 
   // Box Highlight Ringkasan Biaya Utama (Sesuai Landing Page)
   doc.setFillColor(236, 253, 245);
@@ -482,7 +372,7 @@ export function generateBrosurSpmbPDF(
     { no: 1, name: 'Dana Awal Pendidikan (DAP)', ikhwan: 'Rp 4.250.000', akhwat: 'Rp 4.250.000', ket: 'Sekali' },
     { no: 2, name: 'Dana Praktik Komputer', ikhwan: 'Rp 150.000', akhwat: 'Rp 150.000', ket: 'Per Tahun' },
     { no: 3, name: 'Dana Praktik IPA', ikhwan: 'Rp 100.000', akhwat: 'Rp 100.000', ket: 'Per Tahun' },
-    { no: 4, name: 'Perlengkapan / Seragam (Paket 4 Stel)*', ikhwan: 'Rp 700.000', akhwat: 'Rp 920.000', ket: 'Sekali', isHighlight: true },
+    { no: 4, name: 'Perlengkapan / Seragam (Paket 3 Stel)*', ikhwan: 'Rp 700.000', akhwat: 'Rp 920.000', ket: 'Sekali', isHighlight: true },
     { no: 5, name: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', ikhwan: 'Rp 425.000', akhwat: 'Rp 425.000', ket: 'Per Bulan (Juli)' },
     { no: 6, name: 'Tabungan Wajib', ikhwan: 'Rp 25.000', akhwat: 'Rp 25.000', ket: 'Per Bulan' },
     { no: 7, name: 'MPLS / Masa Pengenalan Lingkungan Sekolah', ikhwan: 'Rp 100.000', akhwat: 'Rp 100.000', ket: 'Sekali' },
@@ -499,170 +389,125 @@ export function generateBrosurSpmbPDF(
     const isZebra = idx % 2 === 1;
     if (row.isHighlight) {
       doc.setFillColor(254, 243, 199); // amber-100
-      doc.rect(startX, currentY2, contentWidth, 3.7, 'F');
+      doc.rect(startX, currentY2, contentWidth, 3.8, 'F');
     } else if (isZebra) {
       doc.setFillColor(248, 250, 252);
-      doc.rect(startX, currentY2, contentWidth, 3.7, 'F');
+      doc.rect(startX, currentY2, contentWidth, 3.8, 'F');
     }
 
     doc.setFont('helvetica', row.isHighlight ? 'bold' : 'normal');
     doc.setTextColor(15, 23, 42);
-    doc.text(String(row.no), startX + 3.5, currentY2 + 2.6, { align: 'center' });
-    doc.text(row.name, startX + 11, currentY2 + 2.6);
+    doc.text(String(row.no), startX + 3.5, currentY2 + 2.7, { align: 'center' });
+    doc.text(row.name, startX + 11, currentY2 + 2.7);
 
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(15, 118, 110);
-    doc.text(row.ikhwan, startX + 105, currentY2 + 2.6, { align: 'right' });
-    doc.text(row.akhwat, startX + 140, currentY2 + 2.6, { align: 'right' });
+    doc.text(row.ikhwan, startX + 105, currentY2 + 2.7, { align: 'right' });
+    doc.text(row.akhwat, startX + 140, currentY2 + 2.7, { align: 'right' });
 
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(71, 85, 105);
-    doc.text(row.ket, startX + 162, currentY2 + 2.6, { align: 'center' });
+    doc.text(row.ket, startX + 162, currentY2 + 2.7, { align: 'center' });
 
     doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.15);
-    doc.line(startX, currentY2 + 3.7, startX + contentWidth, currentY2 + 3.7);
+    doc.line(startX, currentY2 + 3.8, startX + contentWidth, currentY2 + 3.8);
 
-    currentY2 += 3.7;
+    currentY2 += 3.8;
   });
 
   // Baris Total BAM (Highlight Hijau Tua)
   doc.setFillColor(6, 78, 59); // emerald-900
-  doc.rect(startX, currentY2, contentWidth, 4.6, 'F');
+  doc.rect(startX, currentY2, contentWidth, 4.8, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.2);
   doc.setTextColor(255, 255, 255);
-  doc.text('TOTAL BIAYA AWAL MASUK (BAM):', startX + 11, currentY2 + 3.3);
+  doc.text('TOTAL BIAYA AWAL MASUK (BAM):', startX + 11, currentY2 + 3.4);
   doc.setTextColor(253, 224, 71); // yellow-300
-  doc.text('Rp 6.670.000', startX + 105, currentY2 + 3.3, { align: 'right' });
-  doc.text('Rp 6.890.000', startX + 140, currentY2 + 3.3, { align: 'right' });
+  doc.text('Rp 6.670.000', startX + 105, currentY2 + 3.4, { align: 'right' });
+  doc.text('Rp 6.890.000', startX + 140, currentY2 + 3.4, { align: 'right' });
   doc.setTextColor(209, 250, 229);
   doc.setFontSize(6.4);
-  doc.text('Awal Masuk', startX + 162, currentY2 + 3.3, { align: 'center' });
-  currentY2 += 6.0;
+  doc.text('Awal Masuk', startX + 162, currentY2 + 3.4, { align: 'center' });
+  currentY2 += 6.5;
 
-  // Kotak Informasi Catatan Seragam & Skema Cicilan (Rapi, Tidak Terpotong)
-  const noteBoxHeight = 11.2;
-  doc.setFillColor(254, 252, 232); // amber-50
-  doc.setDrawColor(251, 191, 36); // amber-400
-  doc.setLineWidth(0.25);
-  doc.roundedRect(startX, currentY2, contentWidth, noteBoxHeight, 1.5, 1.5, 'FD');
-
-  // Baris 1: Catatan Paket Seragam
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(180, 83, 9); // amber-700
-  doc.text('* Ketentuan Seragam:', startX + 3.0, currentY2 + 4.0);
-  const seragamLabelW = doc.getTextWidth('* Ketentuan Seragam:');
-
+  // Catatan Seragam & Skema Cicilan
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(51, 65, 85);
-  const seragamDesc = 'Paket 4 stel lengkap (Putih Biru, Biru Tosca, Pramuka, Olahraga). Siswi (Akhwat) mendapatkan jilbab & rok syar\'i.';
-  doc.text(seragamDesc, startX + 4.5 + seragamLabelW, currentY2 + 4.0);
-
-  // Baris 2: Skema Pembayaran
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(180, 83, 9);
-  doc.text('* Skema Pembayaran:', startX + 3.0, currentY2 + 8.2);
-  const skemaLabelW = doc.getTextWidth('* Skema Pembayaran:');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(51, 65, 85);
-  const skemaDesc = 'Pilihan 1 Langsung Lunas saat daftar ulang, atau Pilihan 2 Bertahap (Tahap 1 min. Rp 3.500.000 saat daftar ulang, pelunasan sebelum KBM).';
-  doc.text(skemaDesc, startX + 4.5 + skemaLabelW, currentY2 + 8.2);
-
-  currentY2 += noteBoxHeight + 3.0;
+  doc.setFontSize(6.6);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    '*Catatan: Paket seragam meliputi 3 stel lengkap (Putih Biru, Biru Tosca, dan Pramuka). Putri (Akhwat) mendapatkan jilbab & rok syar\'i.',
+    startX + 1,
+    currentY2
+  );
+  currentY2 += 3.2;
+  doc.text(
+    'Skema Pembayaran: Pilihan 1 Langsung Lunas saat daftar ulang, atau Pilihan 2 Bertahap (Tahap 1 min. Rp 3.500.000 saat daftar ulang, pelunasan sebelum KBM dimulai).',
+    startX + 1,
+    currentY2
+  );
+  currentY2 += 4.5;
 
   // F. REKENING RESMI & INFORMASI KONTAK
   currentY2 = drawSectionTitle(doc, 'F. REKENING RESMI & PUSAT INFORMASI KAMPUS', currentY2, startX, contentWidth);
-  currentY2 += 3.2;
 
   // Box Rekening BSI
-  const bankBoxHeight = 11.5;
-  doc.setFillColor(236, 253, 245); // emerald-50
-  doc.setDrawColor(16, 185, 129); // emerald-500
+  doc.setFillColor(236, 253, 245);
+  doc.setDrawColor(16, 185, 129);
   doc.setLineWidth(0.3);
-  doc.roundedRect(startX, currentY2, contentWidth, bankBoxHeight, 1.5, 1.5, 'FD');
+  doc.roundedRect(startX, currentY2, contentWidth, 10.5, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.4);
+  doc.setFontSize(7.6);
   doc.setTextColor(6, 78, 59);
-  doc.text('REKENING RESMI PEMBAYARAN FORMULIR & BIAYA AWAL MASUK (BAM):', startX + 3.5, currentY2 + 4.0);
+  doc.text('REKENING RESMI PEMBAYARAN FORMULIR & BAM (BANK SYARIAH INDONESIA):', startX + 3, currentY2 + 3.8);
 
-  doc.setFont('helvetica', 'bold');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.2);
-  doc.setTextColor(15, 118, 110);
+  doc.setTextColor(4, 120, 87);
   const bankAccNum = schoolInfo.bankAccountNumber || '3953157480';
   const bankAccName = schoolInfo.bankAccountName || 'Al-Hadiid';
   const bankName = schoolInfo.bankName || 'Bank Syariah Indonesia (BSI)';
   doc.text(
-    `Bank: ${bankName}    •    No. Rekening: ${bankAccNum}    •    Atas Nama: ${bankAccName}`,
-    startX + 3.5,
-    currentY2 + 8.3
+    `Bank: ${bankName}   |   No. Rekening: ${bankAccNum}   |   Atas Nama: ${bankAccName}`,
+    startX + 3,
+    currentY2 + 7.8
   );
-  currentY2 += bankBoxHeight + 3.5;
+  currentY2 += 13.5;
 
-  // Layout Bagian Bawah: Dua Kolom Sejajar (Kiri: Sekretariat & Kontak, Kanan: Pengesahan & Tanda Tangan)
-  const bottomStartY = currentY2;
-  const leftColWidth = 106;
-
-  // Kotak Kiri: Informasi Sekretariat & Kontak
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.setLineWidth(0.25);
-  doc.roundedRect(startX, bottomStartY, leftColWidth, 34, 1.5, 1.5, 'FD');
-
+  // Baris Alamat & Kontak Resmi
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.2);
-  doc.setTextColor(15, 23, 42);
-  doc.text('SEKRETARIAT & PUSAT LAYANAN SPMB:', startX + 3.5, bottomStartY + 4.2);
+  doc.setTextColor(30, 41, 59);
+  doc.text('Sekretariat Panitia SPMB SMPS Al-Hadiid Cileungsi:', startX + 1, currentY2);
+  currentY2 += 3.4;
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.7);
+  doc.setFontSize(6.8);
   doc.setTextColor(71, 85, 105);
+  doc.text(`• Alamat: ${schoolInfo.address || 'Jl. Melati 1 Perumahan Cileungsi Indah, Cileungsi, Kab. Bogor 16820'}`, startX + 1, currentY2);
+  currentY2 += 3.2;
+  doc.text(`• Hotline WhatsApp / Telp: ${schoolInfo.whatsapp || schoolInfo.phone || '085814998782'}  |  Email: ${schoolInfo.email || 'smpalhadiid@gmail.com'}`, startX + 1, currentY2);
+  currentY2 += 3.2;
+  doc.text(`• Portal Pendaftaran Online: ${schoolInfo.website || 'https://alhadiid.or.id/smp-alhadiid/'}`, startX + 1, currentY2);
+  currentY2 += 5.5;
 
-  const addressText = `Alamat: ${schoolInfo.address || 'Jl. Melati 1 Perumahan Cileungsi Indah, Cileungsi, Kab. Bogor 16820'}`;
-  const splitAddress = doc.splitTextToSize(addressText, leftColWidth - 7);
-  doc.text(splitAddress, startX + 3.5, bottomStartY + 8.2);
-
-  let curInfoY = bottomStartY + 8.2 + splitAddress.length * 3.3;
-  const phoneStr = schoolInfo.whatsapp || schoolInfo.phone || '0858-1499-8782';
-  doc.text(`Hotline WhatsApp: ${phoneStr}`, startX + 3.5, curInfoY);
-  curInfoY += 3.3;
-
-  doc.text(`Email Resmi: ${schoolInfo.email || 'smpalhadiid@gmail.com'}`, startX + 3.5, curInfoY);
-  curInfoY += 3.3;
-
-  doc.text(`Website: ${schoolInfo.website || 'https://alhadiid.or.id/smp-alhadiid/'}`, startX + 3.5, curInfoY);
-  curInfoY += 3.4;
-
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(6.3);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Pelayanan Sekretariat: Senin - Sabtu (08.00 - 15.00 WIB)', startX + 3.5, curInfoY);
-
-  // Kolom Kanan: Pengesahan & Tanda Tangan Resmi (Sejajar dengan Sekretariat)
+  // Pengesahan Resmi Panitia & Kepala Sekolah
   const todayStr = new Date().toLocaleDateString('id-ID', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
   });
 
-  const rightColX = startX + leftColWidth + 5;
-  const rightColWidth = contentWidth - leftColWidth - 5;
-
   drawOfficialSignature(doc, {
-    x: rightColX,
-    y: bottomStartY,
+    x: startX + contentWidth - 65,
+    y: currentY2,
     title: 'Panitia SPMB & Kepala Sekolah,',
     subtitle: schoolInfo.name || 'SMPS AL-HADIID CILEUNGSI',
     personName: getKepalaSekolahName(schoolInfo),
     extraNote: schoolInfo.headmasterNiy ? `NIY. ${schoolInfo.headmasterNiy}` : 'KEPALA SEKOLAH',
-    signatureWidth: rightColWidth,
-    isRightAligned: false,
+    signatureWidth: 65,
+    isRightAligned: true,
     dateCity: `Cileungsi, ${todayStr}`,
   });
 
