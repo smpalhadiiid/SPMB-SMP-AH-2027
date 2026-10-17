@@ -21,7 +21,7 @@
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
--- 0. FUNCTION UPDATE_UPDATED_AT()
+-- 0. FUNCTION UPDATE_UPDATED_AT() & PENYELARASAN KOLOM ujian_id (SOLUSI ERROR 42703)
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.update_updated_at()
 RETURNS TRIGGER AS $$
@@ -30,6 +30,13 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Jamin kolom ujian_id ada di semua tabel CBT terlebih dahulu agar bebas dari ERROR 42703
+ALTER TABLE IF EXISTS public.soal ADD COLUMN IF NOT EXISTS ujian_id UUID;
+ALTER TABLE IF EXISTS public.ujian_soal ADD COLUMN IF NOT EXISTS ujian_id UUID;
+ALTER TABLE IF EXISTS public.jawaban_peserta ADD COLUMN IF NOT EXISTS ujian_id UUID;
+ALTER TABLE IF EXISTS public.hasil_ujian ADD COLUMN IF NOT EXISTS ujian_id UUID;
+ALTER TABLE IF EXISTS public.log_ujian ADD COLUMN IF NOT EXISTS ujian_id UUID;
 
 -- ---------------------------------------------------------------------
 -- 1. TABEL KATEGORI_SOAL

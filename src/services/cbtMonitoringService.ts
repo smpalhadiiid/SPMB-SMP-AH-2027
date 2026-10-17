@@ -10,6 +10,15 @@ import {
   CbtHasilUjian,
 } from '../types';
 import { generateUUID } from '../utils/uuid';
+import {
+  getDeletedMonitoringIds,
+  addDeletedMonitoringId,
+  removeDeletedMonitoringId,
+  clearAllDeletedMonitoringIds,
+  addDeletedHasilId,
+  removeDeletedHasilId,
+  clearCbtExamSession,
+} from '../utils/cbtStorage';
 
 // =====================================================================
 // KONFIGURASI TERPUSAT MONITORING CBT (CENTRALIZED CONFIG)
@@ -456,7 +465,16 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     if (!isGlobalExam) {
       query = query.eq('ujian_id', examId);
     }
-    const { data: hasilData, error: hasilErr } = await query;
+    let { data: hasilData, error: hasilErr } = await query;
+
+    // Graceful fallback jika kolom ujian_id belum ada pada tabel hasil_ujian (Error 42703)
+    if (hasilErr && (hasilErr.code === '42703' || hasilErr.message?.includes('ujian_id'))) {
+      const fallback = await supabase.from('hasil_ujian').select('*');
+      if (!fallback.error && fallback.data) {
+        hasilData = fallback.data;
+        hasilErr = null;
+      }
+    }
 
     if (!hasilErr && hasilData) {
       isFromSupabase = true;
@@ -488,7 +506,16 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     if (!isGlobalExam) {
       query = query.eq('ujian_id', examId);
     }
-    const { data: ansData, error: ansErr } = await query;
+    let { data: ansData, error: ansErr } = await query;
+
+    // Graceful fallback jika kolom ujian_id belum ada pada tabel jawaban_peserta (Error 42703)
+    if (ansErr && (ansErr.code === '42703' || ansErr.message?.includes('ujian_id'))) {
+      const fallback = await supabase.from('jawaban_peserta').select('peserta_id, jawaban_dipilih, is_ragu');
+      if (!fallback.error && fallback.data) {
+        ansData = fallback.data;
+        ansErr = null;
+      }
+    }
 
     if (!ansErr && ansData) {
       isFromSupabase = true;
@@ -548,7 +575,17 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     if (!isGlobalExam && UUID_REGEX.test(examId)) {
       logQuery = logQuery.eq('ujian_id', examId);
     }
-    const { data: logData, error: logErr } = await logQuery;
+    let { data: logData, error: logErr } = await logQuery;
+
+    // Graceful fallback jika kolom ujian_id belum ada pada tabel log_ujian (Error 42703)
+    if (logErr && (logErr.code === '42703' || logErr.message?.includes('ujian_id'))) {
+      const fallback = await supabase.from('log_ujian').select('*');
+      if (!fallback.error && fallback.data) {
+        logData = fallback.data;
+        logErr = null;
+      }
+    }
+
     if (!logErr && logData && logData.length > 0) {
       isFromSupabase = true;
       logData.forEach((row: any) => {
@@ -648,9 +685,14 @@ export async function fetchCbtLiveMonitoringFromSupabase(
     } catch {}
   }
 
+  // Filter keluar peserta yang telah dihapus dari Monitoring Live (Tombstone)
+  const deletedMonitoringIds = new Set(getDeletedMonitoringIds());
+  effectiveStudents = effectiveStudents.filter((s) => !deletedMonitoringIds.has(s.id));
+
   // Sisipkan peserta yang aktif di sesi live namun belum tercatat di array murid
   const knownStudentIds = new Set(effectiveStudents.map((s) => s.id));
   Object.keys(liveSessions).forEach((sessionId) => {
+    if (deletedMonitoringIds.has(sessionId)) return;
     if (!knownStudentIds.has(sessionId)) {
       const sessionItem = liveSessions[sessionId];
       effectiveStudents.push({
@@ -853,7 +895,18 @@ export async function fetchParticipantDetailedAnswers(
       query = query.eq('ujian_id', examId);
     }
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+
+    if (error && (error.code === '42703' || error.message?.includes('ujian_id'))) {
+      const fallback = await supabase
+        .from('jawaban_peserta')
+        .select('soal_id, jawaban_dipilih, is_ragu, updated_at')
+        .eq('peserta_id', participantId);
+      if (!fallback.error && fallback.data) {
+        data = fallback.data;
+        error = null;
+      }
+    }
 
     if (error || !data) return [];
 
@@ -869,5 +922,322 @@ export async function fetchParticipantDetailedAnswers(
   } catch (err) {
     console.warn('fetchParticipantDetailedAnswers error:', err);
     return [];
+  }
+}
+
+// =====================================================================
+// 6. FITUR ULANG UJIAN & HAPUS DATA PESERTA MONITORING LIVE (REVISI)
+// =====================================================================
+
+/**
+ * Ulang Ujian (Reset Sesi & Jawaban) pada Menu Monitoring Live
+ * Mengizinkan calon murid melakukan ujian ulang dari awal (Question #1 dengan timer penuh).
+ * Menghapus jawaban_peserta, hasil_ujian, log_ujian, mereset tabel students dan sesi lokal.
+ */
+export async function ulangUjianPesertaMonitoringLiveSupabase(params: {
+  participantId: string;
+  examId?: string;
+  participantName?: string;
+}): Promise<boolean> {
+  const { participantId, examId, participantName } = params;
+  if (!participantId) return false;
+
+  try {
+    const examTargetId =
+      examId && examId !== 'ALL' && examId !== 'ALL_EXAMS'
+        ? examId
+        : '7c690ee0-7321-4604-a05d-ea664019bcfc';
+
+    // 1. Hapus jawaban peserta dari Supabase
+    let delAnsQuery = supabase.from('jawaban_peserta').delete().eq('peserta_id', participantId);
+    if (examId && examId !== 'ALL' && examId !== 'ALL_EXAMS' && UUID_REGEX.test(examId)) {
+      delAnsQuery = delAnsQuery.eq('ujian_id', examId);
+    }
+    await delAnsQuery;
+
+    // 2. Hapus hasil_ujian dari Supabase
+    let delHasilQuery = supabase.from('hasil_ujian').delete().eq('peserta_id', participantId);
+    if (examId && examId !== 'ALL' && examId !== 'ALL_EXAMS' && UUID_REGEX.test(examId)) {
+      delHasilQuery = delHasilQuery.eq('ujian_id', examId);
+    }
+    await delHasilQuery;
+
+    // 3. Hapus log_ujian dari Supabase
+    await supabase.from('log_ujian').delete().eq('peserta_id', participantId);
+
+    // 4. Reset status & skor pada tabel students agar siswa bisa mulai dari awal
+    await supabase
+      .from('students')
+      .update({
+        diagnostic_score: null,
+        general_score: null,
+        religious_score: null,
+        final_score: null,
+        test_submitted: false,
+        is_test_active: false,
+        status: 'registered',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', participantId);
+
+    // 5. Bersihkan session dari spmb_app_state
+    try {
+      const { data: curState } = await supabase
+        .from('spmb_app_state')
+        .select('payload')
+        .eq('key', getSessionsStateKey(examTargetId))
+        .maybeSingle();
+
+      if (curState?.payload && typeof curState.payload === 'object') {
+        const updated = { ...curState.payload };
+        delete updated[participantId];
+        await supabase.from('spmb_app_state').upsert({
+          key: getSessionsStateKey(examTargetId),
+          payload: updated,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      const { data: globalState } = await supabase
+        .from('spmb_app_state')
+        .select('payload')
+        .eq('key', 'cbt_live_all_sessions')
+        .maybeSingle();
+
+      if (globalState?.payload && typeof globalState.payload === 'object') {
+        const updatedGlobal = { ...globalState.payload };
+        delete updatedGlobal[participantId];
+        await supabase.from('spmb_app_state').upsert({
+          key: 'cbt_live_all_sessions',
+          payload: updatedGlobal,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn('Clear session state notice:', e);
+    }
+
+    // 6. Bersihkan memori cache
+    if (activeSessionsCache[examTargetId]) {
+      delete activeSessionsCache[examTargetId][participantId];
+    }
+    if (activeSessionsCache['GLOBAL']) {
+      delete activeSessionsCache['GLOBAL'][participantId];
+    }
+
+    // 7. Hapus dari tombstone (baik monitoring maupun hasil) agar calon murid dapat aktif kembali
+    removeDeletedMonitoringId(participantId);
+    removeDeletedHasilId(participantId);
+
+    // 8. Bersihkan session lokal dari storage
+    clearCbtExamSession(examTargetId, participantId);
+    if (typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.includes(participantId)) {
+            if (k.startsWith('spmb_cbt_session_') || k.startsWith('spmb_cbt_answers_')) {
+              localStorage.removeItem(k);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 9. Catat aktivitas audit Ulang Ujian
+    await recordCbtActivityLogSupabase({
+      examId: examTargetId,
+      participantId,
+      participantName: participantName || participantId,
+      eventType: 'exam_reset',
+      title: 'Ujian Diulang oleh Panitia',
+      description: `Panitia telah mereset sesi dan mengizinkan ${participantName || 'peserta'} untuk mengikuti ujian ulang (retest).`,
+    });
+
+    // 10. Dispatch event real-time ke window
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cbt_exam_reset', { detail: { participantId, examId } }));
+      window.dispatchEvent(new CustomEvent('cbt_monitoring_updated'));
+      window.dispatchEvent(new CustomEvent('cbt_hasil_updated'));
+      window.dispatchEvent(new CustomEvent('spmb_student_updated', { detail: { id: participantId } }));
+    }
+
+    return true;
+  } catch (err: any) {
+    console.error('ulangUjianPesertaMonitoringLiveSupabase error:', err);
+    return false;
+  }
+}
+
+/**
+ * Hapus Data & Sesi Peserta pada Menu Monitoring Live
+ * Menghapus peserta dari pemantauan live, membersihkan sesi aktif di Supabase/spmb_app_state,
+ * dan opsi menghapus hasil/jawaban jika diinginkan oleh admin.
+ */
+export async function hapusPesertaMonitoringLiveSupabase(params: {
+  participantId: string;
+  examId?: string;
+  participantName?: string;
+  deleteAnswers?: boolean;
+  deleteHasil?: boolean;
+  resetScores?: boolean;
+}): Promise<boolean> {
+  const {
+    participantId,
+    examId,
+    participantName,
+    deleteAnswers = true,
+    deleteHasil = true,
+    resetScores = true,
+  } = params;
+
+  if (!participantId) return false;
+
+  try {
+    const examTargetId =
+      examId && examId !== 'ALL' && examId !== 'ALL_EXAMS'
+        ? examId
+        : '7c690ee0-7321-4604-a05d-ea664019bcfc';
+
+    // 1. Simpan ke tombstone monitoring agar tidak muncul lagi di live monitoring
+    addDeletedMonitoringId(participantId);
+
+    // 2. Jika dipilih deleteAnswers, hapus dari tabel jawaban_peserta
+    if (deleteAnswers) {
+      await supabase.from('jawaban_peserta').delete().eq('peserta_id', participantId);
+    }
+
+    // 3. Jika dipilih deleteHasil, hapus dari tabel hasil_ujian dan simpan tombstone
+    if (deleteHasil) {
+      await supabase.from('hasil_ujian').delete().eq('peserta_id', participantId);
+      addDeletedHasilId(`hasil_${participantId}`, participantId);
+    }
+
+    // 4. Hapus log_ujian
+    await supabase.from('log_ujian').delete().eq('peserta_id', participantId);
+
+    // 5. Bersihkan heartbeat / session di spmb_app_state
+    try {
+      const { data: curState } = await supabase
+        .from('spmb_app_state')
+        .select('payload')
+        .eq('key', getSessionsStateKey(examTargetId))
+        .maybeSingle();
+
+      if (curState?.payload && typeof curState.payload === 'object') {
+        const updated = { ...curState.payload };
+        delete updated[participantId];
+        await supabase.from('spmb_app_state').upsert({
+          key: getSessionsStateKey(examTargetId),
+          payload: updated,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      const { data: globalState } = await supabase
+        .from('spmb_app_state')
+        .select('payload')
+        .eq('key', 'cbt_live_all_sessions')
+        .maybeSingle();
+
+      if (globalState?.payload && typeof globalState.payload === 'object') {
+        const updatedGlobal = { ...globalState.payload };
+        delete updatedGlobal[participantId];
+        await supabase.from('spmb_app_state').upsert({
+          key: 'cbt_live_all_sessions',
+          payload: updatedGlobal,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch {}
+
+    // 6. Bersihkan cache memori
+    if (activeSessionsCache[examTargetId]) {
+      delete activeSessionsCache[examTargetId][participantId];
+    }
+    if (activeSessionsCache['GLOBAL']) {
+      delete activeSessionsCache['GLOBAL'][participantId];
+    }
+
+    // 7. Reset scores pada students jika diminta
+    if (resetScores) {
+      await supabase
+        .from('students')
+        .update({
+          diagnostic_score: null,
+          general_score: null,
+          religious_score: null,
+          final_score: null,
+          test_submitted: false,
+          is_test_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', participantId);
+    }
+
+    // 8. Bersihkan session lokal
+    clearCbtExamSession(examTargetId, participantId);
+
+    // 9. Catat activity log audit
+    await recordCbtActivityLogSupabase({
+      examId: examTargetId,
+      participantId,
+      participantName: participantName || participantId,
+      eventType: 'participant_deleted',
+      title: 'Peserta Dihapus dari Monitoring Live',
+      description: `Panitia telah menghapus data sesi pemantauan live untuk ${participantName || 'peserta'}.`,
+    });
+
+    // 10. Dispatch event real-time ke window
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cbt_monitoring_updated'));
+      window.dispatchEvent(new CustomEvent('cbt_hasil_updated'));
+      window.dispatchEvent(new CustomEvent('spmb_student_updated', { detail: { id: participantId } }));
+    }
+
+    return true;
+  } catch (err: any) {
+    console.error('hapusPesertaMonitoringLiveSupabase error:', err);
+    return false;
+  }
+}
+
+/**
+ * Hapus seluruh sesi peserta pada Monitoring Live (Bulk Clear)
+ */
+export async function hapusSemuaPesertaMonitoringLiveSupabase(examId?: string): Promise<boolean> {
+  try {
+    const examTargetId =
+      examId && examId !== 'ALL' && examId !== 'ALL_EXAMS'
+        ? examId
+        : '7c690ee0-7321-4604-a05d-ea664019bcfc';
+
+    // Bersihkan app state sessions
+    await supabase.from('spmb_app_state').upsert({
+      key: getSessionsStateKey(examTargetId),
+      payload: {},
+      updated_at: new Date().toISOString(),
+    });
+
+    await supabase.from('spmb_app_state').upsert({
+      key: 'cbt_live_all_sessions',
+      payload: {},
+      updated_at: new Date().toISOString(),
+    });
+
+    // Kosongkan log_ujian
+    await supabase.from('log_ujian').delete().neq('id', 'placeholder_none');
+
+    // Kosongkan cache
+    delete activeSessionsCache[examTargetId];
+    delete activeSessionsCache['GLOBAL'];
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cbt_monitoring_updated'));
+    }
+    return true;
+  } catch (err: any) {
+    console.error('hapusSemuaPesertaMonitoringLiveSupabase error:', err);
+    return false;
   }
 }

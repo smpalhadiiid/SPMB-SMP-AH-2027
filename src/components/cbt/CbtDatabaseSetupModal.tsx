@@ -5,7 +5,9 @@ import {
 } from 'lucide-react';
 import {
   generateCbtDatabaseSql,
+  generateFixUjianIdSql,
   downloadCbtSqlFile,
+  downloadFixUjianIdSqlFile,
   testCbtSupabaseTables,
   autoInitializeCbtDatabase,
   CbtTableCheckResult
@@ -23,7 +25,9 @@ export const CbtDatabaseSetupModal: React.FC<CbtDatabaseSetupModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const [copied, setCopied] = useState(false);
+  const [copiedFull, setCopiedFull] = useState(false);
+  const [copiedFix, setCopiedFix] = useState(false);
+  const [activeTab, setActiveTab] = useState<'fix' | 'full'>('fix');
   const [isChecking, setIsChecking] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [initFeedback, setInitFeedback] = useState<string | null>(null);
@@ -31,6 +35,7 @@ export const CbtDatabaseSetupModal: React.FC<CbtDatabaseSetupModalProps> = ({
   const [allHealthy, setAllHealthy] = useState<boolean | null>(null);
 
   const fullSql = generateCbtDatabaseSql();
+  const fixSql = generateFixUjianIdSql();
 
   // Run initial health check on modal open
   useEffect(() => {
@@ -39,10 +44,16 @@ export const CbtDatabaseSetupModal: React.FC<CbtDatabaseSetupModalProps> = ({
     }
   }, [isOpen]);
 
-  const handleCopySql = () => {
+  const handleCopyFullSql = () => {
     navigator.clipboard.writeText(fullSql);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    setCopiedFull(true);
+    setTimeout(() => setCopiedFull(false), 2500);
+  };
+
+  const handleCopyFixSql = () => {
+    navigator.clipboard.writeText(fixSql);
+    setCopiedFix(true);
+    setTimeout(() => setCopiedFix(false), 2500);
   };
 
   const handleRunHealthCheck = async () => {
@@ -126,12 +137,39 @@ export const CbtDatabaseSetupModal: React.FC<CbtDatabaseSetupModalProps> = ({
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
+                onClick={handleCopyFixSql}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-amber-400/50"
+              >
+                {copiedFix ? <Check className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                <span>{copiedFix ? 'Tersalin!' : '⚡ Salin Solusi Error 42703 (ujian_id)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopyFullSql}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedFull ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedFull ? 'Tersalin!' : 'Salin Seluruh Skrip SQL'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={downloadFixUjianIdSqlFile}
+                className="px-3.5 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Unduh Fix 42703.sql</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={handleAutoInit}
                 disabled={isInitializing}
                 className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
               >
                 <Zap className={`w-3.5 h-3.5 ${isInitializing ? 'animate-spin' : ''}`} />
-                <span>{isInitializing ? 'Menginisialisasi...' : 'Inisialisasi Database Otomatis'}</span>
+                <span>{isInitializing ? 'Menginisialisasi...' : 'Inisialisasi Otomatis'}</span>
               </button>
 
               <button
@@ -143,25 +181,28 @@ export const CbtDatabaseSetupModal: React.FC<CbtDatabaseSetupModalProps> = ({
                 <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
                 <span>{isChecking ? 'Memeriksa...' : 'Cek Status Tabel'}</span>
               </button>
+            </div>
+          </div>
 
+          {/* Solusi Khusus Error 42P01 & 42703: relation atau column does not exist */}
+          <div className="p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-2xl shadow-xs space-y-2.5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-amber-900 font-extrabold text-xs">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Solusi Langsung: Error 42P01 (relation does not exist) &amp; Error 42703 (column does not exist)</span>
+              </div>
               <button
                 type="button"
-                onClick={handleCopySql}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                onClick={handleCopyFixSql}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
               >
-                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copied ? 'Tersalin!' : 'Salin Skrip SQL'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={downloadCbtSqlFile}
-                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Unduh .SQL</span>
+                {copiedFix ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedFix ? 'Tersalin!' : 'Salin Skrip Perbaikan Ini'}</span>
               </button>
             </div>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              Jika muncul pesan <strong className="font-mono text-rose-700 bg-white px-1 py-0.5 rounded border border-rose-200">ERROR: 42P01: relation "public.ujian_soal" does not exist</strong> atau <strong className="font-mono text-rose-700 bg-white px-1 py-0.5 rounded border border-rose-200">ERROR: 42703: column "ujian_id" does not exist</strong>, skrip di bawah telah diperbarui untuk membuat seluruh tabel (<code className="font-mono text-amber-900 font-bold">ujian</code>, <code className="font-mono text-amber-900 font-bold">soal</code>, <code className="font-mono text-amber-900 font-bold">ujian_soal</code>, <code className="font-mono text-amber-900 font-bold">jawaban_peserta</code>, <code className="font-mono text-amber-900 font-bold">hasil_ujian</code>, <code className="font-mono text-amber-900 font-bold">log_ujian</code>) terlebih dahulu sebelum membuat kolom atau indeks. Klik <strong>"Salin Skrip Perbaikan Ini"</strong> di atas, buka <a href="https://supabase.com/dashboard/project/fjscuokehikwhungyvll/sql" target="_blank" rel="noopener noreferrer" className="underline font-bold text-amber-900 hover:text-amber-950 inline-flex items-center gap-0.5">Supabase SQL Editor <ExternalLink className="w-3 h-3 inline" /></a>, tempelkan lalu klik <strong>RUN</strong>.
+            </p>
           </div>
 
           {/* Feedback Banner */}
@@ -230,21 +271,52 @@ export const CbtDatabaseSetupModal: React.FC<CbtDatabaseSetupModalProps> = ({
               <span>Petunjuk Eksekusi di SQL Editor Supabase:</span>
             </div>
             <ol className="list-decimal list-inside space-y-1 text-[11px] text-blue-800 font-semibold pl-1">
-              <li>Klik tombol <strong>Salin Skrip SQL</strong> di atas.</li>
+              <li>Pilih skrip yang Anda butuhkan (Skrip Perbaikan Error 42703 atau Skrip Lengkap).</li>
+              <li>Klik tombol <strong>Salin</strong>.</li>
               <li>Buka dashboard Supabase pada tab baru: <a href="https://supabase.com/dashboard/project/fjscuokehikwhungyvll/sql" target="_blank" rel="noopener noreferrer" className="underline font-bold text-blue-700 hover:text-blue-900 inline-flex items-center gap-0.5">Supabase SQL Editor <ExternalLink className="w-3 h-3 inline" /></a>.</li>
               <li>Klik <strong>+ New Query</strong>, tempelkan skrip SQL, lalu klik tombol hijau <strong>Run</strong>.</li>
-              <li>Seluruh tabel, indeks, hak akses (RLS), dan Realtime Replication akan aktif seketika.</li>
+              <li>Seluruh kolom ujian_id, tabel, indeks, hak akses (RLS), dan Realtime Replication akan sinkron normal.</li>
             </ol>
           </div>
 
-          {/* SQL Code View */}
+          {/* SQL Code View with Tabs */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs text-slate-600">
-              <span className="font-bold">Pratinjau Skrip SQL (012_spmb_cbt_live_monitoring_schema.sql):</span>
-              <span className="text-[11px] text-slate-400 font-mono">ANSI / PostgreSQL 14+</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('fix')}
+                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    activeTab === 'fix'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  ⚡ Skrip Solusi Error 42703 (ujian_id)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('full')}
+                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    activeTab === 'full'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  📄 Skrip Lengkap Database CBT (012_spmb_cbt_schema.sql)
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={activeTab === 'fix' ? handleCopyFixSql : handleCopyFullSql}
+                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
+              >
+                {(activeTab === 'fix' ? copiedFix : copiedFull) ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{(activeTab === 'fix' ? copiedFix : copiedFull) ? 'Tersalin!' : 'Salin Kode Ini'}</span>
+              </button>
             </div>
             <div className="bg-slate-950 text-slate-200 p-4 rounded-2xl font-mono text-[11px] overflow-x-auto max-h-64 border border-slate-800 leading-relaxed shadow-inner">
-              <pre>{fullSql}</pre>
+              <pre>{activeTab === 'fix' ? fixSql : fullSql}</pre>
             </div>
           </div>
         </div>

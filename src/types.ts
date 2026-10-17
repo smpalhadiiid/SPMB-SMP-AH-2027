@@ -286,7 +286,9 @@ export type CbtActivityEventType =
   | 'network_reconnect'
   | 'save_failed'
   | 'exam_submit'
-  | 'exam_finish';
+  | 'exam_finish'
+  | 'exam_reset'
+  | 'participant_deleted';
 
 export interface CbtActivityLogItem {
   id: string;

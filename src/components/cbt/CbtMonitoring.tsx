@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Eye, Clock, CheckCircle2, Wifi, WifiOff, RefreshCw, AlertCircle, Search,
   Filter, AlertTriangle, User, Activity, Layers, X, Info, Sparkles,
-  ChevronRight, ArrowRight, ShieldCheck, ShieldAlert, Database, Zap
+  ChevronRight, ArrowRight, ShieldCheck, ShieldAlert, Database, Zap,
+  RotateCcw, Trash2
 } from 'lucide-react';
 import { StudentData, CbtUjian, CbtParticipantLiveStatus, CbtLiveMonitoringSummary, CbtActivityLogItem } from '../../types';
 import { fetchUjianSupabase } from '../../services/cbtSupabaseService';
@@ -15,6 +16,9 @@ import {
   fetchParticipantDetailedAnswers,
   sendCbtHeartbeatSupabase,
   recordCbtActivityLogSupabase,
+  ulangUjianPesertaMonitoringLiveSupabase,
+  hapusPesertaMonitoringLiveSupabase,
+  hapusSemuaPesertaMonitoringLiveSupabase,
   CBT_MONITORING_CONFIG,
 } from '../../services/cbtMonitoringService';
 import { CbtDatabaseSetupModal } from './CbtDatabaseSetupModal';
@@ -67,6 +71,118 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
   // 5. Database Supabase Modal & Simulasi Sambungan Murid
   const [showDatabaseModal, setShowDatabaseModal] = useState(false);
   const [isSimulatingTest, setIsSimulatingTest] = useState(false);
+
+  // 6. Action Modal States (Fitur Ulang Ujian & Hapus Data Monitoring)
+  const [selectedParticipantToReset, setSelectedParticipantToReset] = useState<CbtParticipantLiveStatus | null>(null);
+  const [selectedParticipantToDelete, setSelectedParticipantToDelete] = useState<CbtParticipantLiveStatus | null>(null);
+  const [showClearAllModal, setShowClearAllModal] = useState<boolean>(false);
+  const [isProcessingAction, setIsProcessingAction] = useState<boolean>(false);
+
+  // Opsi saat menghapus
+  const [deleteParticipantAnswers, setDeleteParticipantAnswers] = useState<boolean>(true);
+  const [deleteParticipantHasil, setDeleteParticipantHasil] = useState<boolean>(true);
+  const [resetParticipantScores, setResetParticipantScores] = useState<boolean>(true);
+
+  // Notification Toast Feedback
+  const [actionFeedback, setActionFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const handleConfirmUlangUjian = async () => {
+    if (!selectedParticipantToReset) return;
+    setIsProcessingAction(true);
+    try {
+      const success = await ulangUjianPesertaMonitoringLiveSupabase({
+        participantId: selectedParticipantToReset.participantId,
+        examId: selectedParticipantToReset.examId || selectedUjianId,
+        participantName: selectedParticipantToReset.fullName,
+      });
+
+      if (success) {
+        setActionFeedback({
+          type: 'success',
+          message: `Berhasil mereset sesi! Peserta ${selectedParticipantToReset.fullName} kini diizinkan ujian ulang (retest) dari soal no. 1 dengan timer penuh.`,
+        });
+        if (selectedParticipant?.participantId === selectedParticipantToReset.participantId) {
+          setSelectedParticipant(null);
+        }
+        await refreshMonitoringData(true);
+      } else {
+        setActionFeedback({
+          type: 'error',
+          message: 'Gagal mereset sesi ujian peserta. Silakan coba kembali.',
+        });
+      }
+    } catch (err: any) {
+      setActionFeedback({
+        type: 'error',
+        message: `Terjadi kendala saat reset: ${err?.message || 'Gagal'}`,
+      });
+    } finally {
+      setIsProcessingAction(false);
+      setSelectedParticipantToReset(null);
+      setTimeout(() => setActionFeedback(null), 5000);
+    }
+  };
+
+  const handleConfirmHapusPeserta = async () => {
+    if (!selectedParticipantToDelete) return;
+    setIsProcessingAction(true);
+    try {
+      const success = await hapusPesertaMonitoringLiveSupabase({
+        participantId: selectedParticipantToDelete.participantId,
+        examId: selectedParticipantToDelete.examId || selectedUjianId,
+        participantName: selectedParticipantToDelete.fullName,
+        deleteAnswers: deleteParticipantAnswers,
+        deleteHasil: deleteParticipantHasil,
+        resetScores: resetParticipantScores,
+      });
+
+      if (success) {
+        setActionFeedback({
+          type: 'success',
+          message: `Data monitoring untuk ${selectedParticipantToDelete.fullName} berhasil dihapus dari sistem.`,
+        });
+        if (selectedParticipant?.participantId === selectedParticipantToDelete.participantId) {
+          setSelectedParticipant(null);
+        }
+        await refreshMonitoringData(true);
+      } else {
+        setActionFeedback({
+          type: 'error',
+          message: 'Gagal menghapus data peserta dari monitoring.',
+        });
+      }
+    } catch (err: any) {
+      setActionFeedback({
+        type: 'error',
+        message: `Terjadi kendala saat hapus: ${err?.message || 'Gagal'}`,
+      });
+    } finally {
+      setIsProcessingAction(false);
+      setSelectedParticipantToDelete(null);
+      setTimeout(() => setActionFeedback(null), 5000);
+    }
+  };
+
+  const handleConfirmClearAll = async () => {
+    setIsProcessingAction(true);
+    try {
+      await hapusSemuaPesertaMonitoringLiveSupabase(selectedUjianId);
+      setActionFeedback({
+        type: 'success',
+        message: 'Seluruh rekaman sesi live monitoring telah berhasil dikosongkan.',
+      });
+      await refreshMonitoringData(true);
+    } catch (err: any) {
+      setActionFeedback({
+        type: 'error',
+        message: 'Gagal mengosongkan sesi live.',
+      });
+    } finally {
+      setIsProcessingAction(false);
+      setShowClearAllModal(false);
+      setTimeout(() => setActionFeedback(null), 5000);
+    }
+  };
 
   const handleTestSimulation = async () => {
     setIsSimulatingTest(true);
@@ -211,6 +327,21 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
     };
   }, [selectedUjianId]);
 
+  // 3. Listen to external updates & reset events
+  useEffect(() => {
+    const handleReconcile = () => {
+      refreshMonitoringData(false);
+    };
+    window.addEventListener('cbt_monitoring_updated', handleReconcile);
+    window.addEventListener('cbt_exam_reset', handleReconcile);
+    window.addEventListener('cbt_hasil_updated', handleReconcile);
+    return () => {
+      window.removeEventListener('cbt_monitoring_updated', handleReconcile);
+      window.removeEventListener('cbt_exam_reset', handleReconcile);
+      window.removeEventListener('cbt_hasil_updated', handleReconcile);
+    };
+  }, [selectedUjianId]);
+
   // Second-by-second countdown clock for active participant cards/rows
   useEffect(() => {
     const clockInterval = setInterval(() => {
@@ -345,6 +476,17 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} />
               <span>{isFetching ? 'Memuat...' : 'Refresh'}</span>
+            </button>
+
+            {/* Bersihkan Sesi Live Button */}
+            <button
+              type="button"
+              onClick={() => setShowClearAllModal(true)}
+              className="px-3.5 py-2.5 bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 hover:text-white font-bold text-xs rounded-2xl shadow-md border border-rose-800/60 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              title="Bersihkan seluruh sesi & riwayat detak jantung live"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Bersihkan Sesi Live</span>
             </button>
           </div>
         </div>
@@ -665,7 +807,7 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
                 <th className="p-3.5">Sisa Waktu</th>
                 <th className="p-3.5">Last Seen</th>
                 <th className="p-3.5 text-center">Pemeriksaan</th>
-                <th className="p-3.5 text-center">Aksi</th>
+                <th className="p-3.5 text-center w-48">Aksi &amp; Kontrol</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -836,15 +978,36 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
                         )}
                       </td>
 
-                      {/* 11. Aksi: Button Detail */}
+                      {/* 11. Aksi: Button Detail, Ulang Ujian, Hapus */}
                       <td className="p-3.5 text-center">
-                        <button
-                          onClick={() => handleOpenDetail(p)}
-                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition-all flex items-center gap-1 mx-auto"
-                        >
-                          <span>Detail</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDetail(p)}
+                            className="px-2 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] rounded-xl border border-indigo-200 transition-all flex items-center gap-1 cursor-pointer"
+                            title="Buka Lembar Jawaban & Audit Detail"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>Detail</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedParticipantToReset(p)}
+                            className="px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-300 transition-all flex items-center gap-1 cursor-pointer"
+                            title="Ulang Ujian (Reset sesi & izinkan peserta retest)"
+                          >
+                            <RotateCcw className="w-3 h-3 text-amber-600" />
+                            <span>Ulang</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedParticipantToDelete(p)}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-800 font-bold text-[11px] rounded-xl border border-rose-200 transition-all flex items-center gap-1 cursor-pointer"
+                            title="Hapus Peserta dari Monitoring Live"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1093,15 +1256,321 @@ export const CbtMonitoring: React.FC<CbtMonitoringProps> = ({ students }) => {
               </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50/80 flex items-center justify-end">
+            {/* Modal Footer with Action Buttons */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50/90 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedParticipantToReset(selectedParticipant)}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Izinkan peserta ini mengikuti ujian ulang dari awal"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Ulang Ujian Peserta Ini</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedParticipantToDelete(selectedParticipant)}
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Hapus sesi peserta dari monitoring live"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus dari Monitoring</span>
+                </button>
+              </div>
+
               <button
+                type="button"
                 onClick={() => setSelectedParticipant(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition-all"
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
               >
                 Tutup Rincian
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI ULANG UJIAN (RESET & RETEST) */}
+      {selectedParticipantToReset && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5 text-amber-600">
+                <div className="p-2 bg-amber-100 rounded-xl">
+                  <RotateCcw className="w-5 h-5 text-amber-700" />
+                </div>
+                <h4 className="text-base font-black text-slate-900">Konfirmasi Ulang Ujian</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedParticipantToReset(null)}
+                disabled={isProcessingAction}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Apakah Anda ingin mengizinkan peserta ini melakukan <strong>Ujian Ulang (Retest)</strong>? Tindakan ini akan mengosongkan lembar jawaban sebelumnya, mereset durasi waktu ujian ke awal, dan mengembalikan status calon murid agar dapat mengerjakan tes dari nomor 1.
+            </p>
+
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Nama Peserta:</span>
+                <span className="font-bold text-slate-900">{selectedParticipantToReset.fullName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">No. Pendaftaran:</span>
+                <span className="font-mono font-bold text-slate-900">{selectedParticipantToReset.registrationNumber}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Status Saat Ini:</span>
+                <span className="font-bold text-slate-800">
+                  {selectedParticipantToReset.status === 'SELESAI'
+                    ? '🔵 Selesai Ujian'
+                    : selectedParticipantToReset.status === 'AKTIF'
+                    ? '🟢 Sedang Aktif Ujian'
+                    : selectedParticipantToReset.status}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Jawaban Terisi:</span>
+                <span className="font-mono font-bold text-slate-700">
+                  {selectedParticipantToReset.answeredCount} dari {selectedParticipantToReset.totalQuestions} soal
+                </span>
+              </div>
+              {selectedParticipantToReset.score !== undefined && (
+                <div className="flex justify-between pt-1 border-t border-slate-200">
+                  <span className="text-slate-500">Nilai Sebelumnya:</span>
+                  <span className="font-mono font-bold text-indigo-700">{selectedParticipantToReset.score}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                Catatan: Sesi ujian peserta pada tabel <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">jawaban_peserta</code> dan <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">hasil_ujian</code> akan dibersihkan agar peserta dapat masuk kembali di portal CBT.
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedParticipantToReset(null)}
+                disabled={isProcessingAction}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUlangUjian}
+                disabled={isProcessingAction}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isProcessingAction ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Mereset Ujian...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Ya, Izinkan Ulang</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI HAPUS PESERTA DARI MONITORING */}
+      {selectedParticipantToDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5 text-rose-600">
+                <div className="p-2 bg-rose-100 rounded-xl">
+                  <Trash2 className="w-5 h-5 text-rose-600" />
+                </div>
+                <h4 className="text-base font-black text-slate-900">Hapus dari Monitoring Live</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedParticipantToDelete(null)}
+                disabled={isProcessingAction}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Apakah Anda yakin ingin menghapus data pemantauan ujian untuk peserta berikut dari menu Monitoring Live?
+            </p>
+
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Nama Peserta:</span>
+                <span className="font-bold text-slate-900">{selectedParticipantToDelete.fullName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">No. Pendaftaran:</span>
+                <span className="font-mono font-bold text-slate-900">{selectedParticipantToDelete.registrationNumber}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Status Live:</span>
+                <span className="font-bold text-slate-800">{selectedParticipantToDelete.status}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 p-3 bg-rose-50/60 rounded-xl border border-rose-200 text-xs">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteParticipantAnswers}
+                  onChange={(e) => setDeleteParticipantAnswers(e.target.checked)}
+                  className="rounded text-rose-600 focus:ring-rose-500"
+                />
+                <span className="text-slate-800 font-semibold text-[11px]">Hapus riwayat jawaban ujian (jawaban_peserta)</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteParticipantHasil}
+                  onChange={(e) => setDeleteParticipantHasil(e.target.checked)}
+                  className="rounded text-rose-600 focus:ring-rose-500"
+                />
+                <span className="text-slate-800 font-semibold text-[11px]">Hapus riwayat hasil &amp; skor ujian (hasil_ujian)</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={resetParticipantScores}
+                  onChange={(e) => setResetParticipantScores(e.target.checked)}
+                  className="rounded text-rose-600 focus:ring-rose-500"
+                />
+                <span className="text-slate-800 font-semibold text-[11px]">Reset nilai pada data calon murid di database</span>
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedParticipantToDelete(null)}
+                disabled={isProcessingAction}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmHapusPeserta}
+                disabled={isProcessingAction}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isProcessingAction ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Ya, Hapus Data</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL BERSIHKAN SEMUA SESI LIVE */}
+      {showClearAllModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5 text-rose-600">
+                <div className="p-2 bg-rose-100 rounded-xl">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <h4 className="text-base font-black text-slate-900">Bersihkan Seluruh Sesi Live?</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClearAllModal(false)}
+                disabled={isProcessingAction}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-rose-800 bg-rose-50 p-3 rounded-xl border border-rose-200 leading-relaxed font-semibold">
+              PERINGATAN: Tindakan ini akan mengosongkan rekaman detak jantung (heartbeat) aktif dan sesi live seluruh peserta dari pemantauan real-time.
+            </p>
+
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowClearAllModal(false)}
+                disabled={isProcessingAction}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearAll}
+                disabled={isProcessingAction}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isProcessingAction ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Membersihkan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Ya, Bersihkan Sesi</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTION FEEDBACK FLOATING TOAST */}
+      {actionFeedback && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-5">
+          <div
+            className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-2.5 text-xs font-bold ${
+              actionFeedback.type === 'success'
+                ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
+                : 'bg-rose-900 text-rose-100 border-rose-700'
+            }`}
+          >
+            {actionFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>{actionFeedback.message}</span>
+            <button
+              onClick={() => setActionFeedback(null)}
+              className="ml-2 text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}

@@ -739,12 +739,24 @@ app.get('/api/cbt/live/:examId', async (req: Request, res: Response) => {
     const sessionsKey = `cbt_sessions_${examId}`;
     const activitiesKey = `cbt_activities_${examId}`;
 
-    const [sessionsRes, globalSessionsRes, activitiesRes, hasilRes] = await Promise.all([
+    const [sessionsRes, globalSessionsRes, activitiesRes] = await Promise.all([
       sb.from('spmb_app_state').select('payload').eq('key', sessionsKey).maybeSingle(),
       sb.from('spmb_app_state').select('payload').eq('key', 'cbt_live_all_sessions').maybeSingle(),
       sb.from('spmb_app_state').select('payload').eq('key', activitiesKey).maybeSingle(),
-      sb.from('hasil_ujian').select('*').eq('ujian_id', examId),
     ]);
+
+    let hasilData: any[] = [];
+    try {
+      const hRes = await sb.from('hasil_ujian').select('*').eq('ujian_id', examId);
+      if (hRes.error && (hRes.error.code === '42703' || hRes.error.message?.includes('ujian_id'))) {
+        const fallback = await sb.from('hasil_ujian').select('*');
+        hasilData = fallback.data || [];
+      } else {
+        hasilData = hRes.data || [];
+      }
+    } catch {
+      hasilData = [];
+    }
 
     const mergedSessions = {
       ...(globalSessionsRes.data?.payload || {}),
@@ -755,7 +767,7 @@ app.get('/api/cbt/live/:examId', async (req: Request, res: Response) => {
       success: true,
       sessions: mergedSessions,
       activities: activitiesRes.data?.payload || [],
-      hasilList: hasilRes.data || [],
+      hasilList: hasilData,
       serverTime: new Date().toISOString(),
     });
   } catch (err: any) {
