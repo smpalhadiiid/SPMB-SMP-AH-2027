@@ -20,14 +20,7 @@ interface CbtHasilDanRankingProps {
 }
 
 export const CbtHasilDanRanking: React.FC<CbtHasilDanRankingProps> = ({ students, mode = 'hasil' }) => {
-  const [hasilList, setHasilList] = useState<CbtHasilUjian[]>(() => {
-    const raw = getCbtHasilUjian();
-    const sorted = [...raw].sort((a, b) => b.nilaiTotal - a.nilaiTotal);
-    return sorted.map((item, index) => ({
-      ...item,
-      ranking: index + 1,
-    }));
-  });
+  const [hasilList, setHasilList] = useState<CbtHasilUjian[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');

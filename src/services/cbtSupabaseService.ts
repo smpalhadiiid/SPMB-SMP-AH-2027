@@ -8,7 +8,7 @@ import {
   getCbtHasilUjian, saveCbtHasilUjian,
   getCbtLogUjian, saveCbtLogUjian,
   getDeletedHasilIds, addDeletedHasilId, deleteCbtHasilUjianLocal, deleteAllCbtHasilUjianLocal,
-  DEFAULT_CBT_KATEGORI, DEFAULT_CBT_SOAL, DEFAULT_CBT_UJIAN, DEFAULT_CBT_HASIL_UJIAN
+  DEFAULT_CBT_KATEGORI, DEFAULT_CBT_SOAL, DEFAULT_CBT_UJIAN
 } from '../utils/cbtStorage';
 
 const INDEX_TO_LETTER = ['A', 'B', 'C', 'D'];
@@ -960,11 +960,20 @@ export async function fetchMergedCbtResults(passedStudents?: StudentData[]): Pro
 
     const resultsMap = new Map<string, CbtHasilUjian>();
 
-    // A. Masukkan dari tabel hasil_ujian Supabase
+    // A. Masukkan data riil dari tabel hasil_ujian Supabase (Hanya hasil tes yang dikerjakan siswa)
     if (!hasilErr && dbHasil && dbHasil.length > 0) {
+      // Bersihkan baris dummy/mock di background jika ada
+      const mockIds = dbHasil
+        .filter((item: any) => item.id?.startsWith('hasil_cbt_') || item.peserta_id?.startsWith('peserta_cbt_') || item.peserta_id?.startsWith('dummy_'))
+        .map((item: any) => item.id);
+      if (mockIds.length > 0) {
+        supabase.from('hasil_ujian').delete().in('id', mockIds).then(() => {});
+      }
+
       dbHasil.forEach((item: any) => {
         const pId = item.peserta_id;
         if (deletedIds.has(item.id) || deletedIds.has(pId)) return;
+        if (item.id?.startsWith('hasil_cbt_') || pId?.startsWith('peserta_cbt_') || pId?.startsWith('dummy_')) return;
 
         const std = studentMap.get(pId);
         const score = Number(item.nilai_akhir ?? item.nilai_total ?? 0);
@@ -989,43 +998,46 @@ export async function fetchMergedCbtResults(passedStudents?: StudentData[]): Pro
       });
     }
 
-    // B. Masukkan dari tabel students (calon murid yang sudah submit / memiliki nilai atau status kelulusan)
+    // B. Masukkan dari tabel students HANYA untuk calon murid yang BENAR-BENAR telah mengerjakan & mensubmit ujian CBT
     studentList.forEach((s) => {
       const pId = s.id;
       if (deletedIds.has(pId) || deletedIds.has(`std_res_${pId}`)) return;
+      if (pId.startsWith('peserta_cbt_') || pId.startsWith('dummy_')) return;
 
-      const calcFinal = Number(s.finalScore || 0) || Math.round(
-        (Number(s.diagnosticScore || 0) * 0.3) +
-        (Number(s.generalScore || 0) * 0.4) +
-        (Number(s.religiousScore || 0) * 0.3)
-      );
+      // Siswa HARUS benar-benar telah submit ujian CBT (bukan hanya status registrasi/kelas)
+      const hasReallySubmitted = Boolean(s.testSubmitted) || s.status === 'test_completed';
+      const hasRealFinal = s.finalScore !== null && s.finalScore !== undefined && Number(s.finalScore) > 0;
+      const hasComponentScores =
+        (s.diagnosticScore !== null && s.diagnosticScore !== undefined && Number(s.diagnosticScore) > 0) ||
+        (s.generalScore !== null && s.generalScore !== undefined && Number(s.generalScore) > 0) ||
+        (s.religiousScore !== null && s.religiousScore !== undefined && Number(s.religiousScore) > 0);
 
-      const statusStr = String(s.status || '');
-      const isCompleted =
-        statusStr === 'test_completed' ||
-        statusStr === 'passed' ||
-        statusStr === 'passed_reserved' ||
-        statusStr === 're_registration_paid' ||
-        statusStr === 're_registered' ||
-        statusStr === 'class_assigned' ||
-        statusStr === 'completed' ||
-        Boolean(s.testSubmitted) ||
-        calcFinal > 0 ||
-        (s.diagnosticScore !== undefined && s.diagnosticScore > 0);
+      // JANGAN PERNAH membuat nilai fiktif/otomatis (seperti 80, 82, 75) untuk calon murid yang belum ujian!
+      if (!hasReallySubmitted || (!hasRealFinal && !hasComponentScores)) {
+        return;
+      }
 
       const existing = resultsMap.get(pId);
+      if (!existing) {
+        const finalScoreVal = hasRealFinal
+          ? Number(s.finalScore)
+          : Math.round(
+              (Number(s.diagnosticScore || 0) * 0.3) +
+              (Number(s.generalScore || 0) * 0.4) +
+              (Number(s.religiousScore || 0) * 0.3)
+            );
 
-      if (isCompleted && !existing) {
-        const finalScoreVal = calcFinal > 0 ? calcFinal : (s.status === 'passed' ? 82 : 75);
+        if (finalScoreVal <= 0) return;
+
         resultsMap.set(pId, {
           id: `std_res_${pId}`,
           ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
           pesertaId: pId,
           registrationNumber: s.registrationNumber || '',
           namaPeserta: s.fullName || `Peserta ${pId.slice(-4)}`,
-          nilaiDiagnostik: Number(s.diagnosticScore || (finalScoreVal > 0 ? finalScoreVal : 80)),
-          nilaiTpu: Number(s.generalScore || (finalScoreVal > 0 ? finalScoreVal : 80)),
-          nilaiDiniyyah: Number(s.religiousScore || (finalScoreVal > 0 ? finalScoreVal : 80)),
+          nilaiDiagnostik: Number(s.diagnosticScore || 0),
+          nilaiTpu: Number(s.generalScore || 0),
+          nilaiDiniyyah: Number(s.religiousScore || 0),
           nilaiTotal: finalScoreVal,
           statusKelulusan: finalScoreVal >= 70 ? 'LULUS' : 'BELUM LULUS',
           tanggalUjian: s.updatedAt || new Date().toISOString(),
@@ -1033,20 +1045,22 @@ export async function fetchMergedCbtResults(passedStudents?: StudentData[]): Pro
       }
     });
 
-    // C. Fallback juga dari local storage jika ada
+    // C. Data dari local storage jika ada (hanya data nyata, abaikan data mock)
     const local = getCbtHasilUjian();
     local.forEach((l) => {
-      if (!deletedIds.has(l.id) && !deletedIds.has(l.pesertaId) && !resultsMap.has(l.pesertaId)) {
+      if (
+        !deletedIds.has(l.id) &&
+        !deletedIds.has(l.pesertaId) &&
+        !resultsMap.has(l.pesertaId) &&
+        !l.id?.startsWith('hasil_cbt_') &&
+        !l.pesertaId?.startsWith('peserta_cbt_') &&
+        !l.pesertaId?.startsWith('dummy_')
+      ) {
         resultsMap.set(l.pesertaId, l);
       }
     });
 
-    // D. Jika masih kosong dan belum pernah menghapus semua, masukkan data awal
-    if (resultsMap.size === 0 && deletedIds.size === 0) {
-      DEFAULT_CBT_HASIL_UJIAN.forEach((d) => {
-        resultsMap.set(d.pesertaId, d);
-      });
-    }
+    // D. DITUTUP: Tidak ada lagi penambahan data mock/dummy DEFAULT_CBT_HASIL_UJIAN!
 
     // E. Urutkan berdasarkan nilai akhir tertinggi dan tentukan peringkat ranking
     const sorted = Array.from(resultsMap.values()).sort((a, b) => b.nilaiTotal - a.nilaiTotal);
@@ -1058,7 +1072,7 @@ export async function fetchMergedCbtResults(passedStudents?: StudentData[]): Pro
     return ranked;
   } catch (err) {
     console.warn('fetchMergedCbtResults error:', err);
-    return getCbtHasilUjian();
+    return [];
   }
 }
 

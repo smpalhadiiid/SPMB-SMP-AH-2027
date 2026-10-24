@@ -460,149 +460,18 @@ export function saveCbtUjian(ujianList: CbtUjian[]): void {
   safeSetItem(CBT_KEYS.UJIAN, JSON.stringify(ujianList));
 }
 
-// Default realistic initial exam results for SMP Al-Hadiid CBT
-export const DEFAULT_CBT_HASIL_UJIAN: CbtHasilUjian[] = [
-  {
-    id: 'hasil_cbt_001',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_001',
-    registrationNumber: 'REG-2025-001',
-    namaPeserta: 'Muhammad Fathan Al-Khatiri',
-    nilaiDiagnostik: 95,
-    nilaiTpu: 92,
-    nilaiDiniyyah: 98,
-    nilaiTotal: 95,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-10',
-    ranking: 1,
-  },
-  {
-    id: 'hasil_cbt_002',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_002',
-    registrationNumber: 'REG-2025-002',
-    namaPeserta: 'Aisyah Putri Rahmadani',
-    nilaiDiagnostik: 92,
-    nilaiTpu: 90,
-    nilaiDiniyyah: 95,
-    nilaiTotal: 92,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-10',
-    ranking: 2,
-  },
-  {
-    id: 'hasil_cbt_003',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_003',
-    registrationNumber: 'REG-2025-003',
-    namaPeserta: 'Rafi Ahmad Fauzi',
-    nilaiDiagnostik: 88,
-    nilaiTpu: 90,
-    nilaiDiniyyah: 86,
-    nilaiTotal: 88,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-11',
-    ranking: 3,
-  },
-  {
-    id: 'hasil_cbt_004',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_004',
-    registrationNumber: 'REG-2025-004',
-    namaPeserta: 'Zahra Nurul Izzah',
-    nilaiDiagnostik: 85,
-    nilaiTpu: 88,
-    nilaiDiniyyah: 85,
-    nilaiTotal: 86,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-11',
-    ranking: 4,
-  },
-  {
-    id: 'hasil_cbt_005',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_005',
-    registrationNumber: 'REG-2025-005',
-    namaPeserta: 'Bilal Habibi Ramadhan',
-    nilaiDiagnostik: 82,
-    nilaiTpu: 85,
-    nilaiDiniyyah: 86,
-    nilaiTotal: 84,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-12',
-    ranking: 5,
-  },
-  {
-    id: 'hasil_cbt_006',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_006',
-    registrationNumber: 'REG-2025-006',
-    namaPeserta: 'Nadhira Shafa Qanita',
-    nilaiDiagnostik: 80,
-    nilaiTpu: 82,
-    nilaiDiniyyah: 84,
-    nilaiTotal: 82,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-12',
-    ranking: 6,
-  },
-  {
-    id: 'hasil_cbt_007',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_007',
-    registrationNumber: 'REG-2025-007',
-    namaPeserta: 'Faris Farhan Maulana',
-    nilaiDiagnostik: 76,
-    nilaiTpu: 80,
-    nilaiDiniyyah: 78,
-    nilaiTotal: 78,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-13',
-    ranking: 7,
-  },
-  {
-    id: 'hasil_cbt_008',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_008',
-    registrationNumber: 'REG-2025-008',
-    namaPeserta: 'Khansa Humaira Azzahra',
-    nilaiDiagnostik: 74,
-    nilaiTpu: 76,
-    nilaiDiniyyah: 75,
-    nilaiTotal: 75,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-13',
-    ranking: 8,
-  },
-  {
-    id: 'hasil_cbt_009',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_009',
-    registrationNumber: 'REG-2025-009',
-    namaPeserta: 'Daffa Raihan Pratama',
-    nilaiDiagnostik: 70,
-    nilaiTpu: 72,
-    nilaiDiniyyah: 70,
-    nilaiTotal: 71,
-    statusKelulusan: 'LULUS',
-    tanggalUjian: '2025-02-14',
-    ranking: 9,
-  },
-  {
-    id: 'hasil_cbt_010',
-    ujianId: '7c690ee0-7321-4604-a05d-ea664019bcfc',
-    pesertaId: 'peserta_cbt_010',
-    registrationNumber: 'REG-2025-010',
-    namaPeserta: 'Salma Fitria Amanda',
-    nilaiDiagnostik: 60,
-    nilaiTpu: 64,
-    nilaiDiniyyah: 62,
-    nilaiTotal: 62,
-    statusKelulusan: 'BELUM LULUS',
-    tanggalUjian: '2025-02-14',
-    ranking: 10,
-  },
-];
+// Default hasil ujian CBT kosong (Hanya diisi oleh calon murid yang benar-benar mengerjakan ujian)
+export const DEFAULT_CBT_HASIL_UJIAN: CbtHasilUjian[] = [];
+
+// Bersihkan data dummy legacy dari localStorage saat aplikasi berjalan
+if (typeof window !== 'undefined') {
+  try {
+    const raw = localStorage.getItem(CBT_KEYS.HASIL);
+    if (raw && (raw.includes('hasil_cbt_') || raw.includes('peserta_cbt_') || raw.includes('Fathan Al-Khatiri') || raw.includes('Muhammad Fathan'))) {
+      localStorage.removeItem(CBT_KEYS.HASIL);
+    }
+  } catch {}
+}
 
 export function getDeletedHasilIds(): string[] {
   const data = safeGetItem(CBT_KEYS.DELETED_HASIL);
@@ -667,25 +536,23 @@ export function getCbtHasilUjian(): CbtHasilUjian[] {
   const deletedIds = new Set(getDeletedHasilIds());
   const data = safeGetItem(CBT_KEYS.HASIL);
   if (!data) {
-    const initial = DEFAULT_CBT_HASIL_UJIAN.filter(
-      (h) => !deletedIds.has(h.id) && !deletedIds.has(h.pesertaId)
-    );
-    safeSetItem(CBT_KEYS.HASIL, JSON.stringify(initial));
-    return initial;
+    return [];
   }
   try {
     const parsed: CbtHasilUjian[] = JSON.parse(data);
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      const initial = DEFAULT_CBT_HASIL_UJIAN.filter(
-        (h) => !deletedIds.has(h.id) && !deletedIds.has(h.pesertaId)
-      );
-      return initial;
+      return [];
     }
-    return parsed.filter((h) => !deletedIds.has(h.id) && !deletedIds.has(h.pesertaId));
-  } catch {
-    return DEFAULT_CBT_HASIL_UJIAN.filter(
-      (h) => !deletedIds.has(h.id) && !deletedIds.has(h.pesertaId)
+    return parsed.filter(
+      (h) =>
+        !deletedIds.has(h.id) &&
+        !deletedIds.has(h.pesertaId) &&
+        !h.id?.startsWith('hasil_cbt_') &&
+        !h.pesertaId?.startsWith('peserta_cbt_') &&
+        !h.pesertaId?.startsWith('dummy_')
     );
+  } catch {
+    return [];
   }
 }
 
