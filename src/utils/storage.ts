@@ -28,7 +28,7 @@ import {
 export const KEYS = {
   STUDENTS: 'spmb_alhadiid_students',
   CLASS_QUOTAS: 'spmb_alhadiid_class_quotas',
-  COST_BREAKDOWN: 'spmb_alhadiid_cost_breakdown',
+  COST_BREAKDOWN: 'spmb_alhadiid_cost_breakdown_v3',
   SCHOOL_INFO: 'spmb_alhadiid_school_info',
   TEST_SCHEDULES: 'spmb_alhadiid_test_schedules',
   QUESTION_BANK: 'spmb_alhadiid_question_bank',
@@ -144,7 +144,15 @@ export function getStoredCostBreakdown(): CostBreakdown[] {
   }
   try {
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : initialCostBreakdowns;
+    if (Array.isArray(parsed) && parsed.length >= 10) {
+      const sum = parsed.reduce((acc: number, item: any) => acc + (Number(item.amount) || Number(item.amountIkhwan) || 0), 0);
+      if (sum <= 8000000) {
+        return parsed;
+      }
+    }
+    // Jika data usang (>10 Juta atau <=7 item), perbarui ke 13 item resmi
+    safeSetItem(KEYS.COST_BREAKDOWN, JSON.stringify(initialCostBreakdowns));
+    return initialCostBreakdowns;
   } catch {
     return initialCostBreakdowns;
   }

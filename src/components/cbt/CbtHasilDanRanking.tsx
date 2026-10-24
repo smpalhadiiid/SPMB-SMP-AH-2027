@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { StudentData, CbtHasilUjian } from '../../types';
 import { getCbtHasilUjian } from '../../utils/cbtStorage';
-import { fetchMergedCbtResults, deleteHasilUjianSupabase, deleteAllHasilUjianSupabase } from '../../services/cbtSupabaseService';
+import {
+  fetchMergedCbtResults,
+  deleteHasilUjianSupabase,
+  deleteAllHasilUjianSupabase,
+  resetUjianPesertaCbtSupabase,
+} from '../../services/cbtSupabaseService';
 import { exportToExcel } from '../../utils/excelExporter';
 import {
   Trophy, Award, Search, FileSpreadsheet, CheckCircle2,
@@ -35,6 +40,11 @@ export const CbtHasilDanRanking: React.FC<CbtHasilDanRankingProps> = ({ students
   const [resetStudentScoresOnDelete, setResetStudentScoresOnDelete] = useState<boolean>(true);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
+
+  // State untuk Fitur Ulang / Reset Ujian oleh Admin (Revisi)
+  const [selectedHasilToReset, setSelectedHasilToReset] = useState<CbtHasilUjian | null>(null);
+  const [isResetting, setIsResetting] = useState<boolean>(false);
+  const [activateImmediatelyOnReset, setActivateImmediatelyOnReset] = useState<boolean>(true);
 
   const studentMap = new Map<string, StudentData>(students.map((s) => [s.id, s]));
 
@@ -156,6 +166,38 @@ export const CbtHasilDanRanking: React.FC<CbtHasilDanRankingProps> = ({ students
       alert('Gagal menghapus seluruh nilai: ' + (err?.message || err));
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  // Handler Ulang / Reset Ujian oleh Admin (Revisi)
+  const handleConfirmResetExam = async () => {
+    if (!selectedHasilToReset) return;
+    setIsResetting(true);
+    const target = selectedHasilToReset;
+    const std = studentMap.get(target.pesertaId);
+    const studentName = std?.fullName || target.namaPeserta || 'Peserta';
+
+    try {
+      const ok = await resetUjianPesertaCbtSupabase({
+        participantId: target.pesertaId,
+        examId: target.ujianId,
+        participantName: studentName,
+        activateTestImmediately: activateImmediatelyOnReset,
+      });
+
+      if (ok) {
+        setToastMessage(`Ujian untuk "${studentName}" berhasil direset! Calon murid kini dapat ujian ulang di portal CBT.`);
+        setTimeout(() => setToastMessage(''), 5000);
+        setSelectedHasilToReset(null);
+        await loadData(false);
+      } else {
+        alert('Gagal mereset sesi ujian peserta.');
+      }
+    } catch (err: any) {
+      console.warn('Gagal reset ujian:', err);
+      alert('Gagal mereset ujian: ' + (err?.message || err));
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -391,15 +433,26 @@ export const CbtHasilDanRanking: React.FC<CbtHasilDanRankingProps> = ({ students
                       )}
                     </td>
                     <td className="p-3.5 text-center">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedHasilToDelete(h)}
-                        title={`Hapus data nilai ${std?.fullName || h.namaPeserta}`}
-                        className="px-2.5 py-1.5 text-rose-600 hover:text-white hover:bg-rose-600 rounded-lg transition-all border border-rose-200 hover:border-rose-600 cursor-pointer inline-flex items-center gap-1 font-bold text-[11px] shadow-2xs"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Hapus</span>
-                      </button>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedHasilToReset(h)}
+                          title={`Reset & Izinkan Ujian Ulang untuk ${std?.fullName || h.namaPeserta}`}
+                          className="px-2.5 py-1.5 text-amber-800 hover:text-white hover:bg-amber-600 rounded-lg transition-all border border-amber-300 hover:border-amber-600 cursor-pointer inline-flex items-center gap-1 font-bold text-[11px] shadow-2xs"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-amber-600 group-hover:text-white" />
+                          <span>Reset Ujian</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedHasilToDelete(h)}
+                          title={`Hapus data nilai ${std?.fullName || h.namaPeserta}`}
+                          className="px-2.5 py-1.5 text-rose-600 hover:text-white hover:bg-rose-600 rounded-lg transition-all border border-rose-200 hover:border-rose-600 cursor-pointer inline-flex items-center gap-1 font-bold text-[11px] shadow-2xs"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Hapus</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -498,6 +551,106 @@ export const CbtHasilDanRanking: React.FC<CbtHasilDanRankingProps> = ({ students
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Ya, Hapus Nilai</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI RESET UJIAN PESERTA (REVISI) */}
+      {selectedHasilToReset && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5 text-amber-600">
+                <div className="p-2 bg-amber-100 rounded-xl">
+                  <RotateCcw className="w-5 h-5 text-amber-700" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-slate-900">Konfirmasi Reset Ujian CBT</h4>
+                  <p className="text-[11px] text-slate-500">Izin Ujian Ulang / Retest untuk Calon Murid</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedHasilToReset(null)}
+                disabled={isResetting}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Sesuai ketentuan SPMB, calon murid hanya dapat login dan mengikuti tes ujian <strong>1 (satu) kali</strong>. Dengan mereset ujian, Anda memberikan <strong>1 kesempatan baru</strong> bagi calon murid untuk mengikuti ujian CBT kembali dari nomor 1.
+            </p>
+
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Nama Calon Murid:</span>
+                <span className="font-bold text-slate-900">
+                  {studentMap.get(selectedHasilToReset.pesertaId)?.fullName || selectedHasilToReset.namaPeserta}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">No. Pendaftaran:</span>
+                <span className="font-mono font-bold text-slate-900">
+                  {studentMap.get(selectedHasilToReset.pesertaId)?.registrationNumber || selectedHasilToReset.registrationNumber || '-'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Nilai Sebelumnya:</span>
+                <span className="font-black text-indigo-900 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  {selectedHasilToReset.nilaiTotal} ({selectedHasilToReset.statusKelulusan})
+                </span>
+              </div>
+              <div className="flex justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200">
+                <span>Rincian Bobot:</span>
+                <span>Diag {selectedHasilToReset.nilaiDiagnostik} | TPU {selectedHasilToReset.nilaiTpu} | Din {selectedHasilToReset.nilaiDiniyyah}</span>
+              </div>
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3 bg-emerald-50 rounded-xl border border-emerald-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={activateImmediatelyOnReset}
+                onChange={(e) => setActivateImmediatelyOnReset(e.target.checked)}
+                className="mt-0.5 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer"
+              />
+              <div className="text-[11px] text-emerald-900 leading-tight">
+                <span className="font-bold">Langsung aktifkan status ujian murid (is_test_active = true)</span>
+                <p className="text-emerald-700 text-[10px] mt-0.5">
+                  Tombol "Klik Soal" di portal siswa akan langsung terbuka untuk 1 kali pengerjaan.
+                </p>
+              </div>
+            </label>
+
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedHasilToReset(null)}
+                disabled={isResetting}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetExam}
+                disabled={isResetting}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isResetting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Mereset Ujian...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Ya, Reset &amp; Izinkan Ulang</span>
                   </>
                 )}
               </button>

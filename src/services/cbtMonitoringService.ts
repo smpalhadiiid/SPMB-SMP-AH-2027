@@ -938,8 +938,9 @@ export async function ulangUjianPesertaMonitoringLiveSupabase(params: {
   participantId: string;
   examId?: string;
   participantName?: string;
+  activateTestImmediately?: boolean;
 }): Promise<boolean> {
-  const { participantId, examId, participantName } = params;
+  const { participantId, examId, participantName, activateTestImmediately = true } = params;
   if (!participantId) return false;
 
   try {
@@ -947,6 +948,20 @@ export async function ulangUjianPesertaMonitoringLiveSupabase(params: {
       examId && examId !== 'ALL' && examId !== 'ALL_EXAMS'
         ? examId
         : '7c690ee0-7321-4604-a05d-ea664019bcfc';
+
+    // 0. Trigger backend API endpoint jika server aktif
+    try {
+      fetch('/api/cbt/reset-ujian', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          participantId,
+          examId: examTargetId,
+          participantName,
+          activateTestImmediately,
+        }),
+      }).catch(() => {});
+    } catch {}
 
     // 1. Hapus jawaban peserta dari Supabase
     let delAnsQuery = supabase.from('jawaban_peserta').delete().eq('peserta_id', participantId);
@@ -965,7 +980,7 @@ export async function ulangUjianPesertaMonitoringLiveSupabase(params: {
     // 3. Hapus log_ujian dari Supabase
     await supabase.from('log_ujian').delete().eq('peserta_id', participantId);
 
-    // 4. Reset status & skor pada tabel students agar siswa bisa mulai dari awal
+    // 4. Reset status & skor pada tabel students agar siswa bisa mulai dari awal (1 kesempatan baru)
     await supabase
       .from('students')
       .update({
@@ -974,8 +989,8 @@ export async function ulangUjianPesertaMonitoringLiveSupabase(params: {
         religious_score: null,
         final_score: null,
         test_submitted: false,
-        is_test_active: false,
-        status: 'registered',
+        is_test_active: activateTestImmediately === true,
+        status: 'scheduled_test',
         updated_at: new Date().toISOString(),
       })
       .eq('id', participantId);

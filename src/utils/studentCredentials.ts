@@ -158,3 +158,36 @@ export function getStudentCredentials(
   }
   return null;
 }
+
+/**
+ * Resolve username and password for a student, checking cached credentials, student data fields, or standard fallbacks
+ */
+export function resolveStudentCredentials(student: {
+  id?: string;
+  registrationNumber?: string;
+  userEmail?: string;
+  phone?: string;
+  fullName?: string;
+}): { username: string; password: string } {
+  const creds =
+    getStudentCredentials(student.id) ||
+    getStudentCredentials(student.registrationNumber) ||
+    getStudentCredentials(student.userEmail);
+
+  if (creds?.username && creds?.password) {
+    return {
+      username: creds.username,
+      password: creds.password,
+    };
+  }
+
+  // Fallback defaults
+  const username =
+    creds?.username ||
+    student.registrationNumber ||
+    student.userEmail ||
+    (student.id ? `siswa_${student.id.slice(-4)}` : 'siswa');
+  const password = creds?.password || 'siswa123';
+
+  return { username, password };
+}

@@ -832,6 +832,15 @@ export async function deleteHasilUjianSupabase(
   resetStudentScores: boolean = false
 ): Promise<boolean> {
   try {
+    // 0. Trigger backend API endpoint jika ada
+    if (pesertaId) {
+      try {
+        fetch(`/api/cbt/hasil/${pesertaId}?resetScores=${resetStudentScores ? 'true' : 'false'}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+      } catch {}
+    }
+
     // 1. Hapus dari tabel hasil_ujian Supabase
     if (id && !id.startsWith('std_res_')) {
       await supabase.from('hasil_ujian').delete().eq('id', id);
@@ -865,6 +874,35 @@ export async function deleteHasilUjianSupabase(
   // 2. Hapus dari local storage dan simpan tombstone ID
   deleteCbtHasilUjianLocal(id, pesertaId);
   return true;
+}
+
+/**
+ * Fitur Ulang / Reset Ujian CBT oleh Admin (Revisi)
+ * Calon murid hanya dapat login 1 kali untuk tes CBT.
+ * Jika calon murid perlu mengulang ujian, Admin menggunakan fitur ini untuk
+ * mengosongkan nilai & lembar jawaban, serta membuka kembali akses ujian untuk 1 kesempatan baru.
+ */
+export async function resetUjianPesertaCbtSupabase(params: {
+  participantId: string;
+  examId?: string;
+  participantName?: string;
+  activateTestImmediately?: boolean;
+}): Promise<boolean> {
+  const { participantId, examId, participantName, activateTestImmediately = true } = params;
+  if (!participantId) return false;
+
+  try {
+    const { ulangUjianPesertaMonitoringLiveSupabase } = await import('./cbtMonitoringService');
+    return await ulangUjianPesertaMonitoringLiveSupabase({
+      participantId,
+      examId,
+      participantName,
+      activateTestImmediately,
+    });
+  } catch (err: any) {
+    console.error('resetUjianPesertaCbtSupabase error:', err);
+    return false;
+  }
 }
 
 /**

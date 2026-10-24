@@ -60,8 +60,9 @@ import { FilledClassesSection } from './FilledClassesSection';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { StudentRepository } from '../repositories/StudentRepository';
 import { ClassQuotaRepository } from '../repositories/ClassQuotaRepository';
-import { getStudentCategory, getTotalBamCost } from '../utils/bamPricing';
+import { getStudentCategory, getTotalBamCost, normalizeBamGender } from '../utils/bamPricing';
 import { saveHasilUjianSupabase } from '../services/cbtSupabaseService';
+import { EditStudentModal } from './EditStudentModal';
 import Swal from 'sweetalert2';
 
 
@@ -200,6 +201,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
+  const [editingStudentForUpdate, setEditingStudentForUpdate] = useState<StudentData | null>(null);
+
+  const handleStudentUpdated = (updatedStudent: StudentData) => {
+    const updatedList = students.map((s) => (s.id === updatedStudent.id ? updatedStudent : s));
+    onUpdateStudents(updatedList);
+    if (selectedStudent && selectedStudent.id === updatedStudent.id) {
+      setSelectedStudent(updatedStudent);
+    }
+    if (onRefreshAllData) {
+      onRefreshAllData();
+    }
+  };
 
   // State: Export & Import Excel Calon Murid Modal
   const [showStudentExcelModal, setShowStudentExcelModal] = useState<{ open: boolean; tab: 'import' | 'export' }>({
@@ -215,7 +228,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [announcementSearch, setAnnouncementSearch] = useState<string>('');
 
   // BAM Verification form state (Tahap 8 Alur SPMB: Verifikasi Bukti & Input Nominal ke Tabel Pembayaran)
-  const [bamVerifyNominal, setBamVerifyNominal] = useState<number>(11000000);
+  const [bamVerifyNominal, setBamVerifyNominal] = useState<number>(6670000);
   const [bamVerifyDate, setBamVerifyDate] = useState<string>('');
   const [bamVerifyType, setBamVerifyType] = useState<BamInstallmentType>('Lunas');
   const [bamVerifyNotes, setBamVerifyNotes] = useState<string>('');
@@ -223,8 +236,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   React.useEffect(() => {
     if (selectedStudent) {
-      const category = getStudentCategory(selectedStudent);
-      const defaultNominal = selectedStudent.initialPaymentAmount || getTotalBamCost(category);
+      const defaultNominal = selectedStudent.initialPaymentAmount || getTotalBamCost(selectedStudent);
       setBamVerifyNominal(defaultNominal);
       setBamVerifyDate(selectedStudent.initialPaymentDate || new Date().toISOString().split('T')[0]);
       setBamVerifyType('Lunas');
@@ -1909,6 +1921,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               >
                                 Detail
                               </button>
+                              <button
+                                onClick={() => setEditingStudentForUpdate(s)}
+                                className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer flex items-center gap-1"
+                                title="Edit / Lengkapi Data Pendaftaran"
+                              >
+                                <Edit className="w-2.5 h-2.5" />
+                                <span>Edit</span>
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -2128,6 +2148,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           >
                             <Eye className="w-3 h-3 text-slate-300" />
                             <span>Detail</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingStudentForUpdate(s)}
+                            className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer shadow-sm"
+                            title="Edit & Lengkapi Data Pendaftaran Calon Murid"
+                          >
+                            <Edit className="w-3 h-3 text-blue-100" />
+                            <span>Edit Data</span>
                           </button>
                           <button
                             type="button"
@@ -5302,6 +5331,30 @@ Kunci: B`}
                   </div>
                 </div>
 
+                {/* ACTION BAR: EDIT DATA CALON MURID */}
+                <div className="p-4 bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 rounded-2xl text-white shadow-md flex flex-col sm:flex-row items-center justify-between gap-3 border border-blue-700/50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0">
+                      <Edit className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-sm text-white">Edit & Lengkapi Data Pendaftaran</div>
+                      <div className="text-xs text-blue-200">
+                        Perbarui biodata murid, NIK, NISN, sekolah asal, data orang tua/wali, atau dokumen
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingStudentForUpdate(selectedStudent)}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                    title="Buka form lengkap edit data calon murid"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>Edit / Lengkapi Data Murid</span>
+                  </button>
+                </div>
+
                 {/* FITUR VERIFIKASI PEMBAYARAN & DATA CALON MURID */}
                 <div className={`p-4 rounded-2xl border space-y-3 ${
                   selectedStudent.formPaymentStatus === 'verified' && (selectedStudent.isFormVerified || selectedStudent.status === 'form_verified')
@@ -5653,10 +5706,10 @@ Kunci: B`}
                               value={bamVerifyNominal}
                               onChange={(e) => setBamVerifyNominal(Number(e.target.value))}
                               className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 font-mono"
-                              placeholder={selectedStudent ? getTotalBamCost(getStudentCategory(selectedStudent)).toString() : '11000000'}
+                              placeholder={selectedStudent ? getTotalBamCost(selectedStudent).toString() : '6670000'}
                             />
                             <span className="text-[10px] text-slate-400">
-                              Standar {selectedStudent && getStudentCategory(selectedStudent) === 'Internal' ? 'Al-Hadiid (Internal): Rp 11.000.000' : 'Umum (Eksternal): Rp 12.000.000'}
+                              Standar SK Resmi: {selectedStudent && normalizeBamGender(selectedStudent) === 'akhwat' ? 'Akhwat (Putri): Rp 6.890.000' : 'Ikhwan (Putra): Rp 6.670.000'}
                             </span>
                           </div>
                           <div>
@@ -5846,6 +5899,16 @@ Kunci: B`}
           setActiveProofModalData(null);
         }}
       />
+
+      {/* MODAL EDIT & LENGKAPI DATA CALON MURID */}
+      {editingStudentForUpdate && (
+        <EditStudentModal
+          isOpen={!!editingStudentForUpdate}
+          onClose={() => setEditingStudentForUpdate(null)}
+          student={editingStudentForUpdate}
+          onSaveSuccess={handleStudentUpdated}
+        />
+      )}
     </div>
   );
 };

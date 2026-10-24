@@ -32,41 +32,65 @@ export interface BamInstallmentStep {
   notes: string;
 }
 
-// Fallback seed items jika database kosong saat instalasi awal
+// Fallback seed items jika database kosong saat instalasi awal (13 Komponen Resmi SK BAM SPMB SMP Al-Hadiid)
 export const DEFAULT_BAM_ITEMS_IKHWAN: BamItem[] = [
-  { id: 'bam_ikhwan_1', gender: 'ikhwan', nama_item: 'Dana Pengembangan Sarana & Prasarana', nominal: 4500000, urutan: 1, aktif: true, keterangan: 'Pengembangan sarana prasarana, lab multimedia, dan fasilitas pembelajaran digital' },
-  { id: 'bam_ikhwan_2', gender: 'ikhwan', nama_item: 'Paket Seragam Lengkap Ikhwan (5 Stel)', nominal: 1500000, urutan: 2, aktif: true, keterangan: 'Putih Biru, Pramuka, Batik Khas Al-Hadiid, Kaos Olahraga, Busana Muslim' },
-  { id: 'bam_ikhwan_3', gender: 'ikhwan', nama_item: 'Buku Paket & Modul Pembelajaran (1 Tahun)', nominal: 1600000, urutan: 3, aktif: true, keterangan: 'Buku teks kurikulum nasional, modul keislaman, Al-Qur\'an tahfidz' },
-  { id: 'bam_ikhwan_4', gender: 'ikhwan', nama_item: 'Kegiatan MPLS & Orientasi Santri Rabbani', nominal: 500000, urutan: 4, aktif: true, keterangan: 'Masa Pengenalan Lingkungan Sekolah, asesmen awal karakter santri' },
-  { id: 'bam_ikhwan_5', gender: 'ikhwan', nama_item: 'Ekstrakurikuler Wajib & Pilihan (1 Tahun)', nominal: 600000, urutan: 5, aktif: true, keterangan: 'Tahfidz intensif, Pramuka SIT, Panahan, Futsal, Silat, Bahasa' },
-  { id: 'bam_ikhwan_6', gender: 'ikhwan', nama_item: 'SPP Bulan Pertama (Juli)', nominal: 800000, urutan: 6, aktif: true, keterangan: 'Iuran penyelenggaraan pendidikan bulan pertama tahun pelajaran berjalan' },
-  { id: 'bam_ikhwan_7', gender: 'ikhwan', nama_item: 'Kegiatan Kesiswaan, Kepesantrenan & Dauroh Qur\'an', nominal: 1500000, urutan: 7, aktif: true, keterangan: 'Pesantren kilat, dauroh Al-Qur\'an, mukhayyam tarbawi & evaluasi semester' },
+  { id: 'bam_ikhwan_1', gender: 'ikhwan', nama_item: 'Dana Awal Pendidikan (DAP)', nominal: 4250000, urutan: 1, aktif: true, keterangan: 'Dana sarana, prasarana, fasilitas pembelajaran & pengembangan pendidikan awal santri' },
+  { id: 'bam_ikhwan_2', gender: 'ikhwan', nama_item: 'Dana Praktik Komputer', nominal: 150000, urutan: 2, aktif: true, keterangan: 'Praktikum lab komputer, multimedia, dan literasi digital santri' },
+  { id: 'bam_ikhwan_3', gender: 'ikhwan', nama_item: 'Dana Praktik IPA', nominal: 100000, urutan: 3, aktif: true, keterangan: 'Praktikum laboratorium sains dan eksperimen IPA terpadu' },
+  { id: 'bam_ikhwan_4', gender: 'ikhwan', nama_item: 'Perlengkapan / Seragam (Paket)*', nominal: 700000, urutan: 4, aktif: true, keterangan: 'Paket seragam lengkap Ikhwan (Putih Biru, Biru Tosca, Pramuka, Olahraga)' },
+  { id: 'bam_ikhwan_5', gender: 'ikhwan', nama_item: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', nominal: 425000, urutan: 5, aktif: true, keterangan: 'Iuran penyelenggaraan pendidikan (SPP) bulan pertama (Juli)' },
+  { id: 'bam_ikhwan_6', gender: 'ikhwan', nama_item: 'Tabungan Wajib', nominal: 25000, urutan: 6, aktif: true, keterangan: 'Tabungan wajib santri bulan pertama' },
+  { id: 'bam_ikhwan_7', gender: 'ikhwan', nama_item: 'MPLS / MOS', nominal: 100000, urutan: 7, aktif: true, keterangan: 'Masa Pengenalan Lingkungan Sekolah & Orientasi Santri Rabbani' },
+  { id: 'bam_ikhwan_8', gender: 'ikhwan', nama_item: 'Dana Sosial', nominal: 25000, urutan: 8, aktif: true, keterangan: 'Dana sosial santri, infak dan kepedulian umat' },
+  { id: 'bam_ikhwan_9', gender: 'ikhwan', nama_item: 'Penilaian Akhir Semester (PAS)', nominal: 220000, urutan: 9, aktif: true, keterangan: 'Penyelenggaraan evaluasi dan Penilaian Akhir Semester 1' },
+  { id: 'bam_ikhwan_10', gender: 'ikhwan', nama_item: 'Penilaian Akhir Tahun (PAT)', nominal: 225000, urutan: 10, aktif: true, keterangan: 'Penyelenggaraan evaluasi dan Penilaian Akhir Tahun' },
+  { id: 'bam_ikhwan_11', gender: 'ikhwan', nama_item: 'Kegiatan Ekstrakurikuler / AMBAP', nominal: 125000, urutan: 11, aktif: true, keterangan: 'Kegiatan ekstrakurikuler wajib & kepanduan pramuka SIT / AMBAP' },
+  { id: 'bam_ikhwan_12', gender: 'ikhwan', nama_item: 'Biaya Dauroh (Kegiatan Pesantren)', nominal: 120000, urutan: 12, aktif: true, keterangan: 'Dauroh Al-Qur\'an, tarbiyah ruhiyah, dan kepesantrenan santri' },
+  { id: 'bam_ikhwan_13', gender: 'ikhwan', nama_item: 'Biaya Cetak (Raport, Foto, Name Tag, Kalender)', nominal: 205000, urutan: 13, aktif: true, keterangan: 'Buku raport kurikulum merdeka, pas foto kartu pelajar, name tag & kalender sekolah' },
 ];
 
 export const DEFAULT_BAM_ITEMS_AKHWAT: BamItem[] = [
-  { id: 'bam_akhwat_1', gender: 'akhwat', nama_item: 'Dana Pengembangan Sarana & Prasarana', nominal: 4500000, urutan: 1, aktif: true, keterangan: 'Pengembangan sarana prasarana, lab multimedia, dan fasilitas pembelajaran digital' },
-  { id: 'bam_akhwat_2', gender: 'akhwat', nama_item: 'Paket Seragam Lengkap Akhwat + Jilbab Syar\'i (5 Stel)', nominal: 1720000, urutan: 2, aktif: true, keterangan: 'Putih Biru + Jilbab, Pramuka, Batik Al-Hadiid, Kaos Olahraga, Gamis Muslimah' },
-  { id: 'bam_akhwat_3', gender: 'akhwat', nama_item: 'Buku Paket & Modul Pembelajaran (1 Tahun)', nominal: 1600000, urutan: 3, aktif: true, keterangan: 'Buku teks kurikulum nasional, modul keislaman, Al-Qur\'an tahfidz' },
-  { id: 'bam_akhwat_4', gender: 'akhwat', nama_item: 'Kegiatan MPLS & Orientasi Santri Rabbani', nominal: 500000, urutan: 4, aktif: true, keterangan: 'Masa Pengenalan Lingkungan Sekolah, asesmen awal karakter santri' },
-  { id: 'bam_akhwat_5', gender: 'akhwat', nama_item: 'Ekstrakurikuler Wajib & Keputrian (1 Tahun)', nominal: 600000, urutan: 5, aktif: true, keterangan: 'Tahfidz intensif, Pramuka SIT, Keputrian, Seni Kaligrafi, Bahasa' },
-  { id: 'bam_akhwat_6', gender: 'akhwat', nama_item: 'SPP Bulan Pertama (Juli)', nominal: 800000, urutan: 6, aktif: true, keterangan: 'Iuran penyelenggaraan pendidikan bulan pertama tahun pelajaran berjalan' },
-  { id: 'bam_akhwat_7', gender: 'akhwat', nama_item: 'Kegiatan Keputrian, Tarbiyah & Dauroh Tahfidz', nominal: 1500000, urutan: 7, aktif: true, keterangan: 'Keputrian intensif, dauroh Al-Qur\'an santriwati, tarbiyah ruhiyah' },
+  { id: 'bam_akhwat_1', gender: 'akhwat', nama_item: 'Dana Awal Pendidikan (DAP)', nominal: 4250000, urutan: 1, aktif: true, keterangan: 'Dana sarana, prasarana, fasilitas pembelajaran & pengembangan pendidikan awal santriwati' },
+  { id: 'bam_akhwat_2', gender: 'akhwat', nama_item: 'Dana Praktik Komputer', nominal: 150000, urutan: 2, aktif: true, keterangan: 'Praktikum lab komputer, multimedia, dan literasi digital santriwati' },
+  { id: 'bam_akhwat_3', gender: 'akhwat', nama_item: 'Dana Praktik IPA', nominal: 100000, urutan: 3, aktif: true, keterangan: 'Praktikum laboratorium sains dan eksperimen IPA terpadu' },
+  { id: 'bam_akhwat_4', gender: 'akhwat', nama_item: 'Perlengkapan / Seragam (Paket)*', nominal: 920000, urutan: 4, aktif: true, keterangan: 'Paket seragam lengkap Akhwat + Jilbab Syar\'i (Putih Biru, Biru Tosca, Pramuka, Olahraga)' },
+  { id: 'bam_akhwat_5', gender: 'akhwat', nama_item: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', nominal: 425000, urutan: 5, aktif: true, keterangan: 'Iuran penyelenggaraan pendidikan (SPP) bulan pertama (Juli)' },
+  { id: 'bam_akhwat_6', gender: 'akhwat', nama_item: 'Tabungan Wajib', nominal: 25000, urutan: 6, aktif: true, keterangan: 'Tabungan wajib santriwati bulan pertama' },
+  { id: 'bam_akhwat_7', gender: 'akhwat', nama_item: 'MPLS / MOS', nominal: 100000, urutan: 7, aktif: true, keterangan: 'Masa Pengenalan Lingkungan Sekolah & Orientasi Santriwati Rabbani' },
+  { id: 'bam_akhwat_8', gender: 'akhwat', nama_item: 'Dana Sosial', nominal: 25000, urutan: 8, aktif: true, keterangan: 'Dana sosial santriwati, infak dan kepedulian umat' },
+  { id: 'bam_akhwat_9', gender: 'akhwat', nama_item: 'Penilaian Akhir Semester (PAS)', nominal: 220000, urutan: 9, aktif: true, keterangan: 'Penyelenggaraan evaluasi dan Penilaian Akhir Semester 1' },
+  { id: 'bam_akhwat_10', gender: 'akhwat', nama_item: 'Penilaian Akhir Tahun (PAT)', nominal: 225000, urutan: 10, aktif: true, keterangan: 'Penyelenggaraan evaluasi dan Penilaian Akhir Tahun' },
+  { id: 'bam_akhwat_11', gender: 'akhwat', nama_item: 'Kegiatan Ekstrakurikuler / AMBAP', nominal: 125000, urutan: 11, aktif: true, keterangan: 'Kegiatan keputrian, ekstrakurikuler wajib & kepanduan pramuka SIT' },
+  { id: 'bam_akhwat_12', gender: 'akhwat', nama_item: 'Biaya Dauroh (Kegiatan Pesantren)', nominal: 120000, urutan: 12, aktif: true, keterangan: 'Dauroh Al-Qur\'an, tarbiyah ruhiyah, dan kepesantrenan santriwati' },
+  { id: 'bam_akhwat_13', gender: 'akhwat', nama_item: 'Biaya Cetak (Raport, Foto, Name Tag, Kalender)', nominal: 205000, urutan: 13, aktif: true, keterangan: 'Buku raport kurikulum merdeka, pas foto kartu pelajar, name tag & kalender sekolah' },
 ];
 
-const LOCAL_STORAGE_KEY_IKHWAN = 'spmb_alhadiid_bam_items_ikhwan_v2';
-const LOCAL_STORAGE_KEY_AKHWAT = 'spmb_alhadiid_bam_items_akhwat_v2';
+const LOCAL_STORAGE_KEY_IKHWAN = 'spmb_alhadiid_bam_items_ikhwan_v3';
+const LOCAL_STORAGE_KEY_AKHWAT = 'spmb_alhadiid_bam_items_akhwat_v3';
 
 // In-memory cache for fast synchronous access
 let cachedIkhwanItems: BamItem[] = [];
 let cachedAkhwatItems: BamItem[] = [];
 
-// Inisialisasi awal dari LocalStorage jika ada
+// Inisialisasi awal dari LocalStorage jika ada (dan validasi tidak menggunakan nominal usang >10M)
 if (typeof window !== 'undefined' && window.localStorage) {
   try {
     const rawIkhwan = window.localStorage.getItem(LOCAL_STORAGE_KEY_IKHWAN);
-    if (rawIkhwan) cachedIkhwanItems = JSON.parse(rawIkhwan);
+    if (rawIkhwan) {
+      const parsed = JSON.parse(rawIkhwan);
+      const sum = Array.isArray(parsed) ? parsed.reduce((a, b) => a + (Number(b.nominal) || 0), 0) : 0;
+      if (sum <= 8000000 && parsed.length >= 10) {
+        cachedIkhwanItems = parsed;
+      }
+    }
     const rawAkhwat = window.localStorage.getItem(LOCAL_STORAGE_KEY_AKHWAT);
-    if (rawAkhwat) cachedAkhwatItems = JSON.parse(rawAkhwat);
+    if (rawAkhwat) {
+      const parsed = JSON.parse(rawAkhwat);
+      const sum = Array.isArray(parsed) ? parsed.reduce((a, b) => a + (Number(b.nominal) || 0), 0) : 0;
+      if (sum <= 8000000 && parsed.length >= 10) {
+        cachedAkhwatItems = parsed;
+      }
+    }
   } catch (e) {
     console.warn('[BAM] Error initializing cache from localStorage:', e);
   }
@@ -112,16 +136,30 @@ export function setLoadedBamItems(gender: BamGender, items: BamItem[]): void {
 
 /**
  * Mengambil data BAM resmi langsung dari Supabase dan memperbarui cache in-memory & localStorage.
+ * Jika Supabase masih menyimpan data lama (> 10M), secara otomatis diperbarui ke skema 13 item resmi.
  */
 export async function fetchAndCacheBamItems(): Promise<{ ikhwan: BamItem[]; akhwat: BamItem[] }> {
   try {
     const res = await fetchBamItemsFromSupabase();
-    if (res.ikhwan && res.ikhwan.length > 0) {
-      setLoadedBamItems('ikhwan', res.ikhwan);
+    let ikhwanToSet = res.ikhwan;
+    let akhwatToSet = res.akhwat;
+
+    // Deteksi jika data Supabase kosong atau data usang (> 10 Juta atau item <= 7)
+    const ikhwanSum = calculateTotalFromItems(ikhwanToSet);
+    const akhwatSum = calculateTotalFromItems(akhwatToSet);
+
+    if (!ikhwanToSet || ikhwanToSet.length <= 7 || ikhwanSum > 8000000) {
+      ikhwanToSet = [...DEFAULT_BAM_ITEMS_IKHWAN];
+      saveBamItemsToSupabase('ikhwan', ikhwanToSet).catch(() => {});
     }
-    if (res.akhwat && res.akhwat.length > 0) {
-      setLoadedBamItems('akhwat', res.akhwat);
+    if (!akhwatToSet || akhwatToSet.length <= 7 || akhwatSum > 8000000) {
+      akhwatToSet = [...DEFAULT_BAM_ITEMS_AKHWAT];
+      saveBamItemsToSupabase('akhwat', akhwatToSet).catch(() => {});
     }
+
+    setLoadedBamItems('ikhwan', ikhwanToSet);
+    setLoadedBamItems('akhwat', akhwatToSet);
+
     return {
       ikhwan: getLoadedBamItems('ikhwan'),
       akhwat: getLoadedBamItems('akhwat'),
@@ -245,38 +283,37 @@ export const BAM_CONFIG = {
   },
 };
 
-export const BAM_BREAKDOWN_ITEMS: BamBreakdownItem[] = DEFAULT_BAM_ITEMS_IKHWAN.map(it => ({
-  id: it.id,
-  name: it.nama_item,
-  amountInternal: it.nominal,
-  amountExternal: it.nominal,
-  period: 'Sekali',
-  notes: it.keterangan || '',
-}));
+export const BAM_BREAKDOWN_ITEMS: BamBreakdownItem[] = DEFAULT_BAM_ITEMS_IKHWAN.map((it, idx) => {
+  const akhwatMatch = DEFAULT_BAM_ITEMS_AKHWAT[idx];
+  return {
+    id: it.id,
+    name: it.nama_item,
+    amountInternal: it.nominal,
+    amountExternal: akhwatMatch ? akhwatMatch.nominal : it.nominal,
+    period: (it.nama_item.includes('DPP') || it.nama_item.includes('Tabungan'))
+      ? 'Per Bulan'
+      : (it.nama_item.includes('DAP') || it.nama_item.includes('Seragam') || it.nama_item.includes('MPLS'))
+      ? 'Sekali'
+      : 'Per Tahun',
+    notes: it.keterangan || '',
+  };
+});
 
 export const BAM_INSTALLMENT_STEPS: BamInstallmentStep[] = [
   {
     step: 1,
-    title: 'Tahap 1 (Saat Daftar Ulang)',
-    amountInternal: 5000000,
-    amountExternal: 5000000,
+    title: 'Tahap 1: DP Awal (Saat Daftar Ulang)',
+    amountInternal: 4000000,
+    amountExternal: 4000000,
     dueDate: 'Saat daftar ulang dinyatakan lulus',
-    notes: 'Penguncian kursi santri & pengukuran seragam',
+    notes: 'Penguncian kursi santri, pengukuran seragam & administrasi awal',
   },
   {
     step: 2,
-    title: 'Tahap 2 (Sebelum Masuk Sekolah)',
-    amountInternal: 3000000,
-    amountExternal: 3000000,
-    dueDate: '30 Juni 2027',
-    notes: 'Pelunasan seragam, modul pelajaran, dan persiapan MPLS',
-  },
-  {
-    step: 3,
-    title: 'Tahap 3 (Sebelum Penilaian Akhir Semester 1)',
-    amountInternal: 3000000,
-    amountExternal: 3000000,
-    dueDate: '30 Oktober 2027',
-    notes: 'Pelunasan total sisa tagihan Biaya Awal Masuk (BAM)',
+    title: 'Tahap 2: Pelunasan Sisa Biaya BAM',
+    amountInternal: 2670000,
+    amountExternal: 2890000,
+    dueDate: 'Paling lambat 30 Oktober 2027',
+    notes: 'Pelunasan sisa tagihan BAM (Ikhwan: Rp 2.670.000 / Akhwat: Rp 2.890.000)',
   },
 ];

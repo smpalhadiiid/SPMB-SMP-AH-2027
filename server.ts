@@ -1690,6 +1690,169 @@ app.post(
 );
 
 // =====================================================================
+// API ROUTES: CBT HASIL UJIAN & FITUR RESET / ULANG UJIAN
+// =====================================================================
+
+// 1. Hapus Data Nilai Ujian Peserta
+app.delete('/api/cbt/hasil/:pesertaId', async (req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
+
+  const pesertaId = req.params.pesertaId;
+  const resetScores = req.query.resetScores === 'true' || req.query.resetScores === '1';
+
+  try {
+    // 1. Hapus dari tabel hasil_ujian
+    await sb.from('hasil_ujian').delete().eq('peserta_id', pesertaId);
+
+    // 2. Hapus jawaban dari tabel jawaban_peserta
+    await sb.from('jawaban_peserta').delete().eq('peserta_id', pesertaId);
+
+    // 3. Reset skor di tabel students jika diminta
+    if (resetScores) {
+      await sb
+        .from('students')
+        .update({
+          diagnostic_score: null,
+          general_score: null,
+          religious_score: null,
+          final_score: null,
+          test_submitted: false,
+          is_test_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', pesertaId);
+    }
+
+    // Catat Audit Log jika tabel audit_logs tersedia
+    try {
+      await sb.from('audit_logs').insert({
+        user_id: 'cbt_admin',
+        user_email: 'admin@alhadiid.sch.id',
+        role: 'admin',
+        action: 'DELETE_CBT_HASIL',
+        target_entity: 'hasil_ujian',
+        target_id: pesertaId,
+        details: { resetScores, timestamp: new Date().toISOString() },
+        created_at: new Date().toISOString(),
+      });
+    } catch {}
+
+    return res.json({
+      success: true,
+      message: `Data nilai ujian untuk peserta ${pesertaId} berhasil dihapus dari database Supabase.`,
+      pesertaId,
+      resetScores,
+    });
+  } catch (err: any) {
+    console.error('Error deleting CBT hasil:', err);
+    return res.status(500).json({ success: false, message: 'Gagal menghapus data nilai ujian.' });
+  }
+});
+
+// 2. Fitur Reset / Ulang Ujian Peserta oleh Admin
+app.post('/api/cbt/reset-ujian', async (req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ success: false, message: 'Database belum terkonfigurasi.' });
+
+  const { participantId, examId, activateTestImmediately = true, participantName } = req.body || {};
+  if (!participantId) {
+    return res.status(400).json({ success: false, message: 'ID Peserta (participantId) wajib diisi.' });
+  }
+
+  try {
+    // 1. Hapus jawaban peserta dari jawaban_peserta
+    let delAnsQuery = sb.from('jawaban_peserta').delete().eq('peserta_id', participantId);
+    if (examId && examId !== 'ALL' && examId !== 'ALL_EXAMS') {
+      delAnsQuery = delAnsQuery.eq('ujian_id', examId);
+    }
+    await delAnsQuery;
+
+    // 2. Hapus hasil_ujian
+    let delHasilQuery = sb.from('hasil_ujian').delete().eq('peserta_id', participantId);
+    if (examId && examId !== 'ALL' && examId !== 'ALL_EXAMS') {
+      delHasilQuery = delHasilQuery.eq('ujian_id', examId);
+    }
+    await delHasilQuery;
+
+    // 3. Hapus log_ujian
+    await sb.from('log_ujian').delete().eq('peserta_id', participantId);
+
+    // 4. Update tabel students: kosongkan skor, buka kunci ujian (test_submitted: false, is_test_active: true)
+    const { error: stdErr } = await sb
+      .from('students')
+      .update({
+        diagnostic_score: null,
+        general_score: null,
+        religious_score: null,
+        final_score: null,
+        test_submitted: false,
+        is_test_active: activateTestImmediately === true,
+        status: 'scheduled_test',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', participantId);
+
+    if (stdErr) {
+      console.warn('Warning updating student for exam reset:', stdErr.message);
+    }
+
+    // 5. Bersihkan session dari spmb_app_state jika ada
+    try {
+      const { data: stateRows } = await sb
+        .from('spmb_app_state')
+        .select('key, payload')
+        .like('key', 'cbt_%');
+
+      if (stateRows && stateRows.length > 0) {
+        for (const row of stateRows) {
+          if (row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) && row.payload[participantId]) {
+            const updated = { ...row.payload };
+            delete updated[participantId];
+            await sb.from('spmb_app_state').upsert({
+              key: row.key,
+              payload: updated,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Note cleaning spmb_app_state session:', e);
+    }
+
+    // 6. Catat audit log reset ujian
+    try {
+      await sb.from('audit_logs').insert({
+        user_id: 'cbt_admin',
+        user_email: 'admin@alhadiid.sch.id',
+        role: 'admin',
+        action: 'RESET_CBT_EXAM',
+        target_entity: 'students',
+        target_id: participantId,
+        details: {
+          participantName: participantName || participantId,
+          examId,
+          activateTestImmediately,
+          timestamp: new Date().toISOString(),
+        },
+        created_at: new Date().toISOString(),
+      });
+    } catch {}
+
+    return res.json({
+      success: true,
+      message: `Ujian berhasil direset! Peserta ${participantName || participantId} kini diizinkan login dan mengerjakan tes CBT kembali dari awal (1 kesempatan).`,
+      participantId,
+      isTestActive: activateTestImmediately,
+    });
+  } catch (err: any) {
+    console.error('Error resetting CBT exam:', err);
+    return res.status(500).json({ success: false, message: 'Gagal mereset ujian peserta.' });
+  }
+});
+
+// =====================================================================
 // API ROUTES: DOKUMENTASI RESMI ENDPOINTS (SECURE SPEC)
 // =====================================================================
 app.get('/api/docs', (_req: Request, res: Response) => {

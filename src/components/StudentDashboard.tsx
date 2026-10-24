@@ -19,6 +19,7 @@ import toast from 'react-hot-toast';
 import { StudentData, SchoolInfo, CostBreakdown, UserAccount, ExamQuestion, TestSchedule } from '../types';
 import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
+import { StudentRepository } from '../repositories/StudentRepository';
 import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF, generatePaymentReceiptPDF } from '../utils/pdfGenerator';
 import { downloadBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
 import {
@@ -130,9 +131,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [subdistrict, setSubdistrict] = useState(studentData.subdistrict || 'Cileungsi');
   const [city, setCity] = useState(studentData.city || 'Kabupaten Bogor');
   const [province, setProvince] = useState(studentData.province || 'Jawa Barat');
+  const [postalCode, setPostalCode] = useState(studentData.postalCode || '');
 
   const [previousSchoolName, setPreviousSchoolName] = useState(studentData.previousSchoolName || '');
   const [previousSchoolNpsn, setPreviousSchoolNpsn] = useState(studentData.previousSchoolNpsn || '');
+  const [previousSchoolAddress, setPreviousSchoolAddress] = useState(studentData.previousSchoolAddress || '');
 
   const [fatherName, setFatherName] = useState(studentData.fatherName || '');
   const [fatherBirthPlace, setFatherBirthPlace] = useState(studentData.fatherBirthPlace || '');
@@ -145,7 +148,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [motherBirthPlace, setMotherBirthPlace] = useState(studentData.motherBirthPlace || '');
   const [motherBirthDate, setMotherBirthDate] = useState(studentData.motherBirthDate || '');
   const [motherJob, setMotherJob] = useState(studentData.motherJob || '');
+  const [motherEducation, setMotherEducation] = useState(studentData.motherEducation || 'SMA/SMK');
   const [motherPhone, setMotherPhone] = useState(studentData.motherPhone || '');
+
+  // Data Wali (Opsional)
+  const [guardianName, setGuardianName] = useState(studentData.guardianName || '');
+  const [guardianRelation, setGuardianRelation] = useState(studentData.guardianRelation || '');
+  const [guardianPhone, setGuardianPhone] = useState(studentData.guardianPhone || '');
+
+  // Pilihan Jalur Masuk & Program
+  const [entryPath, setEntryPath] = useState(studentData.entryPath || 'Reguler');
+  const [selectedProgram, setSelectedProgram] = useState(studentData.selectedProgram || 'Reguler');
 
   // Proof URLs & BAM Payment details (Supabase Storage integration)
   const [formPaymentProof, setFormPaymentProof] = useState(studentData.formPaymentProofUrl || '');
@@ -241,9 +254,60 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [photoUrl, setPhotoUrl] = useState(studentData.photoUrl || '');
   const [kkUrl, setKkUrl] = useState(studentData.kkUrl || '');
   const [birthCertUrl, setBirthCertUrl] = useState(studentData.birthCertUrl || '');
+  const [reportCardUrl, setReportCardUrl] = useState(studentData.reportCardUrl || '');
+  const [kipUrl, setKipUrl] = useState(studentData.kipUrl || '');
+  const [certificateUrl, setCertificateUrl] = useState(studentData.certificateUrl || '');
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+
+  // Sinkronisasi data formulir saat studentData diupdate (misal oleh Admin atau dari Supabase)
+  useEffect(() => {
+    if (studentData) {
+      if (studentData.fullName) setFullName(studentData.fullName);
+      if (studentData.phone) setPhone(studentData.phone);
+      if (studentData.nik) setNik(studentData.nik);
+      if (studentData.nisn) setNisn(studentData.nisn);
+      if (studentData.birthPlace) setBirthPlace(studentData.birthPlace);
+      if (studentData.birthDate) setBirthDate(studentData.birthDate);
+      if (studentData.gender) setGender(studentData.gender);
+      if (studentData.religion) setReligion(studentData.religion);
+      if (studentData.childOrder) setChildOrder(studentData.childOrder);
+      if (studentData.totalSiblings) setTotalSiblings(studentData.totalSiblings);
+      if (studentData.address) setAddress(studentData.address);
+      if (studentData.village) setVillage(studentData.village);
+      if (studentData.subdistrict) setSubdistrict(studentData.subdistrict);
+      if (studentData.city) setCity(studentData.city);
+      if (studentData.province) setProvince(studentData.province);
+      if (studentData.postalCode) setPostalCode(studentData.postalCode);
+      if (studentData.previousSchoolName) setPreviousSchoolName(studentData.previousSchoolName);
+      if (studentData.previousSchoolNpsn) setPreviousSchoolNpsn(studentData.previousSchoolNpsn);
+      if (studentData.previousSchoolAddress) setPreviousSchoolAddress(studentData.previousSchoolAddress);
+      if (studentData.fatherName) setFatherName(studentData.fatherName);
+      if (studentData.fatherBirthPlace) setFatherBirthPlace(studentData.fatherBirthPlace);
+      if (studentData.fatherBirthDate) setFatherBirthDate(studentData.fatherBirthDate);
+      if (studentData.fatherJob) setFatherJob(studentData.fatherJob);
+      if (studentData.fatherEducation) setFatherEducation(studentData.fatherEducation);
+      if (studentData.fatherPhone) setFatherPhone(studentData.fatherPhone);
+      if (studentData.motherName) setMotherName(studentData.motherName);
+      if (studentData.motherBirthPlace) setMotherBirthPlace(studentData.motherBirthPlace);
+      if (studentData.motherBirthDate) setMotherBirthDate(studentData.motherBirthDate);
+      if (studentData.motherJob) setMotherJob(studentData.motherJob);
+      if (studentData.motherEducation) setMotherEducation(studentData.motherEducation);
+      if (studentData.motherPhone) setMotherPhone(studentData.motherPhone);
+      if (studentData.guardianName) setGuardianName(studentData.guardianName);
+      if (studentData.guardianRelation) setGuardianRelation(studentData.guardianRelation);
+      if (studentData.guardianPhone) setGuardianPhone(studentData.guardianPhone);
+      if (studentData.entryPath) setEntryPath(studentData.entryPath);
+      if (studentData.selectedProgram) setSelectedProgram(studentData.selectedProgram);
+      if (studentData.photoUrl) setPhotoUrl(studentData.photoUrl);
+      if (studentData.kkUrl) setKkUrl(studentData.kkUrl);
+      if (studentData.birthCertUrl) setBirthCertUrl(studentData.birthCertUrl);
+      if (studentData.reportCardUrl) setReportCardUrl(studentData.reportCardUrl);
+      if (studentData.kipUrl) setKipUrl(studentData.kipUrl);
+      if (studentData.certificateUrl) setCertificateUrl(studentData.certificateUrl);
+    }
+  }, [studentData?.id, studentData?.updatedAt, studentData?.fullName]);
 
   // Celebrate with confetti if Passed
   useEffect(() => {
@@ -311,6 +375,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         if (!studentData?.id) return;
         const res = await PaymentRepository.list({ studentId: studentData.id, paymentType: 'bam' });
         if (isMounted && res.data && res.data.length > 0) {
+          const targetBamCost = getTotalBamCost(studentData);
           const mapped = res.data.map((p, idx) => ({
             id: p.id || `bam_${idx}`,
             transactionNumber: p.receiptNumber || (p.id ? p.id.replace('pay_', 'TRX-BAM-').toUpperCase() : `TRX-BAM-${idx + 1000}`),
@@ -319,13 +384,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             studentName: p.studentName,
             gender: (p.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki'),
             paymentDate: p.paymentDate || p.createdAt?.split('T')[0] || '',
-            totalBamCost: getTotalBamCost(studentData),
+            totalBamCost: targetBamCost,
             amountPaid: Number(p.amount) || 0,
-            installmentType: (Number(p.amount) >= 10000000 ? 'Lunas' : 'Cicilan 1'),
-            paymentStatus: (p.status === 'verified' && Number(p.amount) >= 10000000 ? 'LUNAS' : (Number(p.amount) > 0 ? 'SEBAGIAN' : 'BELUM BAYAR')),
+            installmentType: Number(p.amount) >= targetBamCost ? 'Lunas' : (Number(p.amount) >= 4000000 ? 'Tahap 1 (DP)' : 'Cicilan 1'),
+            paymentStatus: (p.status === 'verified' && Number(p.amount) >= targetBamCost ? 'LUNAS' : (Number(p.amount) > 0 ? 'SEBAGIAN' : 'BELUM BAYAR')),
             paymentMethod: p.paymentMethod || 'Transfer Bank',
             totalPaidToDate: Number(p.amount) || 0,
-            remainingBalance: Math.max(0, getTotalBamCost(studentData) - Number(p.amount || 0)),
+            remainingBalance: Math.max(0, targetBamCost - Number(p.amount || 0)),
             proofUrl: p.proofUrl,
             notes: p.notes,
           }));
@@ -603,6 +668,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     fetchStudentCredentialsFromSupabase().catch(() => {});
   }, []);
 
+  // Listen to Admin Reset Ujian event (Revisi: hanya Admin yang bisa mereset ujian)
+  useEffect(() => {
+    const handleCbtReset = (e: any) => {
+      const resetParticipantId = e?.detail?.participantId;
+      if (!resetParticipantId || resetParticipantId === studentData.id || resetParticipantId === studentData.registrationNumber) {
+        onUpdateStudentData({
+          ...studentData,
+          testSubmitted: false,
+          isTestActive: true,
+          status: 'scheduled_test',
+          diagnosticScore: undefined,
+          generalScore: undefined,
+          religiousScore: undefined,
+          finalScore: undefined,
+        });
+        toast.success('🎉 Panitia Admin telah mereset sesi ujian Anda! Anda kini dapat login dan mengikuti tes CBT kembali (1 kesempatan).', {
+          duration: 7000,
+        });
+      }
+    };
+
+    window.addEventListener('cbt_exam_reset', handleCbtReset);
+    return () => {
+      window.removeEventListener('cbt_exam_reset', handleCbtReset);
+    };
+  }, [studentData, onUpdateStudentData]);
+
   const handleDownloadExamCard = () => {
     if (!canDownloadExamCard) {
       alert(
@@ -766,6 +858,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   const handleStartExam = async () => {
+    // Kunci Akses Ujian (Hanya 1 Kali Kesempatan) Sesuai Permintaan Revisi
+    const isExamAlreadyTaken = Boolean(
+      studentData.testSubmitted ||
+      studentData.status === 'test_completed' ||
+      studentData.status === 'passed' ||
+      studentData.status === 'failed' ||
+      studentData.status === 'passed_reserved' ||
+      studentData.status === 're_registration_paid' ||
+      studentData.status === 're_registered' ||
+      studentData.status === 'class_assigned' ||
+      studentData.status === 'completed' ||
+      (studentData.finalScore !== undefined && studentData.finalScore !== null && Number(studentData.finalScore) > 0)
+    );
+
+    if (isExamAlreadyTaken) {
+      alert('🔒 AKSES UJIAN TERKUNCI (HANYA 1 KALI KESEMPATAN):\n\nSesuai ketentuan SPMB, calon murid hanya dapat login dan mengikuti tes CBT sebanyak 1 (satu) kali.\n\nJika Anda memerlukan ujian ulang atau remedial karena kendala teknis, silakan hubungi Panitia Admin SPMB untuk mereset sesi ujian Anda melalui Fitur Reset Ujian Admin.');
+      return;
+    }
+
     setIsExamLoading(true);
     let bank = questionsList;
     try {
@@ -1263,59 +1374,90 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setActiveTab('form');
   };
 
-  // Handle Complete Form Submission (Tahap 4 & 5)
-  const handleSaveCompleteForm = (e: React.FormEvent) => {
+  // Handle Complete Form Submission & Edit Data (Tahap 4 & 5 - Supabase Live Sync)
+  const handleSaveCompleteForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    setSaveMessage('');
 
-    setTimeout(() => {
-      // Auto generate registration number if not exists
+    try {
       const regNo = studentData.registrationNumber || `SPMB202700${Math.floor(1000 + Math.random() * 9000)}`;
 
       const updated: StudentData = {
         ...studentData,
         registrationNumber: regNo,
-        fullName,
-        phone,
-        nik,
-        nisn,
-        birthPlace,
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        nik: nik.trim(),
+        nisn: nisn.trim() || undefined,
+        birthPlace: birthPlace.trim(),
         birthDate: birthDate || '2013-01-01',
         gender,
         religion,
-        childOrder,
-        totalSiblings,
-        address,
-        village,
-        subdistrict,
-        city,
-        province,
-        previousSchoolName,
-        previousSchoolNpsn,
-        fatherName,
-        fatherBirthPlace,
+        childOrder: childOrder.trim() || undefined,
+        totalSiblings: totalSiblings.trim() || undefined,
+        address: address.trim(),
+        village: village.trim() || undefined,
+        subdistrict: subdistrict.trim(),
+        city: city.trim(),
+        province: province.trim(),
+        postalCode: postalCode.trim() || undefined,
+        previousSchoolName: previousSchoolName.trim(),
+        previousSchool: previousSchoolName.trim(),
+        previousSchoolNpsn: previousSchoolNpsn.trim() || undefined,
+        previousSchoolAddress: previousSchoolAddress.trim() || undefined,
+        fatherName: fatherName.trim(),
+        fatherBirthPlace: fatherBirthPlace.trim() || undefined,
         fatherBirthDate: fatherBirthDate || undefined,
-        fatherJob,
-        fatherEducation,
-        fatherPhone,
-        motherName,
-        motherBirthPlace,
+        fatherJob: fatherJob.trim() || undefined,
+        fatherEducation: fatherEducation || 'SMA/SMK',
+        fatherPhone: fatherPhone.trim(),
+        motherName: motherName.trim(),
+        motherBirthPlace: motherBirthPlace.trim() || undefined,
         motherBirthDate: motherBirthDate || undefined,
-        motherJob,
-        motherPhone,
-        photoUrl,
-        kkUrl,
-        birthCertUrl,
+        motherJob: motherJob.trim(),
+        motherEducation: motherEducation || 'SMA/SMK',
+        motherPhone: motherPhone.trim(),
+        guardianName: guardianName.trim() || undefined,
+        guardianRelation: guardianRelation.trim() || undefined,
+        guardianPhone: guardianPhone.trim() || undefined,
+        entryPath: entryPath || 'Reguler',
+        selectedProgram: selectedProgram || 'Reguler',
+        photoUrl: photoUrl || undefined,
+        kkUrl: kkUrl || undefined,
+        birthCertUrl: birthCertUrl || undefined,
+        reportCardUrl: reportCardUrl || undefined,
+        kipUrl: kipUrl || undefined,
+        certificateUrl: certificateUrl || undefined,
         status: studentData.status === 'filling_form' || studentData.status === 'verifying_payment' || studentData.status === 'pending_payment'
           ? 'form_submitted'
           : studentData.status,
       };
 
+      // Simpan langsung ke Supabase melalui StudentRepository
+      if (studentData.id) {
+        await StudentRepository.update(studentData.id, updated);
+
+        // Sinkronkan nama dan nomor telepon akun di users jika berubah
+        if (fullName !== studentData.fullName || phone !== studentData.phone) {
+          supabase.from('users').update({
+            name: fullName.trim(),
+            phone: phone.trim(),
+            updated_at: new Date().toISOString(),
+          }).eq('id', studentData.id).then(() => {}, () => {});
+        }
+      }
+
       onUpdateStudentData(updated);
       setIsSaving(false);
-      setSaveMessage('Formulir data lengkap calon murid berhasil disimpan!');
-      setTimeout(() => setSaveMessage(''), 3000);
-    }, 600);
+      const isAlreadySubmitted = studentData.status !== 'draft' && studentData.status !== 'filling_form' && studentData.status !== 'pending_payment';
+      setSaveMessage(isAlreadySubmitted ? '✓ Pembaruan data pendaftaran calon murid berhasil disimpan ke database!' : '✓ Formulir data pendaftaran berhasil dikirim!');
+      setTimeout(() => setSaveMessage(''), 5000);
+    } catch (err: any) {
+      console.error('Gagal menyimpan formulir siswa:', err);
+      setIsSaving(false);
+      alert('Gagal menyimpan formulir: ' + (err?.message || 'Terjadi kesalahan sistem'));
+    }
   };
 
   // Handle Re-registration Initial Payment Upload (Tahap 10 - Supabase Storage & Database Transaction)
@@ -2498,42 +2640,67 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                 )}
 
+            {/* Banner Mode Edit / Lengkapi Data Pendaftaran */}
+            <div className="p-4 bg-gradient-to-r from-blue-50 via-teal-50 to-emerald-50 border border-blue-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-600 text-white rounded-xl shadow-xs shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-extrabold text-blue-950 text-sm flex items-center gap-2">
+                    <span>Edit & Lengkapi Formulir Data Calon Murid</span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold border border-blue-200">
+                      {isFormSubmitted ? 'Mode Pembaruan / Edit Data' : 'Pengisian Baru'}
+                    </span>
+                  </div>
+                  <p className="text-blue-800 text-[11px] mt-0.5">
+                    {isFormSubmitted
+                      ? 'Anda dapat mengedit, melengkapi berkas, atau memperbaiki kesalahan penulisan data kapan saja. Klik tombol "Simpan Perubahan Data" di bawah setelah selesai.'
+                      : 'Silakan isi seluruh formulir biodata pendaftaran dengan lengkap dan benar sesuai Kartu Keluarga (KK).'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <form onSubmit={handleSaveCompleteForm} className="space-y-8 text-xs">
-              {/* Data Pribadi */}
+              {/* 1. Data Pribadi */}
               <div className="space-y-4">
-                <h4 className="text-sm font-bold text-emerald-800 border-b border-emerald-100 pb-2">
-                  1. Data Pribadi Calon Murid
+                <h4 className="text-sm font-bold text-emerald-800 border-b border-emerald-100 pb-2 flex items-center gap-2">
+                  <User className="w-4 h-4 text-emerald-600" />
+                  <span>1. Data Pribadi Calon Murid</span>
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
-                    <label className="block font-semibold mb-1">Nama Lengkap *</label>
+                    <label className="block font-semibold mb-1">Nama Lengkap Calon Murid *</label>
                     <input
                       type="text"
                       required
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-semibold"
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold mb-1">NIK (Sesuai KK) *</label>
+                    <label className="block font-semibold mb-1">NIK (Sesuai Kartu Keluarga) *</label>
                     <input
                       type="text"
                       required
+                      maxLength={16}
                       placeholder="16 digit NIK"
                       value={nik}
-                      onChange={(e) => setNik(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
+                      onChange={(e) => setNik(e.target.value.replace(/\D/g, ''))}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold mb-1">NISN (Opsional)</label>
+                    <label className="block font-semibold mb-1">NISN (Nomor Induk Siswa Nasional)</label>
                     <input
                       type="text"
-                      placeholder="10 digit NISN"
+                      maxLength={10}
+                      placeholder="10 digit NISN (Opsional)"
                       value={nisn}
-                      onChange={(e) => setNisn(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
+                      onChange={(e) => setNisn(e.target.value.replace(/\D/g, ''))}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
                     />
                   </div>
                   <div>
@@ -2563,19 +2730,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       onChange={(e) => setGender(e.target.value as any)}
                       className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 bg-white"
                     >
-                      <option value="Laki-laki">Laki-laki</option>
-                      <option value="Perempuan">Perempuan</option>
+                      <option value="Laki-laki">Laki-laki (Ikhwan)</option>
+                      <option value="Perempuan">Perempuan (Akhwat)</option>
                     </select>
                   </div>
                   <div>
                     <label className="block font-semibold mb-1">Agama *</label>
-                    <input
-                      type="text"
-                      required
+                    <select
                       value={religion}
                       onChange={(e) => setReligion(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
-                    />
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 bg-white"
+                    >
+                      <option value="Islam">Islam</option>
+                      <option value="Kristen">Kristen</option>
+                      <option value="Katolik">Katolik</option>
+                      <option value="Hindu">Hindu</option>
+                      <option value="Buddha">Buddha</option>
+                      <option value="Konghucu">Konghucu</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block font-semibold mb-1">Anak Ke *</label>
@@ -2589,7 +2761,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold mb-1">Jumlah Saudara *</label>
+                    <label className="block font-semibold mb-1">Jumlah Saudara Kandung *</label>
                     <input
                       type="text"
                       required
@@ -2599,12 +2771,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
-                  <div className="sm:col-span-2">
-                    <label className="block font-semibold mb-1">Alamat Lengkap *</label>
+                  <div>
+                    <label className="block font-semibold mb-1">No. WhatsApp/HP Calon Murid *</label>
+                    <input
+                      type="tel"
+                      required
+                      placeholder="081234567890"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Kode Pos</label>
+                    <input
+                      type="text"
+                      maxLength={5}
+                      placeholder="16820"
+                      value={postalCode}
+                      onChange={(e) => setPostalCode(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <label className="block font-semibold mb-1">Alamat Lengkap Tempat Tinggal *</label>
                     <input
                       type="text"
                       required
-                      placeholder="Jalan, Perumahan, RT/RW"
+                      placeholder="Jalan, Gang, Perumahan, Nomor Rumah, RT/RW"
                       value={address}
                       onChange={(e) => setAddress(e.target.value)}
                       className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
@@ -2644,10 +2838,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Data Sekolah Asal */}
+              {/* 2. Data Sekolah Asal */}
               <div className="space-y-4">
-                <h4 className="text-sm font-bold text-emerald-800 border-b border-emerald-100 pb-2">
-                  2. Data Sekolah Asal (SD/MI)
+                <h4 className="text-sm font-bold text-emerald-800 border-b border-emerald-100 pb-2 flex items-center gap-2">
+                  <School className="w-4 h-4 text-emerald-600" />
+                  <span>2. Data Sekolah Asal (SD/MI)</span>
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -2658,30 +2853,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       placeholder="Contoh: SDIT Al-Hadiid / SDN Cileungsi 01"
                       value={previousSchoolName}
                       onChange={(e) => setPreviousSchoolName(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-semibold"
                     />
                   </div>
                   <div>
                     <label className="block font-semibold mb-1">NPSN Sekolah Asal (Opsional)</label>
                     <input
                       type="text"
-                      placeholder="NPSN Sekolah"
+                      maxLength={8}
+                      placeholder="8 digit NPSN Sekolah Asal"
                       value={previousSchoolNpsn}
                       onChange={(e) => setPreviousSchoolNpsn(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold mb-1">Alamat Lengkap Sekolah Asal (Opsional)</label>
+                    <input
+                      type="text"
+                      placeholder="Alamat jalan, kelurahan, dan kecamatan sekolah dasar..."
+                      value={previousSchoolAddress}
+                      onChange={(e) => setPreviousSchoolAddress(e.target.value)}
                       className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Data Orang Tua */}
+              {/* 3. Data Orang Tua */}
               <div className="space-y-4">
-                <h4 className="text-sm font-bold text-emerald-800 border-b border-emerald-100 pb-2">
-                  3. Data Orang Tua (Ayah & Ibu)
+                <h4 className="text-sm font-bold text-emerald-800 border-b border-emerald-100 pb-2 flex items-center gap-2">
+                  <User className="w-4 h-4 text-emerald-600" />
+                  <span>3. Data Orang Tua (Ayah & Ibu Kandung)</span>
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
-                    <label className="block font-semibold mb-1">Nama Ayah *</label>
+                    <label className="block font-semibold mb-1">Nama Lengkap Ayah *</label>
                     <input
                       type="text"
                       required
@@ -2719,18 +2926,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold mb-1">No HP Ayah *</label>
+                    <label className="block font-semibold mb-1">Pendidikan Terakhir Ayah</label>
+                    <select
+                      value={fatherEducation}
+                      onChange={(e) => setFatherEducation(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 bg-white"
+                    >
+                      <option value="SD">SD / Sederajat</option>
+                      <option value="SMP">SMP / Sederajat</option>
+                      <option value="SMA/SMK">SMA / SMK / MA</option>
+                      <option value="D3">Diploma (D3)</option>
+                      <option value="S1">Sarjana (S1)</option>
+                      <option value="S2">Magister (S2)</option>
+                      <option value="S3">Doktor (S3)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">No. WhatsApp/HP Ayah *</label>
                     <input
                       type="tel"
                       required
                       value={fatherPhone}
                       onChange={(e) => setFatherPhone(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
                     />
                   </div>
-                  <div className="hidden lg:block"></div>
+
                   <div>
-                    <label className="block font-semibold mb-1">Nama Ibu *</label>
+                    <label className="block font-semibold mb-1">Nama Lengkap Ibu *</label>
                     <input
                       type="text"
                       required
@@ -2768,31 +2991,124 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold mb-1">No HP Ibu *</label>
+                    <label className="block font-semibold mb-1">Pendidikan Terakhir Ibu</label>
+                    <select
+                      value={motherEducation}
+                      onChange={(e) => setMotherEducation(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 bg-white"
+                    >
+                      <option value="SD">SD / Sederajat</option>
+                      <option value="SMP">SMP / Sederajat</option>
+                      <option value="SMA/SMK">SMA / SMK / MA</option>
+                      <option value="D3">Diploma (D3)</option>
+                      <option value="S1">Sarjana (S1)</option>
+                      <option value="S2">Magister (S2)</option>
+                      <option value="S3">Doktor (S3)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">No. WhatsApp/HP Ibu *</label>
                     <input
                       type="tel"
                       required
                       value={motherPhone}
                       onChange={(e) => setMotherPhone(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500"
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 font-mono"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Upload Documents */}
-              <div className="space-y-4">
-                <h4 className="text-sm font-bold text-blue-800 border-b border-blue-100 pb-2">
-                  4. Upload Dokumen Pendukung Pendaftaran
+              {/* 3B. Data Wali Murid (Opsional) */}
+              <div className="space-y-4 p-4 bg-slate-50/80 rounded-2xl border border-slate-200">
+                <h4 className="text-sm font-bold text-slate-800 border-b border-slate-200 pb-2">
+                  Data Wali Calon Murid (Opsional / Diisi jika tidak tinggal bersama Orang Tua)
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block font-semibold mb-1">Nama Lengkap Wali</label>
+                    <input
+                      type="text"
+                      placeholder="Nama Wali"
+                      value={guardianName}
+                      onChange={(e) => setGuardianName(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-slate-500 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Hubungan dengan Calon Murid</label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Kakek / Paman / Kakak"
+                      value={guardianRelation}
+                      onChange={(e) => setGuardianRelation(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-slate-500 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">No. WhatsApp/HP Wali</label>
+                    <input
+                      type="tel"
+                      placeholder="081234567890"
+                      value={guardianPhone}
+                      onChange={(e) => setGuardianPhone(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-slate-500 font-mono bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Jalur Pendaftaran & Program */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-indigo-800 border-b border-indigo-100 pb-2 flex items-center gap-2">
+                  <Award className="w-4 h-4 text-indigo-600" />
+                  <span>4. Pilihan Jalur Pendaftaran & Program Belajar</span>
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-semibold mb-1">Pilihan Jalur Pendaftaran *</label>
+                    <select
+                      value={entryPath}
+                      onChange={(e) => setEntryPath(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 bg-white font-medium"
+                    >
+                      <option value="Reguler">Jalur Reguler (Umum)</option>
+                      <option value="Prestasi Akademik">Jalur Prestasi Akademik (Nilai Rapor)</option>
+                      <option value="Prestasi Non-Akademik">Jalur Prestasi Olahraga / Seni</option>
+                      <option value="Tahfidz Al-Qur'an">Jalur Prestasi Tahfidz Qur'an</option>
+                      <option value="Afirmasi / KIP">Jalur Afirmasi / KIP / Yatim</option>
+                      <option value="Internal Yayasan">Jalur Internal Alumni SD Al-Hadiid</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Pilihan Program Belajar *</label>
+                    <select
+                      value={selectedProgram}
+                      onChange={(e) => setSelectedProgram(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 bg-white font-medium"
+                    >
+                      <option value="Reguler">Program Reguler (Kurikulum Merdeka + Diniyyah)</option>
+                      <option value="Tahfidz">Program Khusus Tahfidz Al-Qur'an</option>
+                      <option value="Bilingual">Program Bilingual (Bahasa Arab & Inggris)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. Upload Dokumen Pendukung */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-blue-800 border-b border-blue-100 pb-2 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-blue-600" />
+                  <span>5. Upload Dokumen Pendukung Pendaftaran (Maks. 5MB)</span>
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
                     <label className="block font-semibold text-slate-700">Pas Foto 3x4 (Wajib)</label>
                     <input
                       type="file"
                       accept="image/*"
                       onChange={(e) => handleFileChange(e, setPhotoUrl)}
-                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
                     />
                     <input
                       type="text"
@@ -2810,9 +3126,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <label className="block font-semibold text-slate-700">Kartu Keluarga / KK (Wajib)</label>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,application/pdf"
                       onChange={(e) => handleFileChange(e, setKkUrl)}
-                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
                     />
                     <input
                       type="text"
@@ -2822,7 +3138,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       className="w-full p-2 rounded-lg border text-xs"
                     />
                     {kkUrl && (
-                      <div className="text-[10px] text-blue-600 font-semibold">✓ Document KK Terunggah</div>
+                      <div className="text-[10px] text-blue-600 font-semibold">✓ Dokumen KK Terunggah</div>
                     )}
                   </div>
 
@@ -2830,9 +3146,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <label className="block font-semibold text-slate-700">Akta Kelahiran (Wajib)</label>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,application/pdf"
                       onChange={(e) => handleFileChange(e, setBirthCertUrl)}
-                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
                     />
                     <input
                       type="text"
@@ -2843,6 +3159,66 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     />
                     {birthCertUrl && (
                       <div className="text-[10px] text-blue-600 font-semibold">✓ Akta Lahir Terunggah</div>
+                    )}
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                    <label className="block font-semibold text-slate-700">Scan Rapor SD (Opsional)</label>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => handleFileChange(e, setReportCardUrl)}
+                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Atau tempel Link Rapor..."
+                      value={reportCardUrl}
+                      onChange={(e) => setReportCardUrl(e.target.value)}
+                      className="w-full p-2 rounded-lg border text-xs"
+                    />
+                    {reportCardUrl && (
+                      <div className="text-[10px] text-blue-600 font-semibold">✓ Scan Rapor Terunggah</div>
+                    )}
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                    <label className="block font-semibold text-slate-700">Kartu KIP / PIP / PKH (Opsional)</label>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => handleFileChange(e, setKipUrl)}
+                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Atau tempel Link KIP..."
+                      value={kipUrl}
+                      onChange={(e) => setKipUrl(e.target.value)}
+                      className="w-full p-2 rounded-lg border text-xs"
+                    />
+                    {kipUrl && (
+                      <div className="text-[10px] text-blue-600 font-semibold">✓ Kartu KIP Terunggah</div>
+                    )}
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                    <label className="block font-semibold text-slate-700">Piagam Prestasi / Sertifikat (Opsional)</label>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => handleFileChange(e, setCertificateUrl)}
+                      className="text-[11px] block w-full text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Atau tempel Link Piagam..."
+                      value={certificateUrl}
+                      onChange={(e) => setCertificateUrl(e.target.value)}
+                      className="w-full p-2 rounded-lg border text-xs"
+                    />
+                    {certificateUrl && (
+                      <div className="text-[10px] text-blue-600 font-semibold">✓ Piagam Prestasi Terunggah</div>
                     )}
                   </div>
                 </div>
@@ -2857,12 +3233,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/20'
                 }`}
               >
-                <Send className="w-4 h-4 text-amber-300" />
+                <Save className={`w-4 h-4 ${isSaving ? 'animate-spin' : 'text-amber-300'}`} />
                 <span>
                   {isSaving
-                    ? 'Mengirim Formulir...'
+                    ? 'Menyimpan Perubahan...'
                     : isFormSubmitted
-                    ? 'Update & Kirim Ulang Formulir Pendaftaran'
+                    ? 'Simpan Perubahan & Perbarui Data Pendaftaran'
                     : 'Kirim & Selesaikan Formulir Pendaftaran (Aktifkan Download PDF)'}
                 </span>
               </button>
@@ -3052,62 +3428,90 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <span>{canDownloadExamCard ? 'Download Kartu Ujian (PDF)' : 'Kartu Ujian (Menunggu Verifikasi)'}</span>
                 </button>
 
-                {studentData.status === 'failed' ? (
-                  <button
-                    onClick={handleTriggerRetakeExam}
-                    disabled={isExamLoading}
-                    className="px-5 py-2.5 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all cursor-pointer animate-pulse disabled:opacity-60"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${isExamLoading ? 'animate-spin' : ''}`} />
-                    <span>🔄 Ujian Diulang (Mulai Remedial)</span>
-                  </button>
-                ) : studentData.isTestActive || hasActiveOnlineSchedule ? (
-                  studentData.status !== 'test_completed' && !studentData.testSubmitted ? (
-                    <button
-                      onClick={handleStartExam}
-                      disabled={isExamLoading}
-                      className="px-6 py-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl hover:shadow-indigo-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse border border-indigo-400/30 disabled:opacity-60"
-                    >
-                      {isExamLoading ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin text-amber-300" />
-                          <span>Menyiapkan Soal Server...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4 fill-current text-amber-300" />
-                          <span>🚀 Klik Soal (Mulai Ujian Online)</span>
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl flex items-center gap-2 border border-emerald-300">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span>Ujian Telah Dikerjakan & Selesai</span>
+                {/* Status Akses CBT: Sesuai Revisi Calon Murid Hanya Bisa Login 1 Kali */}
+                {(() => {
+                  const isExamAlreadyTaken = Boolean(
+                    studentData.testSubmitted ||
+                    studentData.status === 'test_completed' ||
+                    studentData.status === 'passed' ||
+                    studentData.status === 'failed' ||
+                    studentData.status === 'passed_reserved' ||
+                    studentData.status === 're_registration_paid' ||
+                    studentData.status === 're_registered' ||
+                    studentData.status === 'class_assigned' ||
+                    studentData.status === 'completed' ||
+                    (studentData.finalScore !== undefined && studentData.finalScore !== null && Number(studentData.finalScore) > 0)
+                  );
+
+                  if (isExamAlreadyTaken) {
+                    return (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="px-4 py-2.5 bg-emerald-100 text-emerald-900 font-extrabold text-xs rounded-xl flex items-center gap-2 border border-emerald-300 shadow-2xs">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Ujian Selesai (Akses 1 Kali Digunakan)</span>
+                        </div>
+                        <button
+                          onClick={handleDownloadExamResult}
+                          className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+                          title="Download Surat Keterangan Hasil Ujian SPMB (PDF)"
+                        >
+                          <Download className="w-4 h-4 text-amber-300" />
+                          <span>Download Hasil Ujian (PDF)</span>
+                        </button>
                       </div>
+                    );
+                  }
+
+                  if (studentData.isTestActive || hasActiveOnlineSchedule) {
+                    return (
                       <button
-                        onClick={handleDownloadExamResult}
-                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
-                        title="Download Surat Keterangan Hasil Ujian SPMB (PDF)"
+                        onClick={handleStartExam}
+                        disabled={isExamLoading}
+                        className="px-6 py-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl hover:shadow-indigo-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer animate-pulse border border-indigo-400/30 disabled:opacity-60"
                       >
-                        <Download className="w-4 h-4 text-amber-300" />
-                        <span>Download Hasil Ujian (PDF)</span>
+                        {isExamLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin text-amber-300" />
+                            <span>Menyiapkan Soal Server...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4 fill-current text-amber-300" />
+                            <span>🚀 Klik Soal (Mulai Ujian Online)</span>
+                          </>
+                        )}
                       </button>
-                    </div>
-                  )
-                ) : (
-                  <button
-                    disabled
-                    className="px-5 py-2.5 bg-slate-100 text-slate-400 font-bold text-xs rounded-xl flex items-center gap-2 cursor-not-allowed border border-slate-200"
-                    title="Fitur Klik Soal akan aktif jika Jadwal Tes sudah dibuka oleh Panitia Admin"
-                  >
-                    <Lock className="w-4 h-4 text-slate-400" />
-                    <span>Fitur Klik Soal (Terkunci - Menunggu Admin)</span>
-                  </button>
-                )}
+                    );
+                  }
+
+                  return (
+                    <button
+                      disabled
+                      className="px-5 py-2.5 bg-slate-100 text-slate-400 font-bold text-xs rounded-xl flex items-center gap-2 cursor-not-allowed border border-slate-200"
+                      title="Fitur Klik Soal akan aktif jika Jadwal Tes sudah dibuka oleh Panitia Admin"
+                    >
+                      <Lock className="w-4 h-4 text-slate-400" />
+                      <span>Fitur Klik Soal (Terkunci - Menunggu Admin)</span>
+                    </button>
+                  );
+                })()}
               </div>
             </div>
+
+            {/* Banner Keterangan Akses 1 Kali CBT & Fitur Reset Admin */}
+            {(studentData.testSubmitted || studentData.status === 'test_completed' || studentData.status === 'passed' || studentData.status === 'failed' || (studentData.finalScore !== undefined && Number(studentData.finalScore) > 0)) && (
+              <div className="p-4 bg-slate-900 text-slate-300 rounded-2xl border border-slate-700 text-xs flex items-start gap-3 shadow-sm">
+                <span className="p-2 bg-amber-500/20 text-amber-300 rounded-xl text-base mt-0.5">🔒</span>
+                <div className="space-y-1">
+                  <div className="font-extrabold text-amber-300 text-xs">
+                    Ketentuan CBT: Calon Murid Hanya Bisa Mengikuti Ujian 1 (Satu) Kali
+                  </div>
+                  <div className="text-[11px] text-slate-300 leading-relaxed">
+                    Sesuai ketentuan pelaksanaan seleksi SPMB SMP Al-Hadiid, setiap calon murid hanya memiliki <strong>1 kali kesempatan login pengerjaan tes</strong>. Apabila Anda membutuhkan ujian ulang atau remedial karena kendala teknis atau pengulangan, harap hubungi <strong>Panitia Admin SPMB</strong>. Panitia Admin akan menggunakan <strong>Fitur Ulang / Reset Ujian</strong> untuk membuka kembali akses pengerjaan bagi Anda.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {!(studentData.isTestActive === true || hasActiveOnlineSchedule || studentData.status === 'scheduled_test' || studentData.status === 'test_completed' || studentData.status === 'passed' || studentData.status === 're_registered' || studentData.status === 'class_assigned') ? (
               <div className="bg-amber-50/80 border-2 border-amber-200 rounded-2xl p-8 text-center space-y-5 max-w-2xl mx-auto my-6 shadow-sm">
@@ -3197,18 +3601,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
 
                       <div className="mt-6 pt-4 border-t border-slate-800/80">
-                        {studentData.status === 'failed' ? (
-                          <button
-                            onClick={handleTriggerRetakeExam}
-                            className="w-full py-3 bg-gradient-to-r from-rose-600 via-indigo-600 to-purple-600 hover:from-rose-500 hover:to-indigo-500 text-white font-black text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer animate-pulse"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            <span>🔄 Klik Di Sini Untuk Ujian Diulang (Remedial)</span>
-                          </button>
-                        ) : studentData.status === 'test_completed' || studentData.testSubmitted ? (
-                          <div className="p-3 bg-emerald-900/60 border border-emerald-500/50 rounded-xl text-center text-emerald-200 font-bold text-xs flex items-center justify-center gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                            <span>Anda Telah Menyelesaikan Ujian Ini</span>
+                        {(studentData.testSubmitted || studentData.status === 'test_completed' || studentData.status === 'passed' || studentData.status === 'failed' || (studentData.finalScore !== undefined && Number(studentData.finalScore) > 0)) ? (
+                          <div className="p-3 bg-slate-900 border border-slate-700 rounded-xl text-center text-slate-300 font-bold text-xs space-y-1">
+                            <div className="flex items-center justify-center gap-2 text-emerald-400">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                              <span>Ujian Selesai (Akses 1 Kali Digunakan)</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-normal">
+                              Sesuai ketentuan, calon murid hanya dapat mengikuti ujian 1 kali. Untuk ujian ulang/remedial, hubungi Admin SPMB untuk mereset ujian Anda.
+                            </p>
                           </div>
                         ) : isSchedActive ? (
                           <button
@@ -3822,36 +4223,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* Cost Itemization Breakdown */}
+                  {/* Cost Itemization Breakdown (Sesuai SK Resmi & Landing Page) */}
                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
                     {(() => {
-                      const category = getStudentCategory(studentData);
-                      const totalBam = getTotalBamCost(category);
-                      const lunasDiscounted = category === 'Internal' ? BAM_CONFIG.totalInternalLunas : BAM_CONFIG.totalExternalLunas;
+                      const isAkhwat = (studentData.gender || '').toLowerCase().includes('perempuan') || (studentData.gender || '').toLowerCase() === 'akhwat';
+                      const genderLabel = isAkhwat ? 'Akhwat (Putri)' : 'Ikhwan (Putra)';
+                      const totalBam = isAkhwat ? 6890000 : 6670000;
 
                       return (
                         <>
                           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                             <div>
-                              <div className="text-sm font-bold text-slate-900">Rincian Komponen Biaya Awal Masuk (BAM):</div>
-                              <div className="text-[11px] text-slate-500">Sesuai Brosur & Kebijakan SPMB SMP Al-Hadiid</div>
+                              <div className="text-sm font-bold text-slate-900">13 Komponen Biaya Awal Masuk (BAM):</div>
+                              <div className="text-[11px] text-slate-500">Sesuai SK Resmi & Ketetapan di Landing Page SPMB</div>
                             </div>
                             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
-                              category === 'Internal'
-                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              isAkhwat
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                             }`}>
-                              Kategori: {category === 'Internal' ? 'Al-Hadiid (Internal)' : 'Umum (Eksternal)'}
+                              Jenis Kelamin: {genderLabel}
                             </span>
                           </div>
 
                           <div className="space-y-2 text-xs">
-                            {BAM_BREAKDOWN_ITEMS.map((item) => {
-                              const amount = category === 'Internal' ? item.amountInternal : item.amountExternal;
+                            {BAM_BREAKDOWN_ITEMS.map((item, idx) => {
+                              const amount = isAkhwat ? item.amountExternal : item.amountInternal;
+                              const isSeragam = item.name.toLowerCase().includes('seragam');
                               return (
-                                <div key={item.id} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between items-center hover:border-slate-300 transition-colors">
+                                <div key={item.id} className={`p-3 rounded-xl border flex justify-between items-center transition-colors ${
+                                  isSeragam ? 'bg-amber-50/70 border-amber-300' : 'bg-white border-slate-200 hover:border-slate-300'
+                                }`}>
                                   <div className="pr-2">
-                                    <div className="font-bold text-slate-900">{item.name}</div>
+                                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                      <span className="text-[10px] text-slate-400 font-mono">#{idx + 1}</span>
+                                      <span>{item.name}</span>
+                                    </div>
                                     <div className="text-slate-500 text-[10px]">{item.notes} ({item.period})</div>
                                   </div>
                                   <div className="font-bold font-mono text-emerald-800 whitespace-nowrap ml-2">
@@ -3862,46 +4269,44 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             })}
 
                             {/* Total Banner */}
-                            <div className="p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center mt-3 shadow-sm">
+                            <div className="p-4 bg-emerald-950 text-white rounded-xl flex justify-between items-center mt-3 shadow-sm border border-emerald-800">
                               <div>
-                                <span className="font-bold uppercase text-xs block">Total Biaya Awal Masuk ({category}):</span>
-                                <span className="text-[10px] text-slate-400">Belum termasuk potongan diskon lunas</span>
+                                <span className="font-bold uppercase text-xs block text-emerald-200">TOTAL BIAYA AWAL MASUK ({genderLabel.toUpperCase()}):</span>
+                                <span className="text-[10px] text-emerald-300">Sesuai SK Resmi & Landing Page Aplikasi</span>
                               </div>
                               <span className="text-xl font-black font-mono text-amber-300">
                                 Rp {totalBam.toLocaleString('id-ID')}
                               </span>
                             </div>
 
-                            {/* Diskon Lunas Info Banner */}
-                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-[11px] flex items-start gap-2">
-                              <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                              <div>
-                                <span className="font-bold">Potongan Khusus Pelunasan Sekaligus (100%):</span>
-                                <p className="text-emerald-800 mt-0.5">
-                                  Bagi calon santri yang melunasi BAM saat daftar ulang berhak mendapatkan potongan <span className="font-bold underline">Rp 500.000</span> sehingga total biaya menjadi <span className="font-bold font-mono">Rp {lunasDiscounted.toLocaleString('id-ID')}</span>.
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Jadwal Angsuran / Cicilan */}
+                            {/* Ketentuan Tahapan Pembayaran Sesuai Landing Page */}
                             <div className="pt-2">
                               <div className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
                                 <Calendar className="w-3.5 h-3.5 text-indigo-600" />
-                                <span>Pilihan Skema Angsuran (Maks. 3 Tahap):</span>
+                                <span>Pilihan Skema Pembayaran (Sesuai Ketentuan SPMB):</span>
                               </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                {BAM_INSTALLMENT_STEPS.map((step) => {
-                                  const stepAmount = category === 'Internal' ? step.amountInternal : step.amountExternal;
-                                  return (
-                                    <div key={step.step} className="p-2.5 bg-white rounded-xl border border-slate-200 text-[11px]">
-                                      <div className="font-bold text-slate-800">{step.title}</div>
-                                      <div className="font-mono font-bold text-indigo-600 mt-0.5">
-                                        Rp {stepAmount.toLocaleString('id-ID')}
-                                      </div>
-                                      <div className="text-[10px] text-slate-400 mt-1">{step.dueDate}</div>
-                                    </div>
-                                  );
-                                })}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1">
+                                  <div className="font-bold text-emerald-950 flex justify-between text-[11px]">
+                                    <span>Pilihan 1: Langsung Lunas</span>
+                                    <span className="text-emerald-700 font-extrabold">Prioritas</span>
+                                  </div>
+                                  <div className="text-emerald-900 text-[11px] font-mono font-bold">
+                                    Rp {totalBam.toLocaleString('id-ID')} (100% Lunas)
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">Mendapatkan tanda status Lunas (Bintang Hijau)</div>
+                                </div>
+
+                                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1">
+                                  <div className="font-bold text-amber-950 flex justify-between text-[11px]">
+                                    <span>Pilihan 2: Tahapan Angsuran</span>
+                                    <span className="text-amber-800 font-extrabold">Cicilan</span>
+                                  </div>
+                                  <div className="text-amber-900 text-[11px]">
+                                    DP Awal: <b className="font-mono">Rp 4.000.000</b> saat daftar ulang.<br />
+                                    Pelunasan Sisa: <b className="font-mono">Rp {(totalBam - 4000000).toLocaleString('id-ID')}</b> (Paling lambat 30 Oktober 2027).
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           </div>

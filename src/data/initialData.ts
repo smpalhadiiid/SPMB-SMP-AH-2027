@@ -48,13 +48,19 @@ export const initialSchoolInfo: SchoolInfo = {
 };
 
 export const initialCostBreakdowns: CostBreakdown[] = [
-  { id: 'c1', title: 'Dana Sarana & Prasarana', amount: 4500000, amountIkhwan: 4500000, amountAkhwat: 5500000, period: 'Sekali', description: 'Internal: Rp 4.500.000 / Eksternal: Rp 5.500.000 (Fasilitas Multimedia, Lab Komputer & Sarana Belajar)', isMandatory: true },
-  { id: 'c2', title: 'Paket Seragam Lengkap (5 Stel)', amount: 1500000, amountIkhwan: 1500000, amountAkhwat: 1500000, period: 'Sekali', description: 'Sekali - 5 Stel: Putih Biru, Pramuka, Batik Al-Hadiid, Olahraga, Gamis/Koko Rabbani', isMandatory: true },
-  { id: 'c3', title: 'Buku Paket & Modul Pembelajaran (1 Tahun)', amount: 1600000, amountIkhwan: 1600000, amountAkhwat: 1600000, period: 'Per Tahun', description: 'Per Tahun - Buku Kurikulum Nasional & Modul Diniyyah Salafush Sholih', isMandatory: true },
-  { id: 'c4', title: 'Kegiatan MPLS & Penguatan Karakter', amount: 500000, amountIkhwan: 500000, amountAkhwat: 500000, period: 'Sekali', description: 'Sekali - Masa Pengenalan Lingkungan Sekolah & Orientasi Keislaman', isMandatory: true },
-  { id: 'c5', title: 'Ekstrakurikuler Wajib & Pilihan (1 Tahun)', amount: 600000, amountIkhwan: 600000, amountAkhwat: 600000, period: 'Per Tahun', description: 'Per Tahun - Tahfidz Al-Qur\'an, Pramuka SIT, Panahan, Futsal, Robotic Club', isMandatory: true },
-  { id: 'c6', title: 'Dana Penyelenggaraan Pendidikan (SPP Bulan Juli)', amount: 800000, amountIkhwan: 800000, amountAkhwat: 800000, period: 'Per Bulan', description: 'Per Bulan - SPP Bulan Pertama (Juli 2027)', isMandatory: true },
-  { id: 'c7', title: 'Kegiatan Kesiswaan, Keputrian & Dauroh Qur\'an', amount: 1500000, amountIkhwan: 1500000, amountAkhwat: 1500000, period: 'Per Tahun', description: 'Per Tahun - Pesantren Kilat, Mukhayyam Tarbawi, Dauroh Qur\'an, PAS & PAT', isMandatory: true },
+  { id: 'c1', title: 'Dana Awal Pendidikan (DAP)', amount: 4250000, amountIkhwan: 4250000, amountAkhwat: 4250000, period: 'Sekali', description: 'Dana sarana, prasarana, fasilitas pembelajaran & pengembangan pendidikan awal santri', isMandatory: true },
+  { id: 'c2', title: 'Dana Praktik Komputer', amount: 150000, amountIkhwan: 150000, amountAkhwat: 150000, period: 'Per Tahun', description: 'Praktikum lab komputer, multimedia, dan literasi digital santri', isMandatory: true },
+  { id: 'c3', title: 'Dana Praktik IPA', amount: 100000, amountIkhwan: 100000, amountAkhwat: 100000, period: 'Per Tahun', description: 'Praktikum laboratorium sains dan eksperimen IPA terpadu', isMandatory: true },
+  { id: 'c4', title: 'Perlengkapan / Seragam (Paket)*', amount: 700000, amountIkhwan: 700000, amountAkhwat: 920000, period: 'Sekali', description: 'Paket seragam lengkap: Ikhwan Rp 700.000 / Akhwat Rp 920.000 (termasuk jilbab syar\'i)', isMandatory: true },
+  { id: 'c5', title: 'Dana Penyelenggaraan Pendidikan (DPP / SPP)', amount: 425000, amountIkhwan: 425000, amountAkhwat: 425000, period: 'Per Bulan', description: 'Iuran penyelenggaraan pendidikan (SPP) bulan pertama (Juli)', isMandatory: true },
+  { id: 'c6', title: 'Tabungan Wajib', amount: 25000, amountIkhwan: 25000, amountAkhwat: 25000, period: 'Per Bulan', description: 'Tabungan wajib santri per bulan', isMandatory: true },
+  { id: 'c7', title: 'MPLS / MOS', amount: 100000, amountIkhwan: 100000, amountAkhwat: 100000, period: 'Sekali', description: 'Masa Pengenalan Lingkungan Sekolah & Orientasi Santri Rabbani', isMandatory: true },
+  { id: 'c8', title: 'Dana Sosial', amount: 25000, amountIkhwan: 25000, amountAkhwat: 25000, period: 'Per Tahun', description: 'Dana sosial santri, infak dan kepedulian umat', isMandatory: true },
+  { id: 'c9', title: 'Penilaian Akhir Semester (PAS)', amount: 220000, amountIkhwan: 220000, amountAkhwat: 220000, period: 'Per Tahun', description: 'Penyelenggaraan evaluasi dan Penilaian Akhir Semester 1', isMandatory: true },
+  { id: 'c10', title: 'Penilaian Akhir Tahun (PAT)', amount: 225000, amountIkhwan: 225000, amountAkhwat: 225000, period: 'Per Tahun', description: 'Penyelenggaraan evaluasi dan Penilaian Akhir Tahun', isMandatory: true },
+  { id: 'c11', title: 'Kegiatan Ekstrakurikuler / AMBAP', amount: 125000, amountIkhwan: 125000, amountAkhwat: 125000, period: 'Per Tahun', description: 'Kegiatan ekstrakurikuler wajib & kepanduan pramuka SIT / AMBAP', isMandatory: true },
+  { id: 'c12', title: 'Biaya Dauroh (Kegiatan Pesantren)', amount: 120000, amountIkhwan: 120000, amountAkhwat: 120000, period: 'Per Tahun', description: 'Dauroh Al-Qur\'an, tarbiyah ruhiyah, dan kepesantrenan santri', isMandatory: true },
+  { id: 'c13', title: 'Biaya Cetak (Raport, Foto, Name Tag, Kalender)', amount: 205000, amountIkhwan: 205000, amountAkhwat: 205000, period: 'Per Tahun', description: 'Buku raport kurikulum merdeka, pas foto kartu pelajar, name tag & kalender', isMandatory: true },
 ];
 
 export const initialClassQuotas: ClassQuota[] = [
