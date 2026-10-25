@@ -507,6 +507,11 @@ export interface BamPaymentRecord {
   totalPaidToDate: number; // akumulasi terbayar
   remainingBalance: number; // totalBamCost - totalPaidToDate (Saldo / Tunggakan)
   proofUrl?: string;
+  status?: 'unpaid' | 'pending' | 'verified' | 'rejected';
+  verificationStatus?: 'unpaid' | 'pending' | 'verified' | 'rejected';
+  verifiedAt?: string;
+  verifiedBy?: string;
+  rejectionReason?: string;
   notes?: string;
   createdAt?: string;
 }

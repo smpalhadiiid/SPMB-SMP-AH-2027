@@ -423,8 +423,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     };
   }, [studentData?.id, studentData?.registrationNumber]);
 
-  // Semua transaksi pembayaran BAM milik calon murid ini
-  const matchingBamPayments = useMemo(() => {
+  // Semua transaksi pembayaran BAM calon murid ini
+  const allStudentBamPayments = useMemo(() => {
     return allBamPayments.filter(
       (b: any) =>
         b.studentId === studentData.id ||
@@ -432,6 +432,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         (studentData.fullName && b.studentName && b.studentName.toLowerCase() === studentData.fullName.toLowerCase())
     );
   }, [allBamPayments, studentData]);
+
+  // Transaksi pembayaran BAM yang SUDAH DIVERIFIKASI RESMI oleh Admin
+  const matchingBamPayments = useMemo(() => {
+    return allStudentBamPayments.filter((b: any) => {
+      if (b.status === 'pending' || b.verificationStatus === 'pending') return false;
+      if (b.status === 'rejected' || b.verificationStatus === 'rejected') return false;
+      return b.status === 'verified' || b.verificationStatus === 'verified' || (!b.status && !b.verificationStatus && (b.paymentStatus === 'LUNAS' || b.paymentStatus === 'SEBAGIAN'));
+    });
+  }, [allStudentBamPayments]);
+
+  // Transaksi pembayaran BAM yang MASIH MENUNGGU VERIFIKASI ADMIN
+  const pendingBamPayments = useMemo(() => {
+    return allStudentBamPayments.filter((b: any) => {
+      return b.status === 'pending' || b.verificationStatus === 'pending';
+    });
+  }, [allStudentBamPayments]);
+
+  const hasPendingBamVerification = pendingBamPayments.length > 0 || (studentData.initialPaymentStatus === 'pending' && Boolean(studentData.initialPaymentProofUrl || studentData.initialPaymentAmount));
+  const pendingClaimedAmount = pendingBamPayments[0]?.amountPaid || (studentData.initialPaymentStatus === 'pending' ? (Number(studentData.initialPaymentAmount) || 0) : 0);
 
   // Primary linked record
   const linkedBamRecord = matchingBamPayments[0] || null;
@@ -449,31 +468,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const totalBamCost = linkedBamRecord?.totalBamCost || (hasCustomCost ? calculatedCustomTotal : getTotalBamCost(studentData));
 
-  // Akumulasi total pembayaran yang sudah dibayar real dari admin
+  // Akumulasi total pembayaran yang SUDAH DIVERIFIKASI RESMI dari admin
   const totalPaidFromRecords = matchingBamPayments.reduce((acc: number, curr: any) => acc + (Number(curr.amountPaid) || 0), 0);
-  const currentPaidAmount = Math.max(totalPaidFromRecords, Number(studentData.initialPaymentAmount) || 0);
+  // Hanya hitung initialPaymentAmount jika SUDAH diverifikasi panitia (initialPaymentStatus === 'verified')
+  const currentPaidAmount = studentData.initialPaymentStatus === 'verified'
+    ? Math.max(totalPaidFromRecords, Number(studentData.initialPaymentAmount) || 0)
+    : totalPaidFromRecords;
 
   const currentRemaining = calculateBamRemaining(totalBamCost, currentPaidAmount);
 
-  // Status Lunas vs Mengangsur / Cicilan (Sesuai real data pembayaran menu admin)
+  // Status Lunas vs Mengangsur / Cicilan (Hanya berdasarkan pembayaran yang terverifikasi admin)
   const isLunas = (currentPaidAmount >= totalBamCost && totalBamCost > 0) ||
-                  studentData.initialPaymentStatus === 'verified' ||
-                  studentData.status === 're_registered' ||
+                  (studentData.initialPaymentStatus === 'verified' && (Number(studentData.initialPaymentAmount) >= totalBamCost || studentData.status === 're_registered')) ||
                   matchingBamPayments.some((p: any) => p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas');
 
-  const isAngsuran = !isLunas && (
-    currentPaidAmount > 0 ||
-    studentData.initialPaymentStatus === 'pending' ||
-    studentData.status === 're_registration_paid' ||
-    matchingBamPayments.length > 0
-  );
+  const isAngsuran = !isLunas && currentPaidAmount > 0;
 
   const currentInstallmentType = isLunas
     ? 'Lunas'
     : (matchingBamPayments[0]?.installmentType || (currentPaidAmount > 0 ? (currentPaidAmount < totalBamCost * 0.5 ? 'Cicilan 1' : 'Cicilan 2') : 'Belum Bayar'));
 
-  const latestPaymentDate = matchingBamPayments[0]?.paymentDate || studentData.initialPaymentDate || undefined;
-  const currentNotes = matchingBamPayments[0]?.notes || studentData.initialPaymentNotes || '';
+  const latestPaymentDate = matchingBamPayments[0]?.paymentDate || (studentData.initialPaymentStatus === 'verified' ? studentData.initialPaymentDate : undefined);
+  const currentNotes = matchingBamPayments[0]?.notes || (studentData.initialPaymentStatus === 'verified' ? studentData.initialPaymentNotes : '') || '';
 
   // Sinkronisasi data BAM ke input form
   useEffect(() => {
@@ -1559,10 +1575,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           totalBamCost: totalCost,
           amountPaid: amountToSave,
           installmentType: initialPaymentTypeInput,
-          totalPaidToDate: amountToSave,
-          remainingBalance: calculateBamRemaining(totalCost, amountToSave),
+          totalPaidToDate: 0,
+          remainingBalance: totalCost,
           proofUrl: storagePath,
           status: 'pending' as const,
+          verificationStatus: 'pending' as const,
           notes: `Skema: ${initialPaymentTypeInput}${initialPaymentNotesInput ? ` | ${initialPaymentNotesInput}` : ''}`,
           createdAt: new Date().toISOString(),
         },
@@ -1575,7 +1592,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     setIsUploadingBamProof(false);
     setBamProofFileObj(null);
-    setBamUploadSuccessMsg('✓ Bukti transfer berhasil disimpan.');
+    setBamUploadSuccessMsg('✓ Bukti transfer berhasil disimpan (Menunggu Verifikasi Admin).');
 
     safeConfetti({
       particleCount: 100,
@@ -1583,7 +1600,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       origin: { y: 0.5 }
     });
 
-    alert('✓ Bukti transfer berhasil disimpan.\n\nStatus Pembayaran: MENUNGGU VERIFIKASI ⏳\nNominal: Rp ' + amountToSave.toLocaleString('id-ID') + '\n\nBukti transfer Biaya Awal Masuk telah tersimpan aman di Supabase Storage dan sedang menunggu pemeriksaan Panitia SPMB.');
+    alert('✓ Bukti transfer Biaya Awal Masuk (BAM) berhasil diunggah.\n\nStatus Pembayaran: MENUNGGU VERIFIKASI KETAT ADMIN ⏳\nNominal: Rp ' + amountToSave.toLocaleString('id-ID') + '\n\nPerhatian: Sesuai ketentuan ketat SPMB, data pembayaran Anda BELUM otomatis masuk ke Daftar Pembayaran atau Riwayat Pembayaran sebelum diverifikasi dan disetujui oleh Admin Keuangan.');
   };
 
   // Check if student has completed & submitted the full form
@@ -4046,6 +4063,67 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <span className="font-bold">Pembayaran Anda Tercatat dalam Status Angsuran/Cicilan.</span>
                     <p className="text-[11px] text-amber-900">
                       Terima kasih! Pembayaran angsuran sebesar <span className="font-bold font-mono">Rp {currentPaidAmount.toLocaleString('id-ID')}</span> telah dicatat oleh Panitia Admin. Sisa pembayaran sebesar <span className="font-bold font-mono">Rp {currentRemaining.toLocaleString('id-ID')}</span> dapat diangsur pada tahap berikutnya sesuai jadwal.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : hasPendingBamVerification ? (
+              <div className="p-5 rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-amber-50 via-yellow-50/80 to-amber-100/60 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center text-2xl shadow-md shrink-0">
+                      ⏳
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                          Verifikasi Ketat Panitia Admin
+                        </span>
+                        <span className="text-[10px] text-amber-900 font-semibold">Sedang Diproses</span>
+                      </div>
+                      <h3 className="text-lg sm:text-xl font-black text-amber-950 flex items-center gap-2 mt-0.5">
+                        <span>Status: Menunggu Verifikasi Admin</span>
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    <span className="px-3 py-1.5 bg-amber-400 text-slate-950 text-xs font-black rounded-xl shadow-sm flex items-center gap-1.5 animate-pulse">
+                      <Clock className="w-4 h-4 text-slate-950" />
+                      <span>MENUNGGU VERIFIKASI ADMIN</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  <div className="bg-white/90 backdrop-blur-xs p-3.5 rounded-xl border border-amber-200">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase">Total Kewajiban BAM ({studentData.gender || 'Santri'})</div>
+                    <div className="text-lg font-black font-mono text-slate-900 mt-0.5">
+                      Rp {totalBamCost.toLocaleString('id-ID')}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Total Biaya Awal Masuk</div>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-3.5 rounded-xl border border-amber-200">
+                    <div className="text-[10px] font-bold text-amber-800 uppercase">Nominal Bukti Ditransfer</div>
+                    <div className="text-lg font-black font-mono text-amber-900 mt-0.5">
+                      Rp {pendingClaimedAmount.toLocaleString('id-ID')}
+                    </div>
+                    <div className="text-[10px] text-amber-700 font-semibold mt-0.5">Sedang Dicocokkan Mutasi Rekening</div>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-3.5 rounded-xl border border-amber-200">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase">Status Riwayat Pembayaran</div>
+                    <div className="text-xs font-extrabold text-amber-800 mt-0.5">
+                      Belum Masuk Riwayat Resmi
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Menunggu Approval Admin</div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-amber-950 bg-white/80 p-3.5 rounded-xl border border-amber-200 flex items-start gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <span className="font-extrabold text-amber-900">Pembayaran Belum Masuk ke Daftar atau Riwayat Pembayaran Resmi</span>
+                    <p className="text-[11px] text-amber-900 leading-relaxed">
+                      Sesuai prosedur ketat SPMB SMP Al-Hadiid, bukti transfer sebesar <strong>Rp {pendingClaimedAmount.toLocaleString('id-ID')}</strong> yang telah Anda kirim sedang diperiksa oleh Panitia Administrasi Keuangan SPMB. Data pembayaran <strong>tidak akan otomatis masuk ke Daftar Pembayaran atau Riwayat Pembayaran</strong> hingga Admin selesai memverifikasi dan menyetujui mutasi transfer rekening sekolah.
                     </p>
                   </div>
                 </div>

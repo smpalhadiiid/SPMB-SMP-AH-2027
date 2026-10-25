@@ -371,6 +371,18 @@ export const PaymentRepository = {
   },
 
   /**
+   * Alias method untuk memverifikasi atau menolak pembayaran
+   */
+  async updateStatus(
+    paymentId: string,
+    status: 'verified' | 'rejected' | 'pending',
+    rejectionReason?: string,
+    notes?: string
+  ): Promise<{ success: boolean; error: Error | null }> {
+    return this.verifyThroughSecureFunction(paymentId, status, notes, rejectionReason);
+  },
+
+  /**
    * Memperbarui record pembayaran
    */
   async update(id: string, updates: Partial<PaymentItem>): Promise<{ data: PaymentItem | null; error: Error | null }> {

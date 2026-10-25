@@ -93,11 +93,12 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
   // -------------------------------------------------------------------
   // MAIN NAVIGATION TABS:
-  // 1. 'payments' (Tabel Pembayaran & Rincian Calon Murid)
-  // 2. 'items'    (Kelola Item BAM Terpisah IKHWAN / AKHWAT)
-  // 3. 'upload'   (Upload & Validasi Data BAM Baru)
+  // 1. 'payments'     (Tabel Pembayaran & Rincian Calon Murid)
+  // 2. 'verification' (Antrean Verifikasi Pembayaran BAM Ketat)
+  // 3. 'items'        (Kelola Item BAM Terpisah IKHWAN / AKHWAT)
+  // 4. 'upload'       (Upload & Validasi Data BAM Baru)
   // -------------------------------------------------------------------
-  const [activeTopTab, setActiveTopTab] = useState<'payments' | 'items' | 'upload'>('payments');
+  const [activeTopTab, setActiveTopTab] = useState<'payments' | 'verification' | 'items' | 'upload'>('payments');
 
   // -------------------------------------------------------------------
   // 1. STATE ITEM BAM (IKHWAN & AKHWAT) DARI SUPABASE
@@ -563,7 +564,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       if (data && data.length > 0) {
         const mapped: BamPaymentRecord[] = data.map(p => ({
           id: p.id,
-          transactionNumber: p.id,
+          transactionNumber: p.receiptNumber || `TRX-BAM-${p.id.slice(0, 8)}`,
+          receiptNumber: p.receiptNumber,
+          receiptIssuedAt: p.receiptIssuedAt,
           registrationNumber: p.registrationNumber || 'SPMB',
           studentId: p.studentId,
           studentName: p.studentName || 'Calon Murid',
@@ -572,7 +575,14 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
           totalBamCost: p.amount || 0,
           amountPaid: p.amount || 0,
           installmentType: 'Lunas',
-          totalPaidToDate: p.amount || 0,
+          status: p.status,
+          verificationStatus: p.status,
+          verifiedAt: p.verifiedAt,
+          verifiedBy: p.verifiedBy,
+          rejectionReason: p.rejectionReason,
+          paymentStatus: p.status === 'verified' ? 'LUNAS' : undefined,
+          paymentMethod: p.paymentMethod || 'Transfer Bank',
+          totalPaidToDate: p.status === 'verified' ? (p.amount || 0) : 0,
           remainingBalance: 0,
           proofUrl: p.proofUrl,
           notes: p.notes,
@@ -606,6 +616,11 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     proofUrl?: string;
     notes?: string;
     matchingPayments: BamPaymentRecord[];
+    hasPendingVerification: boolean;
+    pendingAmount: number;
+    pendingProofUrl?: string;
+    pendingPayments: BamPaymentRecord[];
+    verifiedPayments: BamPaymentRecord[];
   }
 
   const studentBamSummaries: StudentBamSummary[] = useMemo(() => {
@@ -616,20 +631,39 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       // Total BAM dihitung secara dinamis dari item BAM aktif Supabase sesuai gender calon murid!
       const totalBam = getTotalBamCost(st);
 
-      // Cari total pembayaran BAM siswa ini
-      const matchingPayments = bamPayments.filter(
-        p => p.studentId === st.id || p.registrationNumber === st.registrationNumber
+      // Cari semua pembayaran BAM calon murid ini
+      const studentPayments = bamPayments.filter(
+        p => p.studentId === st.id || p.registrationNumber === st.registrationNumber ||
+             (st.fullName && p.studentName && p.studentName.toLowerCase() === st.fullName.toLowerCase())
       );
 
-      let paid = matchingPayments.reduce((acc, p) => acc + (Number(p.amountPaid) || 0), 0);
-      if (st.initialPaymentAmount && st.initialPaymentAmount > paid) {
+      // Pisahkan pembayaran yang SUDAH DIVERIFIKASI admin dan yang MASIH MENUNGGU VERIFIKASI (PENDING)
+      const verifiedPayments = studentPayments.filter(p => {
+        if (p.status === 'pending' || p.verificationStatus === 'pending') return false;
+        if (p.status === 'rejected' || p.verificationStatus === 'rejected') return false;
+        return p.status === 'verified' || p.verificationStatus === 'verified' || (!p.status && !p.verificationStatus && (p.paymentStatus === 'LUNAS' || p.paymentStatus === 'SEBAGIAN'));
+      });
+
+      const pendingPayments = studentPayments.filter(p => {
+        return p.status === 'pending' || p.verificationStatus === 'pending';
+      });
+
+      const hasPendingStudentField = st.initialPaymentStatus === 'pending' && Boolean(st.initialPaymentProofUrl || st.initialPaymentAmount);
+      const hasPendingVerification = pendingPayments.length > 0 || hasPendingStudentField;
+      const pendingAmount = pendingPayments[0]?.amountPaid || (hasPendingStudentField ? st.initialPaymentAmount : 0);
+      const pendingProofUrl = pendingPayments.find(p => !!p.proofUrl)?.proofUrl || (hasPendingStudentField ? st.initialPaymentProofUrl : undefined);
+
+      // REVISI KETAT ATURAN BAM:
+      // Hanya pembayaran yang SUDAH DIVERIFIKASI admin yang masuk ke perhitungan paid & Daftar Pembayaran!
+      let paid = verifiedPayments.reduce((acc, p) => acc + (Number(p.amountPaid) || 0), 0);
+      if (st.initialPaymentStatus === 'verified' && st.initialPaymentAmount && st.initialPaymentAmount > paid) {
         paid = st.initialPaymentAmount;
       }
 
       const remaining = calculateBamRemaining(totalBam, paid);
       const status = getBamPaymentStatus(totalBam, paid);
-      const latestPayDate = matchingPayments[0]?.paymentDate || st.initialPaymentDate || undefined;
-      const proofUrl = matchingPayments.find(p => !!p.proofUrl)?.proofUrl || st.initialPaymentProofUrl;
+      const latestPayDate = verifiedPayments[0]?.paymentDate || (st.initialPaymentStatus === 'verified' ? st.initialPaymentDate : undefined);
+      const proofUrl = verifiedPayments.find(p => !!p.proofUrl)?.proofUrl || pendingProofUrl || st.initialPaymentProofUrl;
 
       return {
         student: st,
@@ -642,13 +676,102 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         remaining,
         status,
         latestPaymentDate: latestPayDate,
-        paymentMethod: matchingPayments[0]?.paymentMethod || (paid > 0 ? 'Transfer Bank' : undefined),
+        paymentMethod: verifiedPayments[0]?.paymentMethod || (paid > 0 ? 'Transfer Bank' : undefined),
         proofUrl,
-        notes: matchingPayments[0]?.notes || st.initialPaymentNotes,
-        matchingPayments,
+        notes: verifiedPayments[0]?.notes || st.initialPaymentNotes,
+        matchingPayments: verifiedPayments,
+        hasPendingVerification,
+        pendingAmount,
+        pendingProofUrl,
+        pendingPayments,
+        verifiedPayments,
       };
     });
   }, [students, bamPayments, ikhwanItems, akhwatItems]);
+
+  // Antrean Pembayaran BAM yang Menunggu Verifikasi Ketat Admin
+  interface PendingBamVerificationItem {
+    id: string;
+    studentId: string;
+    studentName: string;
+    registrationNumber: string;
+    gender: 'Laki-laki' | 'Perempuan';
+    rawGender: BamGender;
+    totalBam: number;
+    amountClaimed: number;
+    paymentDate: string;
+    paymentMethod: string;
+    installmentType: string;
+    proofUrl?: string;
+    notes?: string;
+    sourcePaymentId?: string;
+    student: StudentData;
+  }
+
+  const pendingBamItems: PendingBamVerificationItem[] = useMemo(() => {
+    const list: PendingBamVerificationItem[] = [];
+    const seenStudentIds = new Set<string>();
+
+    // 1. Dari tabel payments / bamPayments yang berstatus 'pending'
+    bamPayments.filter(p => p.status === 'pending' || p.verificationStatus === 'pending').forEach(p => {
+      const student = students.find(s => s.id === p.studentId || s.registrationNumber === p.registrationNumber) || {
+        id: p.studentId,
+        registrationNumber: p.registrationNumber,
+        fullName: p.studentName,
+        gender: p.gender,
+      } as StudentData;
+
+      seenStudentIds.add(p.studentId);
+      const rawGender = normalizeBamGender(student);
+      const totalBam = getTotalBamCost(student);
+
+      list.push({
+        id: p.id,
+        studentId: p.studentId,
+        studentName: p.studentName || student.fullName,
+        registrationNumber: p.registrationNumber || student.registrationNumber || 'SPMB',
+        gender: p.gender || (rawGender === 'akhwat' ? 'Perempuan' : 'Laki-laki'),
+        rawGender,
+        totalBam,
+        amountClaimed: Number(p.amountPaid) || 0,
+        paymentDate: p.paymentDate || new Date().toISOString().split('T')[0],
+        paymentMethod: p.paymentMethod || 'Transfer Bank BSI',
+        installmentType: p.installmentType || 'Cicilan',
+        proofUrl: p.proofUrl,
+        notes: p.notes,
+        sourcePaymentId: p.id,
+        student,
+      });
+    });
+
+    // 2. Dari data student yang memiliki initialPaymentStatus === 'pending' dan bukti/nominal
+    students.filter(st => st.initialPaymentStatus === 'pending' && Boolean(st.initialPaymentProofUrl || st.initialPaymentAmount)).forEach(st => {
+      if (!seenStudentIds.has(st.id)) {
+        const rawGender = normalizeBamGender(st);
+        const totalBam = getTotalBamCost(st);
+        list.push({
+          id: `std_pending_${st.id}`,
+          studentId: st.id,
+          studentName: st.fullName,
+          registrationNumber: st.registrationNumber || 'SPMB',
+          gender: rawGender === 'akhwat' ? 'Perempuan' : 'Laki-laki',
+          rawGender,
+          totalBam,
+          amountClaimed: Number(st.initialPaymentAmount) || 0,
+          paymentDate: st.initialPaymentDate || new Date().toISOString().split('T')[0],
+          paymentMethod: 'Transfer Bank BSI',
+          installmentType: 'Cicilan 1',
+          proofUrl: st.initialPaymentProofUrl,
+          notes: st.initialPaymentNotes,
+          student: st,
+        });
+      }
+    });
+
+    return list;
+  }, [bamPayments, students]);
+
+  const pendingVerificationCount = pendingBamItems.length;
 
   // KPI Calculations
   const kpiData = useMemo(() => {
@@ -684,7 +807,11 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       if (filterStudentGender === 'akhwat' && row.rawGender !== 'akhwat') return false;
 
       // Filter Status
-      if (filterStudentStatus !== 'all' && row.status !== filterStudentStatus) return false;
+      if (filterStudentStatus === 'PENDING_VERIFIKASI') {
+        if (!row.hasPendingVerification) return false;
+      } else if (filterStudentStatus !== 'all' && row.status !== filterStudentStatus) {
+        return false;
+      }
 
       // Filter Search
       if (searchStudentQuery.trim()) {
@@ -702,6 +829,284 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     setSearchStudentQuery('');
     setFilterStudentGender('all');
     setFilterStudentStatus('all');
+  };
+
+  // -------------------------------------------------------------------
+  // 4B. STATE & HANDLER VERIFIKASI KETAT PEMBAYARAN BAM OLEH ADMIN
+  // -------------------------------------------------------------------
+  const [verifyTargetItem, setVerifyTargetItem] = useState<PendingBamVerificationItem | null>(null);
+  const [verifyInputAmount, setVerifyInputAmount] = useState<number>(0);
+  const [verifyInputDate, setVerifyInputDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [verifyInputMethod, setVerifyInputMethod] = useState<string>('Transfer Bank BSI');
+  const [verifyInputNotes, setVerifyInputNotes] = useState<string>('');
+  
+  const [rejectTargetItem, setRejectTargetItem] = useState<PendingBamVerificationItem | null>(null);
+  const [rejectReason, setRejectReason] = useState<string>('');
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
+
+  // Buka modal verifikasi untuk item antrean atau dari row calon murid
+  const handleOpenVerifyModal = (itemOrSummary: PendingBamVerificationItem | StudentBamSummary) => {
+    let target: PendingBamVerificationItem;
+    if ('student' in itemOrSummary && 'amountClaimed' in itemOrSummary) {
+      target = itemOrSummary as PendingBamVerificationItem;
+    } else {
+      const summary = itemOrSummary as StudentBamSummary;
+      const pendingRec = summary.pendingPayments[0];
+      target = {
+        id: pendingRec?.id || `std_pending_${summary.student.id}`,
+        studentId: summary.student.id,
+        studentName: summary.fullName,
+        registrationNumber: summary.registrationNumber,
+        gender: summary.gender,
+        rawGender: summary.rawGender,
+        totalBam: summary.totalBam,
+        amountClaimed: Number(pendingRec?.amountPaid) || summary.pendingAmount || summary.student.initialPaymentAmount || 0,
+        paymentDate: pendingRec?.paymentDate || summary.student.initialPaymentDate || new Date().toISOString().split('T')[0],
+        paymentMethod: pendingRec?.paymentMethod || 'Transfer Bank BSI',
+        installmentType: pendingRec?.installmentType || 'Cicilan 1',
+        proofUrl: summary.pendingProofUrl || pendingRec?.proofUrl || summary.student.initialPaymentProofUrl,
+        notes: pendingRec?.notes || summary.student.initialPaymentNotes,
+        sourcePaymentId: pendingRec?.id,
+        student: summary.student,
+      };
+    }
+
+    setVerifyTargetItem(target);
+    setVerifyInputAmount(target.amountClaimed > 0 ? target.amountClaimed : target.totalBam);
+    setVerifyInputDate(target.paymentDate || new Date().toISOString().split('T')[0]);
+    setVerifyInputMethod(target.paymentMethod || 'Transfer Bank BSI');
+    setVerifyInputNotes(target.notes ? `Verifikasi BAM: ${target.notes}` : `Pembayaran BAM Diverifikasi`);
+  };
+
+  const handleOpenRejectModal = (itemOrSummary: PendingBamVerificationItem | StudentBamSummary) => {
+    let target: PendingBamVerificationItem;
+    if ('student' in itemOrSummary && 'amountClaimed' in itemOrSummary) {
+      target = itemOrSummary as PendingBamVerificationItem;
+    } else {
+      const summary = itemOrSummary as StudentBamSummary;
+      const pendingRec = summary.pendingPayments[0];
+      target = {
+        id: pendingRec?.id || `std_pending_${summary.student.id}`,
+        studentId: summary.student.id,
+        studentName: summary.fullName,
+        registrationNumber: summary.registrationNumber,
+        gender: summary.gender,
+        rawGender: summary.rawGender,
+        totalBam: summary.totalBam,
+        amountClaimed: Number(pendingRec?.amountPaid) || summary.pendingAmount || summary.student.initialPaymentAmount || 0,
+        paymentDate: pendingRec?.paymentDate || summary.student.initialPaymentDate || new Date().toISOString().split('T')[0],
+        paymentMethod: pendingRec?.paymentMethod || 'Transfer Bank BSI',
+        installmentType: pendingRec?.installmentType || 'Cicilan 1',
+        proofUrl: summary.pendingProofUrl || pendingRec?.proofUrl || summary.student.initialPaymentProofUrl,
+        notes: pendingRec?.notes || summary.student.initialPaymentNotes,
+        sourcePaymentId: pendingRec?.id,
+        student: summary.student,
+      };
+    }
+    setRejectTargetItem(target);
+    setRejectReason('');
+  };
+
+  const handleConfirmVerifyPayment = async () => {
+    if (!verifyTargetItem) return;
+    if (verifyInputAmount <= 0 || isNaN(verifyInputAmount)) {
+      alert('Nominal verifikasi harus lebih dari 0.');
+      return;
+    }
+
+    setIsVerifying(true);
+    try {
+      const student = verifyTargetItem.student;
+      const verifiedAmount = Number(verifyInputAmount);
+      const verifiedDate = verifyInputDate || new Date().toISOString().split('T')[0];
+      const verifiedMethod = verifyInputMethod || 'Transfer Bank BSI';
+      const adminNotes = verifyInputNotes || `Diverifikasi Admin Panitia Keuangan SPMB pada ${new Date().toLocaleDateString('id-ID')}`;
+
+      // 1. Update status pembayaran di database Supabase
+      if (verifyTargetItem.sourcePaymentId) {
+        await PaymentRepository.update(verifyTargetItem.sourcePaymentId, {
+          amount: verifiedAmount,
+          paymentDate: verifiedDate,
+          paymentMethod: verifiedMethod,
+          notes: adminNotes,
+          status: 'verified',
+        });
+        await PaymentRepository.updateStatus(
+          verifyTargetItem.sourcePaymentId,
+          'verified',
+          undefined,
+          adminNotes
+        );
+      } else {
+        await PaymentRepository.create({
+          studentId: student.id,
+          registrationNumber: student.registrationNumber,
+          studentName: student.fullName,
+          gender: student.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+          paymentType: 'bam',
+          amount: verifiedAmount,
+          status: 'verified',
+          paymentDate: verifiedDate,
+          paymentMethod: verifiedMethod,
+          notes: adminNotes,
+          proofUrl: verifyTargetItem.proofUrl,
+        });
+      }
+
+      // 2. Hitung total baru
+      const existingPaid = studentBamSummaries.find(s => s.student.id === student.id)?.amountPaid || 0;
+      const newTotalPaid = existingPaid + verifiedAmount;
+      const totalBam = getTotalBamCost(student);
+      const isNowLunas = newTotalPaid >= totalBam;
+
+      // 3. Update data student
+      const updatedStudents = students.map(s => {
+        if (s.id === student.id) {
+          return {
+            ...s,
+            initialPaymentStatus: 'verified' as const,
+            initialPaymentAmount: newTotalPaid,
+            initialPaymentDate: verifiedDate,
+            initialPaymentNotes: adminNotes,
+            status: isNowLunas ? ('re_registered' as const) : ('re_registration_paid' as const),
+          };
+        }
+        return s;
+      });
+      onUpdateStudents(updatedStudents);
+
+      // 4. Update bamPayments local state & storage
+      const existingPayments = getStoredBamPayments();
+      let updatedBamPayments: BamPaymentRecord[];
+
+      const foundIdx = existingPayments.findIndex(p =>
+        (verifyTargetItem.sourcePaymentId && p.id === verifyTargetItem.sourcePaymentId) ||
+        (p.studentId === student.id && (p.status === 'pending' || p.verificationStatus === 'pending'))
+      );
+
+      if (foundIdx >= 0) {
+        updatedBamPayments = existingPayments.map((p, idx) => {
+          if (idx === foundIdx) {
+            return {
+              ...p,
+              status: 'verified' as const,
+              verificationStatus: 'verified' as const,
+              amountPaid: verifiedAmount,
+              paymentDate: verifiedDate,
+              paymentMethod: verifiedMethod,
+              paymentStatus: isNowLunas ? 'LUNAS' as const : 'SEBAGIAN' as const,
+              totalPaidToDate: newTotalPaid,
+              remainingBalance: calculateBamRemaining(totalBam, newTotalPaid),
+              verifiedAt: new Date().toISOString(),
+              verifiedBy: 'Panitia Keuangan SPMB',
+              notes: adminNotes,
+            };
+          }
+          return p;
+        });
+      } else {
+        const newRecord: BamPaymentRecord = {
+          id: verifyTargetItem.sourcePaymentId || `TRX-BAM-${Date.now().toString().slice(-6)}`,
+          transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
+          studentId: student.id,
+          registrationNumber: student.registrationNumber || 'SPMB',
+          studentName: student.fullName,
+          gender: student.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+          paymentDate: verifiedDate,
+          totalBamCost: totalBam,
+          amountPaid: verifiedAmount,
+          installmentType: isNowLunas ? 'Lunas' : 'Cicilan 1',
+          paymentStatus: isNowLunas ? 'LUNAS' : 'SEBAGIAN',
+          paymentMethod: verifiedMethod,
+          totalPaidToDate: newTotalPaid,
+          remainingBalance: calculateBamRemaining(totalBam, newTotalPaid),
+          proofUrl: verifyTargetItem.proofUrl,
+          status: 'verified',
+          verificationStatus: 'verified',
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: 'Panitia Keuangan SPMB',
+          notes: adminNotes,
+          createdAt: new Date().toISOString(),
+        };
+        updatedBamPayments = [newRecord, ...existingPayments];
+      }
+
+      setBamPayments(updatedBamPayments);
+      saveBamPayments(updatedBamPayments);
+
+      setVerifyTargetItem(null);
+      setSaveSuccessMessage(`✓ Pembayaran BAM Rp ${verifiedAmount.toLocaleString('id-ID')} untuk ${student.fullName} BERHASIL DIVERIFIKASI dan kini RESMI masuk ke Daftar Pembayaran!`);
+      setTimeout(() => setSaveSuccessMessage(null), 5000);
+    } catch (err: any) {
+      alert(`Gagal memverifikasi pembayaran BAM: ${err?.message || 'Terjadi kesalahan'}`);
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleConfirmRejectPayment = async () => {
+    if (!rejectTargetItem) return;
+    if (!rejectReason.trim()) {
+      alert('Silakan tuliskan alasan penolakan bukti transfer.');
+      return;
+    }
+
+    setIsVerifying(true);
+    try {
+      const student = rejectTargetItem.student;
+      const reasonText = rejectReason.trim();
+
+      // 1. Update status pembayaran di database Supabase
+      if (rejectTargetItem.sourcePaymentId) {
+        await PaymentRepository.updateStatus(
+          rejectTargetItem.sourcePaymentId,
+          'rejected',
+          reasonText,
+          `Bukti Ditolak: ${reasonText}`
+        );
+      }
+
+      // 2. Update data student
+      const updatedStudents = students.map(s => {
+        if (s.id === student.id) {
+          return {
+            ...s,
+            initialPaymentStatus: 'rejected' as const,
+            initialPaymentNotes: `Ditolak: ${reasonText}`,
+          };
+        }
+        return s;
+      });
+      onUpdateStudents(updatedStudents);
+
+      // 3. Update bamPayments local state & storage
+      const existingPayments = getStoredBamPayments();
+      const updatedBamPayments = existingPayments.map(p => {
+        if ((rejectTargetItem.sourcePaymentId && p.id === rejectTargetItem.sourcePaymentId) ||
+            (p.studentId === student.id && (p.status === 'pending' || p.verificationStatus === 'pending'))) {
+          return {
+            ...p,
+            status: 'rejected' as const,
+            verificationStatus: 'rejected' as const,
+            rejectionReason: reasonText,
+            notes: `Bukti Ditolak: ${reasonText}`,
+          };
+        }
+        return p;
+      });
+
+      setBamPayments(updatedBamPayments);
+      saveBamPayments(updatedBamPayments);
+
+      setRejectTargetItem(null);
+      setRejectReason('');
+      setSaveSuccessMessage(`Bukti transfer BAM untuk ${student.fullName} telah DITOLAK. Status tetap BELUM BAYAR dan calon murid dapat mengunggah bukti perbaikan.`);
+      setTimeout(() => setSaveSuccessMessage(null), 5000);
+    } catch (err: any) {
+      alert(`Gagal menolak bukti transfer: ${err?.message || 'Terjadi kesalahan'}`);
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   // -------------------------------------------------------------------
@@ -998,48 +1403,71 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         </div>
       )}
 
-      {/* 3 TAB UTAMA NAVIGASI */}
-      <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-2">
+      {/* 4 TAB UTAMA NAVIGASI */}
+      <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
         <button
           onClick={() => setActiveTopTab('payments')}
-          className={`flex-1 py-3 px-4 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+          className={`py-3 px-3 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTopTab === 'payments'
               ? 'bg-slate-900 text-white shadow-md'
               : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
           }`}
         >
-          <DollarSign className="w-4 h-4 text-emerald-400" />
-          <span>1. Tabel Rincian & Pembayaran BAM</span>
-          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-200">
-            {studentBamSummaries.length} Murid
+          <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="truncate">1. Daftar Pembayaran BAM</span>
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-slate-200 shrink-0">
+            {studentBamSummaries.length}
           </span>
         </button>
 
         <button
+          onClick={() => setActiveTopTab('verification')}
+          className={`py-3 px-3 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer relative ${
+            activeTopTab === 'verification'
+              ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400 font-black'
+              : pendingVerificationCount > 0
+              ? 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 font-bold'
+              : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+          <span className="truncate">2. Antrean Verifikasi BAM</span>
+          {pendingVerificationCount > 0 ? (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-rose-600 text-white animate-pulse shrink-0">
+              {pendingVerificationCount} Menunggu
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 shrink-0">
+              0
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTopTab('items')}
-          className={`flex-1 py-3 px-4 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+          className={`py-3 px-3 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTopTab === 'items'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
           }`}
         >
-          <Layers className="w-4 h-4 text-indigo-300" />
-          <span>2. Data Item BAM (Ikhwan & Akhwat)</span>
-          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-800 text-indigo-100">
-            {ikhwanItems.length + akhwatItems.length} Item
+          <Layers className="w-4 h-4 text-indigo-300 shrink-0" />
+          <span className="truncate">3. Data Item BAM</span>
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-800 text-indigo-100 shrink-0">
+            {ikhwanItems.length + akhwatItems.length}
           </span>
         </button>
 
         <button
           onClick={() => setActiveTopTab('upload')}
-          className={`flex-1 py-3 px-4 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+          className={`py-3 px-3 rounded-xl font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTopTab === 'upload'
               ? 'bg-amber-600 text-white shadow-md'
               : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
           }`}
         >
-          <Upload className="w-4 h-4 text-amber-300" />
-          <span>3. Upload / Import Data BAM Baru</span>
+          <Upload className="w-4 h-4 text-amber-300 shrink-0" />
+          <span className="truncate">4. Upload / Import Data</span>
         </button>
       </div>
 
@@ -1156,6 +1584,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                   className="border border-slate-300 rounded-lg p-2 text-xs bg-white font-semibold"
                 >
                   <option value="all">Semua</option>
+                  <option value="PENDING_VERIFIKASI">⏳ Menunggu Verifikasi ({pendingVerificationCount})</option>
                   <option value="LUNAS">Lunas</option>
                   <option value="SEBAGIAN">Sebagian</option>
                   <option value="BELUM BAYAR">Belum Bayar</option>
@@ -1249,15 +1678,23 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                           {s.latestPaymentDate || '-'}
                         </td>
                         <td className="p-3">
-                          <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${
-                            s.status === 'LUNAS'
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : s.status === 'SEBAGIAN'
-                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                              : 'bg-rose-100 text-rose-800 border border-rose-300'
-                          }`}>
-                            {s.status}
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${
+                              s.status === 'LUNAS'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : s.status === 'SEBAGIAN'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : 'bg-rose-100 text-rose-800 border border-rose-300'
+                            }`}>
+                              {s.status}
+                            </span>
+                            {s.hasPendingVerification && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 animate-pulse" title="Bukti transfer terunggah dan sedang dalam antrean verifikasi ketat admin">
+                                <span>⏳</span>
+                                <span>Verifikasi Pending (Rp {s.pendingAmount.toLocaleString('id-ID')})</span>
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="p-3 text-center">
                           {s.proofUrl ? (
@@ -1271,8 +1708,8 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                                   studentName: s.fullName,
                                   regNo: s.registrationNumber,
                                   paymentType: 'bam',
-                                  amount: s.amountPaid,
-                                  status: s.status === 'LUNAS' || s.status === 'SEBAGIAN' ? 'verified' : 'pending',
+                                  amount: s.amountPaid > 0 ? s.amountPaid : s.pendingAmount,
+                                  status: s.hasPendingVerification ? 'pending' : (s.status === 'LUNAS' || s.status === 'SEBAGIAN' ? 'verified' : 'pending'),
                                   date: s.latestPaymentDate,
                                   notes: s.notes,
                                 })}
@@ -1284,6 +1721,18 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                         </td>
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
+                            {/* Tombol Verifikasi jika ada pembayaran menunggu */}
+                            {s.hasPendingVerification && (
+                              <button
+                                onClick={() => handleOpenVerifyModal(s)}
+                                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-lg transition-all text-xs flex items-center gap-1 shadow-sm cursor-pointer animate-pulse"
+                                title="Periksa & Verifikasi Pembayaran BAM Calon Murid Ini"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                                <span>Verifikasi</span>
+                              </button>
+                            )}
+
                             {/* Tombol Lihat Rincian Calon Murid (Section L) */}
                             <button
                               onClick={() => setSelectedStudentSummary(s)}
@@ -1339,7 +1788,191 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       )}
 
       {/* ================================================================= */}
-      {/* TAB 2: PENGELOLAAN ITEM BAM TERPISAH IKHWAN & AKHWAT (SECTION F & G) */}
+      {/* TAB 2: ANTREAN VERIFIKASI KETAT PEMBAYARAN BAM CALON MURID        */}
+      {/* ================================================================= */}
+      {activeTopTab === 'verification' && (
+        <div className="space-y-6">
+          {/* BANNER ATURAN VERIFIKASI KETAT */}
+          <div className="p-5 bg-gradient-to-r from-amber-50 via-yellow-50 to-amber-100/60 rounded-2xl border-2 border-amber-300 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center text-2xl shadow-md shrink-0 mt-0.5">
+                <ShieldCheck className="w-7 h-7 text-slate-950" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-amber-950 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                    Verifikasi Ketat Keuangan
+                  </span>
+                  <span className="text-xs font-bold text-amber-800">
+                    Sistem Validasi Bertingkat SPMB
+                  </span>
+                </div>
+                <h3 className="text-lg font-black text-slate-900 mt-0.5">
+                  Antrean Verifikasi Bukti Transfer Biaya Awal Masuk (BAM)
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
+                  Calon murid yang mengunggah bukti transfer BAM <strong>tidak otomatis masuk</strong> ke Daftar Pembayaran atau Riwayat Pembayaran. Admin wajib mencocokkan mutasi rekening bank sekolah sebelum memverifikasi dan menyetujui data pembayaran.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0 self-stretch md:self-auto justify-end">
+              <div className="p-3 bg-white rounded-xl border border-amber-200 text-center shadow-xs">
+                <div className="text-[10px] uppercase font-bold text-slate-400">Menunggu Verifikasi</div>
+                <div className="text-2xl font-black font-mono text-amber-600">{pendingVerificationCount}</div>
+                <div className="text-[10px] text-amber-700 font-bold">Calon Murid</div>
+              </div>
+              <div className="p-3 bg-white rounded-xl border border-amber-200 text-center shadow-xs">
+                <div className="text-[10px] uppercase font-bold text-slate-400">Total Nominal Klaim</div>
+                <div className="text-lg font-black font-mono text-slate-900">
+                  Rp {pendingBamItems.reduce((acc, c) => acc + c.amountClaimed, 0).toLocaleString('id-ID')}
+                </div>
+                <div className="text-[10px] text-slate-500 font-medium">Dalam Antrean</div>
+              </div>
+            </div>
+          </div>
+
+          {/* DAFTAR ANTREAN */}
+          {pendingBamItems.length === 0 ? (
+            <div className="p-12 bg-white rounded-2xl border border-slate-200 text-center space-y-4 shadow-sm">
+              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-200 shadow-inner">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-extrabold text-slate-800">
+                  Semua Bukti Pembayaran BAM Telah Terverifikasi!
+                </h4>
+                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                  Tidak ada bukti transfer BAM yang sedang menunggu verifikasi saat ini. Setiap bukti transfer baru yang diunggah calon murid akan langsung muncul di halaman ini untuk diverifikasi ketat oleh admin.
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveTopTab('payments')}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <DollarSign className="w-4 h-4 text-emerald-400" />
+                <span>Buka Tabel Pembayaran Resmi</span>
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-5">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-amber-600" />
+                    <span>Daftar Bukti Transfer Masuk Menunggu Persetujuan Admin</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Klik <strong>Verifikasi</strong> untuk mencocokkan nominal dan memasukkan pembayaran ke sistem resmi, atau <strong>Tolak</strong> jika bukti tidak sah.
+                  </p>
+                </div>
+                <span className="px-3 py-1 bg-amber-100 text-amber-900 font-extrabold text-xs rounded-full border border-amber-300">
+                  {pendingVerificationCount} Bukti Perlu Tindakan
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b font-bold text-slate-700 whitespace-nowrap">
+                      <th className="p-3 w-12 text-center">No</th>
+                      <th className="p-3">Calon Murid</th>
+                      <th className="p-3">Gender</th>
+                      <th className="p-3">Total Kewajiban BAM</th>
+                      <th className="p-3">Nominal Diklaim Siswa</th>
+                      <th className="p-3">Tanggal Transfer</th>
+                      <th className="p-3">Skema / Metode</th>
+                      <th className="p-3 text-center">Bukti Transfer</th>
+                      <th className="p-3">Catatan Siswa</th>
+                      <th className="p-3 text-center">Aksi Verifikasi Admin</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pendingBamItems.map((item, idx) => (
+                      <tr key={item.id} className="hover:bg-amber-50/40 font-medium whitespace-nowrap transition-colors">
+                        <td className="p-3 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
+                        <td className="p-3">
+                          <div className="font-extrabold text-slate-900">{item.studentName}</div>
+                          <div className="font-mono text-[11px] text-slate-500">{item.registrationNumber}</div>
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            item.rawGender === 'ikhwan' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'
+                          }`}>
+                            {item.gender}
+                          </span>
+                        </td>
+                        <td className="p-3 font-semibold text-slate-700 font-mono">
+                          Rp {item.totalBam.toLocaleString('id-ID')}
+                        </td>
+                        <td className="p-3 font-black text-amber-900 font-mono text-sm">
+                          Rp {item.amountClaimed.toLocaleString('id-ID')}
+                        </td>
+                        <td className="p-3 font-mono text-slate-600">
+                          {item.paymentDate}
+                        </td>
+                        <td className="p-3">
+                          <div className="font-bold text-slate-800">{item.installmentType}</div>
+                          <div className="text-[10px] text-slate-500">{item.paymentMethod}</div>
+                        </td>
+                        <td className="p-3 text-center">
+                          {item.proofUrl ? (
+                            <div className="flex items-center justify-center">
+                              <PaymentProofThumbnail
+                                pathOrUrl={item.proofUrl}
+                                alt={`Bukti Transfer ${item.studentName}`}
+                                className="w-11 h-11 shrink-0 mx-auto border-2 border-amber-300 rounded-lg hover:ring-2 hover:ring-amber-500 cursor-pointer"
+                                onClick={() => setActiveProofData({
+                                  url: item.proofUrl!,
+                                  studentName: item.studentName,
+                                  regNo: item.registrationNumber,
+                                  paymentType: 'bam',
+                                  amount: item.amountClaimed,
+                                  status: 'pending',
+                                  date: item.paymentDate,
+                                  notes: item.notes,
+                                })}
+                              />
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">Tanpa Foto</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-slate-600 max-w-[200px] truncate text-[11px]" title={item.notes}>
+                          {item.notes || '-'}
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => handleOpenVerifyModal(item)}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                              title="Setujui dan masukkan pembayaran ini ke data resmi"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Verifikasi & Masukkan</span>
+                            </button>
+                            <button
+                              onClick={() => handleOpenRejectModal(item)}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 font-bold text-xs rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                              title="Tolak bukti transfer ini dengan catatan"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Tolak</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* TAB 3: PENGELOLAAN ITEM BAM TERPISAH IKHWAN & AKHWAT (SECTION F & G) */}
       {/* ================================================================= */}
       {activeTopTab === 'items' && (
         <div className="space-y-6">
@@ -2078,6 +2711,312 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
               >
                 <Save className="w-4 h-4" />
                 <span>{isSubmittingPayment ? 'Menyimpan...' : 'Simpan Pembayaran'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL VERIFIKASI KETAT PEMBAYARAN BAM */}
+      {verifyTargetItem && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 my-auto animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm sm:text-base">
+                    Verifikasi Ketat Pembayaran BAM
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Konfirmasi mutasi rekening sebelum memasukkan ke Daftar Pembayaran resmi.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setVerifyTargetItem(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Identitas Calon Murid Card */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Nama Siswa</span>
+                <span className="font-extrabold text-slate-900 truncate block">{verifyTargetItem.studentName}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">No. Pendaftaran</span>
+                <span className="font-mono font-bold text-slate-800 block">{verifyTargetItem.registrationNumber}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Kategori Gender</span>
+                <span className="font-bold text-slate-800 block">{verifyTargetItem.gender}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Total BAM</span>
+                <span className="font-mono font-black text-indigo-700 block">
+                  Rp {verifyTargetItem.totalBam.toLocaleString('id-ID')}
+                </span>
+              </div>
+            </div>
+
+            {/* Bukti Transfer Box */}
+            <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-amber-950 flex items-center gap-1.5">
+                  <Eye className="w-4 h-4 text-amber-700" />
+                  <span>Bukti Transfer yang Diunggah Calon Murid:</span>
+                </span>
+                {verifyTargetItem.proofUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveProofData({
+                      url: verifyTargetItem.proofUrl!,
+                      studentName: verifyTargetItem.studentName,
+                      regNo: verifyTargetItem.registrationNumber,
+                      paymentType: 'bam',
+                      amount: verifyTargetItem.amountClaimed,
+                      status: 'pending',
+                      date: verifyTargetItem.paymentDate,
+                      notes: verifyTargetItem.notes,
+                    })}
+                    className="text-[11px] font-bold text-amber-800 hover:underline cursor-pointer"
+                  >
+                    🔍 Perbesar Layar Penuh
+                  </button>
+                )}
+              </div>
+
+              {verifyTargetItem.proofUrl ? (
+                <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-amber-200">
+                  <PaymentProofThumbnail
+                    pathOrUrl={verifyTargetItem.proofUrl}
+                    alt={`Bukti ${verifyTargetItem.studentName}`}
+                    className="w-16 h-16 shrink-0 rounded-lg border border-slate-200 object-cover"
+                    onClick={() => setActiveProofData({
+                      url: verifyTargetItem.proofUrl!,
+                      studentName: verifyTargetItem.studentName,
+                      regNo: verifyTargetItem.registrationNumber,
+                      paymentType: 'bam',
+                      amount: verifyTargetItem.amountClaimed,
+                      status: 'pending',
+                      date: verifyTargetItem.paymentDate,
+                      notes: verifyTargetItem.notes,
+                    })}
+                  />
+                  <div className="text-xs space-y-0.5 min-w-0 flex-1">
+                    <div className="text-[11px] text-slate-500">
+                      Nominal Diklaim: <b className="font-mono text-emerald-800">Rp {verifyTargetItem.amountClaimed.toLocaleString('id-ID')}</b>
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Tanggal Transfer: <b className="font-mono text-slate-800">{verifyTargetItem.paymentDate}</b>
+                    </div>
+                    {verifyTargetItem.notes && (
+                      <div className="text-[10px] text-slate-600 truncate italic">
+                        Catatan: "{verifyTargetItem.notes}"
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center p-3 text-slate-400 italic text-xs">
+                  Tidak ada berkas bukti gambar yang dilampirkan siswa.
+                </div>
+              )}
+            </div>
+
+            {/* Form Input Verifikasi */}
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    1. Nominal Terverifikasi Valid di Mutasi Bank (Rp) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={verifyInputAmount}
+                    onChange={e => setVerifyInputAmount(Number(e.target.value))}
+                    className="w-full p-2.5 border-2 border-emerald-400 rounded-xl font-mono font-black text-emerald-900 bg-emerald-50/40 text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">
+                    Sesuaikan jika nominal di mutasi bank berbeda dari klaim siswa.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    2. Tanggal Transaksi / Mutasi <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={verifyInputDate}
+                    onChange={e => setVerifyInputDate(e.target.value)}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl font-semibold bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    3. Metode Pembayaran
+                  </label>
+                  <select
+                    value={verifyInputMethod}
+                    onChange={e => setVerifyInputMethod(e.target.value)}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl font-semibold bg-white"
+                  >
+                    <option value="Transfer Bank BSI">Transfer Bank BSI (451 - 3953157480)</option>
+                    <option value="Transfer Bank Mandiri">Transfer Bank Mandiri</option>
+                    <option value="Tunai di Kasir Sekolah">Tunai di Kasir Sekolah</option>
+                    <option value="Virtual Account">Virtual Account</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    4. Catatan Verifikasi Admin (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    value={verifyInputNotes}
+                    onChange={e => setVerifyInputNotes(e.target.value)}
+                    placeholder="Contoh: Cocok dengan mutasi BSI tgl 20/04"
+                    className="w-full p-2.5 border border-slate-300 rounded-xl font-medium"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Warning Callout */}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-blue-900 flex items-start gap-2">
+              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <span>
+                Setelah disetujui, pembayaran Rp {Number(verifyInputAmount || 0).toLocaleString('id-ID')} akan <strong>resmi masuk</strong> ke Daftar Pembayaran BAM, saldo tunggakan calon murid akan berkurang, dan muncul di Riwayat Pembayaran calon murid.
+              </span>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setVerifyTargetItem(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmVerifyPayment}
+                disabled={isVerifying}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs flex items-center gap-2 shadow-lg hover:shadow-emerald-500/20 cursor-pointer disabled:opacity-50 active:scale-95 transition-all"
+              >
+                <Check className="w-4 h-4" />
+                <span>{isVerifying ? 'Sedang Memverifikasi...' : '✓ Setujui & Masukkan ke Daftar Pembayaran'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL TOLAK BUKTI TRANSFER BAM */}
+      {rejectTargetItem && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 my-auto animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-800 flex items-center justify-center">
+                  <X className="w-5 h-5 text-rose-700" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm sm:text-base">
+                    Tolak Bukti Transfer BAM
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Calon Murid: {rejectTargetItem.studentName} ({rejectTargetItem.registrationNumber})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRejectTargetItem(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Alert banner */}
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 text-xs space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-rose-950">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>Konsekuensi Penolakan Bukti Transfer</span>
+              </div>
+              <p className="text-[11px] text-rose-800 leading-relaxed">
+                Pembayaran <strong>tidak akan masuk</strong> ke Daftar Pembayaran resmi. Status calon murid tetap <strong>BELUM BAYAR</strong>. Alasan penolakan akan dikirim ke dashboard calon murid agar dapat mengunggah bukti perbaikan.
+              </p>
+            </div>
+
+            {/* Quick Reason Chips */}
+            <div className="space-y-1.5 text-xs">
+              <label className="font-bold text-slate-700 block">
+                Pilih Alasan Cepat Penolakan:
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'Bukti transfer buram / tidak terbaca jelas',
+                  'Dana belum masuk ke rekening BSI sekolah',
+                  'Nominal transfer tidak sesuai ketentuan BAM',
+                  'Bukan nomor rekening resmi SMP Al-Hadiid',
+                  'Bukti transfer terindikasi editan / tidak valid',
+                ].map((chip, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setRejectReason(chip)}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-rose-50 hover:text-rose-800 hover:border-rose-300 border border-slate-200 text-slate-700 font-semibold text-[11px] rounded-lg transition-colors cursor-pointer"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Textarea Alasan */}
+            <div className="space-y-1 text-xs">
+              <label className="font-bold text-slate-700 block">
+                Alasan Penolakan Spesifik untuk Calon Murid <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                placeholder="Tuliskan catatan alasan penolakan secara jelas agar calon murid dapat memperbaikinya..."
+                className="w-full p-2.5 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-rose-500 text-xs"
+              />
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRejectTargetItem(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRejectPayment}
+                disabled={isVerifying || !rejectReason.trim()}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-md cursor-pointer disabled:opacity-50 active:scale-95 transition-all"
+              >
+                <X className="w-4 h-4" />
+                <span>{isVerifying ? 'Sedang Memproses...' : '✕ Konfirmasi Tolak Bukti Transfer'}</span>
               </button>
             </div>
           </div>
