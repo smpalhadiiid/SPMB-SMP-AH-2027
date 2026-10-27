@@ -21,7 +21,7 @@ import { PaymentRepository } from '../repositories/PaymentRepository';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import { StudentRepository } from '../repositories/StudentRepository';
 import { generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF, generatePaymentReceiptPDF } from '../utils/pdfGenerator';
-import { downloadBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
+import { downloadBrochureFile, downloadBrochureImage, downloadBrochurePdf, isImageBrochure } from '../utils/brochureGenerator';
 import {
   canDownloadStudentForm,
   canStudentDownloadDocuments,
@@ -4290,14 +4290,39 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </a>
                       )}
 
-                      <button
-                        type="button"
-                        onClick={() => downloadBrochureFile(schoolInfo, costBreakdowns, schedulesList)}
-                        className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow cursor-pointer"
-                      >
-                        <Download className="w-4 h-4 text-emerald-200" />
-                        <span>{isImageBrochure(schoolInfo) ? 'Unduh Brosur Resmi SPMB (Gambar)' : 'Unduh Brosur Resmi SPMB (PDF)'}</span>
-                      </button>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const res = await downloadBrochureImage(schoolInfo, costBreakdowns, schedulesList);
+                            if (res.success) {
+                              toast.success(res.message);
+                            } else {
+                              toast.error(res.message);
+                            }
+                          }}
+                          className="py-2.5 px-3 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow cursor-pointer"
+                        >
+                          <ImageIcon className="w-4 h-4 text-emerald-200" />
+                          <span>Unduh Gambar Brosur (Admin)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const res = await downloadBrochurePdf(schoolInfo, costBreakdowns, schedulesList);
+                            if (res.success) {
+                              toast.success(res.message);
+                            } else {
+                              toast.error(res.message);
+                            }
+                          }}
+                          className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow cursor-pointer border border-slate-700"
+                        >
+                          <FileText className="w-4 h-4 text-emerald-300" />
+                          <span>Unduh Brosur PDF</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 

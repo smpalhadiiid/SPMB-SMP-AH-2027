@@ -10,7 +10,15 @@ import {
 import { SchoolLogo } from './SchoolLogo';
 import { RealtimeQuotaSection } from './landing/RealtimeQuotaSection';
 import { BrochureSection } from './landing/BrochureSection';
-import { downloadBrochureFile, generateBrosurSpmbPDF, getBrochurePdfBlobUrl, isImageBrochure } from '../utils/brochureGenerator';
+import {
+  downloadBrochureFile,
+  downloadBrochureImage,
+  downloadBrochurePdf,
+  generateBrosurSpmbPDF,
+  getBrochurePdfBlobUrl,
+  isImageBrochure,
+  hasAdminBrochureImage,
+} from '../utils/brochureGenerator';
 
 interface LandingPageProps {
   schoolInfo: SchoolInfo;
@@ -46,27 +54,77 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [showBrosurModal, setShowBrosurModal] = useState(false);
   const [showImagePreviewModal, setShowImagePreviewModal] = useState(false);
   const [isDownloadingBrochure, setIsDownloadingBrochure] = useState(false);
+  const [downloadingType, setDownloadingType] = useState<'image' | 'pdf' | null>(null);
   const [brochureStatusMsg, setBrochureStatusMsg] = useState<{ type: 'info' | 'success' | 'error'; text: string } | null>(null);
 
-  const handleDownloadBrochure = async () => {
+  // Unduh Brosur Gambar (Berasal langsung dari brosur gambar yang diupload oleh admin)
+  const handleDownloadBrochureImage = async () => {
     setIsDownloadingBrochure(true);
-    const isImage = isImageBrochure(schoolInfo);
-    setBrochureStatusMsg({ type: 'info', text: `Menyiapkan berkas brosur ${isImage ? 'gambar' : 'PDF'} resmi SPMB...` });
+    setDownloadingType('image');
+    const isFromAdmin = hasAdminBrochureImage(schoolInfo);
+    setBrochureStatusMsg({
+      type: 'info',
+      text: isFromAdmin
+        ? 'Menyiapkan unduhan brosur gambar resmi unggahan panitia/admin...'
+        : 'Menyiapkan berkas gambar brosur resmi SPMB...',
+    });
+
     try {
-      const res = await downloadBrochureFile(schoolInfo, costBreakdowns, testSchedules);
+      const res = await downloadBrochureImage(schoolInfo, costBreakdowns, testSchedules);
       if (res.success) {
-        setBrochureStatusMsg({ type: 'success', text: `✓ Brosur ${isImage ? 'gambar' : 'PDF'} berhasil diunduh ke perangkat Anda.` });
+        setBrochureStatusMsg({
+          type: 'success',
+          text: `✓ ${res.message}`,
+        });
         setTimeout(() => {
           setShowBrosurModal(false);
           setBrochureStatusMsg(null);
-        }, 2000);
+        }, 2200);
       } else {
-        setBrochureStatusMsg({ type: 'error', text: res.message || 'Gagal mengunduh brosur.' });
+        setBrochureStatusMsg({ type: 'error', text: res.message || 'Gagal mengunduh brosur gambar.' });
       }
     } catch (err: any) {
-      setBrochureStatusMsg({ type: 'error', text: 'Terjadi kendala saat mengunduh brosur.' });
+      setBrochureStatusMsg({ type: 'error', text: 'Terjadi kendala saat mengunduh gambar brosur.' });
     } finally {
       setIsDownloadingBrochure(false);
+      setDownloadingType(null);
+    }
+  };
+
+  // Unduh Brosur PDF Resmi
+  const handleDownloadBrochurePdf = async () => {
+    setIsDownloadingBrochure(true);
+    setDownloadingType('pdf');
+    setBrochureStatusMsg({ type: 'info', text: 'Menyiapkan berkas brosur PDF resmi SPMB...' });
+
+    try {
+      const res = await downloadBrochurePdf(schoolInfo, costBreakdowns, testSchedules);
+      if (res.success) {
+        setBrochureStatusMsg({
+          type: 'success',
+          text: `✓ ${res.message}`,
+        });
+        setTimeout(() => {
+          setShowBrosurModal(false);
+          setBrochureStatusMsg(null);
+        }, 2200);
+      } else {
+        setBrochureStatusMsg({ type: 'error', text: res.message || 'Gagal mengunduh brosur PDF.' });
+      }
+    } catch (err: any) {
+      setBrochureStatusMsg({ type: 'error', text: 'Terjadi kendala saat mengunduh brosur PDF.' });
+    } finally {
+      setIsDownloadingBrochure(false);
+      setDownloadingType(null);
+    }
+  };
+
+  // Fallback download serbaguna
+  const handleDownloadBrochure = async () => {
+    if (isImageBrochure(schoolInfo)) {
+      await handleDownloadBrochureImage();
+    } else {
+      await handleDownloadBrochurePdf();
     }
   };
 
@@ -79,10 +137,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       const blobUrl = getBrochurePdfBlobUrl(schoolInfo, costBreakdowns, testSchedules);
       const win = window.open(blobUrl, '_blank');
       if (!win) {
-        handleDownloadBrochure();
+        handleDownloadBrochurePdf();
       }
     } catch (e) {
-      handleDownloadBrochure();
+      handleDownloadBrochurePdf();
     }
   };
 
@@ -319,11 +377,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
                 <button
                   onClick={() => {
-                    handleDownloadBrochure();
                     setShowBrosurModal(true);
                   }}
                   className="px-5 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm border border-slate-700 backdrop-blur-md transition-all flex items-center gap-2 cursor-pointer shadow-sm hover:border-emerald-500/50"
-                  title="Unduh Berkas Brosur Resmi SPMB (PDF)"
+                  title="Unduh Brosur Resmi SPMB (Pilihan Gambar & PDF)"
                 >
                   <Download className="w-4 h-4 text-emerald-400" />
                   Unduh Brosur
@@ -1034,6 +1091,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       {/* MODAL BROSUR DOWNLOAD */}
       {showBrosurModal && (() => {
+        const isFromAdmin = hasAdminBrochureImage(schoolInfo);
         const isImage = isImageBrochure(schoolInfo);
         const fileName = schoolInfo.brochureFileName || (isImage
           ? `Brosur_Resmi_SPMB_SMP_AlHadiid_${(schoolInfo.academicYear || '2027_2028').replace('/', '_')}.jpg`
@@ -1041,66 +1099,79 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-lg w-full p-6 text-slate-900 relative shadow-2xl space-y-4">
+            <div className="bg-white rounded-3xl max-w-lg w-full p-6 text-slate-900 relative shadow-2xl space-y-4 border border-slate-100">
               <button
                 onClick={() => {
                   setShowBrosurModal(false);
                   setBrochureStatusMsg(null);
                 }}
-                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full cursor-pointer transition-colors"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
-              <h3 className="text-lg font-bold text-emerald-800 flex items-center gap-2">
-                {isImage ? <ImageIcon className="w-5 h-5 text-emerald-600" /> : <FileText className="w-5 h-5 text-emerald-600" />}
-                <span>Brosur Resmi SPMB {schoolInfo.academicYear}</span>
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Silakan unduh brosur lengkap untuk informasi persyaratan, alur pendaftaran, rincian biaya awal masuk (BAM), program unggulan, dan kurikulum {schoolInfo.name}.
-              </p>
 
-              {/* Visual Thumbnail if Image */}
-              {isImage && schoolInfo.brochureUrl && (
-                <div
-                  onClick={() => {
-                    setShowBrosurModal(false);
-                    setShowImagePreviewModal(true);
-                  }}
-                  className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 aspect-[16/9] max-h-48 relative group cursor-pointer"
-                >
-                  <img
-                    src={schoolInfo.brochureUrl}
-                    alt="Pratinjau Brosur Gambar"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                  />
-                  <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-bold gap-1.5">
-                    <Eye className="w-4 h-4" />
-                    <span>Klik untuk Memperbesar</span>
-                  </div>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-emerald-100 text-emerald-700">
+                  <ImageIcon className="w-5 h-5" />
                 </div>
-              )}
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2.5">
-                <div className="flex justify-between">
-                  <span className="font-semibold text-slate-600">Nama Dokumen:</span>
-                  <span className="font-bold text-slate-900 truncate max-w-[220px]">
-                    {fileName}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-semibold text-slate-600">Format Dokumen:</span>
-                  <span className="text-slate-700 font-mono font-medium">
-                    {isImage ? `Gambar Digital (${schoolInfo.brochureFileType || 'JPG/PNG'})` : 'Adobe PDF Document (.pdf)'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-semibold text-slate-600">Status Dokumen:</span>
-                  <span className="text-emerald-700 font-bold flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>{schoolInfo.brochureUrl ? (isImage ? 'Brosur Gambar Khusus Terunggah' : 'Brosur Khusus Terunggah') : 'Brosur Resmi Sekolah'}</span>
-                  </span>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Unduh Brosur Resmi SPMB
+                  </h3>
+                  <p className="text-xs text-emerald-700 font-medium">
+                    Tahun Pelajaran {schoolInfo.academicYear} • {schoolInfo.name}
+                  </p>
                 </div>
               </div>
+
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Pilih format unduhan brosur di bawah ini. Anda dapat mengunduh <strong>format gambar (JPG/PNG)</strong> langsung dari berkas yang diunggah oleh panitia admin sekolah atau <strong>format dokumen PDF</strong> resmi.
+              </p>
+
+              {/* Status Banner Brosur Gambar Admin */}
+              {isFromAdmin ? (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Brosur Gambar Resmi dari Admin</span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 text-[10px] font-extrabold uppercase tracking-wider">
+                      Aktif & Terverifikasi
+                    </span>
+                  </div>
+
+                  {schoolInfo.brochureUrl && (
+                    <div
+                      onClick={() => {
+                        setShowBrosurModal(false);
+                        setShowImagePreviewModal(true);
+                      }}
+                      className="rounded-xl overflow-hidden border border-emerald-200 bg-white aspect-[16/9] max-h-40 relative group cursor-pointer shadow-xs"
+                    >
+                      <img
+                        src={schoolInfo.brochureUrl}
+                        alt="Brosur Gambar dari Admin"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                      <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-bold gap-1.5">
+                        <Eye className="w-4 h-4" />
+                        <span>Klik untuk Memperbesar</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-[11px] text-emerald-800 flex justify-between font-medium">
+                    <span>Berkas: <strong className="font-mono">{fileName}</strong></span>
+                    {schoolInfo.brochureFileSize && <span>Ukuran: {schoolInfo.brochureFileSize}</span>}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Brosur resmi sekolah siap diunduh dalam format Gambar atau PDF.</span>
+                </div>
+              )}
 
               {brochureStatusMsg && (
                 <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
@@ -1113,38 +1184,82 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   {brochureStatusMsg.type === 'info' && <Loader2 className="w-4 h-4 animate-spin shrink-0 text-blue-600" />}
                   {brochureStatusMsg.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />}
                   {brochureStatusMsg.type === 'error' && <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />}
-                  <span>{brochureStatusMsg.text}</span>
+                  <span className="font-medium">{brochureStatusMsg.text}</span>
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+              {/* DUA TOMBOL FITUR UNDUH: GAMBAR & PDF */}
+              <div className="space-y-2 pt-1">
+                {/* Tombol 1: Download Gambar (Berasal dari Brosur Gambar Admin) */}
                 <button
                   type="button"
-                  onClick={handleDownloadBrochure}
+                  onClick={handleDownloadBrochureImage}
                   disabled={isDownloadingBrochure}
-                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                  className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-between gap-3 cursor-pointer disabled:opacity-60 group"
                 >
-                  {isDownloadingBrochure ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Mengunduh Brosur...</span>
-                    </>
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-white/20 rounded-lg group-hover:scale-105 transition-transform">
+                      <ImageIcon className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm font-extrabold flex items-center gap-1.5">
+                        <span>Download Brosur (Gambar)</span>
+                        {isFromAdmin && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-800/80 text-[10px] font-semibold text-emerald-100">
+                            Gambar Admin
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-emerald-100 font-normal">
+                        {isFromAdmin ? 'Brosur gambar resmi yang diupload oleh panitia admin' : 'Format gambar digital resolusi tinggi (.jpg)'}
+                      </div>
+                    </div>
+                  </div>
+                  {isDownloadingBrochure && downloadingType === 'image' ? (
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                   ) : (
-                    <>
-                      {isImage ? <ImageIcon className="w-4 h-4" /> : <Download className="w-4 h-4" />}
-                      <span>{isImage ? 'Unduh Brosur Gambar' : 'Unduh Brosur PDF'}</span>
-                    </>
+                    <Download className="w-4 h-4 shrink-0 group-hover:translate-y-0.5 transition-transform" />
                   )}
                 </button>
 
+                {/* Tombol 2: Download Brosur Dokumen PDF */}
+                <button
+                  type="button"
+                  onClick={handleDownloadBrochurePdf}
+                  disabled={isDownloadingBrochure}
+                  className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center justify-between gap-3 cursor-pointer disabled:opacity-60 group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-slate-200/80 rounded-lg text-slate-700">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-xs font-bold text-slate-900">
+                        Download Brosur (PDF)
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-normal">
+                        Dokumen resmi 2 halaman (lengkap dengan SK & rincian BAM)
+                      </div>
+                    </div>
+                  </div>
+                  {isDownloadingBrochure && downloadingType === 'pdf' ? (
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0 text-slate-600" />
+                  ) : (
+                    <Download className="w-4 h-4 shrink-0 text-slate-600 group-hover:translate-y-0.5 transition-transform" />
+                  )}
+                </button>
+              </div>
+
+              {/* Tombol Pratinjau */}
+              <div className="pt-1 flex items-center justify-end">
                 <button
                   type="button"
                   onClick={handlePreviewBrochure}
                   disabled={isDownloadingBrochure}
-                  className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-300"
+                  className="text-xs text-slate-600 hover:text-emerald-700 font-semibold flex items-center gap-1.5 transition-colors cursor-pointer py-1 px-2 rounded-lg hover:bg-slate-100"
                 >
-                  <Eye className="w-4 h-4 text-slate-600" />
-                  <span>{isImage ? 'Pratinjau Gambar' : 'Pratinjau / Buka'}</span>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Pratinjau Brosur Layar Penuh</span>
                 </button>
               </div>
             </div>
@@ -1166,7 +1281,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     {schoolInfo.brochureFileName || 'Brosur Resmi SPMB (Gambar)'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    Pratinjau Brosur Gambar Resmi SMPS Al-Hadiid Cileungsi
+                    Brosur Gambar Resmi Diupload oleh Admin • SMPS Al-Hadiid Cileungsi
                   </p>
                 </div>
               </div>
@@ -1174,11 +1289,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleDownloadBrochure}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                  onClick={handleDownloadBrochureImage}
+                  disabled={isDownloadingBrochure}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                 >
-                  <Download className="w-4 h-4" />
-                  <span>Unduh Gambar</span>
+                  {isDownloadingBrochure && downloadingType === 'image' ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  <span>Download Gambar (Admin)</span>
                 </button>
                 <button
                   type="button"

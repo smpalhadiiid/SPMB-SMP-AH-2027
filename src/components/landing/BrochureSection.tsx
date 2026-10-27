@@ -5,7 +5,14 @@
 
 import React, { useState } from 'react';
 import { SchoolInfo, CostBreakdown, TestSchedule } from '../../types';
-import { downloadBrochureFile, getBrochurePdfBlobUrl, isImageBrochure } from '../../utils/brochureGenerator';
+import {
+  downloadBrochureFile,
+  downloadBrochureImage,
+  downloadBrochurePdf,
+  getBrochurePdfBlobUrl,
+  isImageBrochure,
+  hasAdminBrochureImage,
+} from '../../utils/brochureGenerator';
 import {
   FileText, Download, Eye, Sparkles, CheckCircle2, ShieldCheck,
   Layers, X, Loader2, Image as ImageIcon, ZoomIn, ZoomOut, Maximize2
@@ -28,6 +35,7 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
   onOpenWhatsApp: _onOpenWhatsApp,
 }) => {
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadingType, setDownloadingType] = useState<'image' | 'pdf' | null>(null);
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
@@ -35,30 +43,34 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
 
   const academicYear = schoolInfo.academicYear || '2027/2028';
   const isImage = isImageBrochure(schoolInfo);
+  const isFromAdmin = hasAdminBrochureImage(schoolInfo);
   const defaultExt = isImage ? '.jpg' : '.pdf';
   const academicYearClean = academicYear.replace('/', '_');
   const fileName = schoolInfo.brochureFileName || `Brosur_Resmi_SPMB_SMP_AlHadiid_${academicYearClean}${defaultExt}`;
 
-  const handleDownload = async () => {
+  // Unduh Berkas Gambar (Berasal dari Brosur Gambar Unggahan Admin)
+  const handleDownloadImage = async () => {
     setIsDownloading(true);
+    setDownloadingType('image');
     try {
-      const res = await downloadBrochureFile(schoolInfo, costBreakdowns, testSchedules);
+      const res = await downloadBrochureImage(schoolInfo, costBreakdowns, testSchedules);
       if (res.success) {
         Swal.fire({
           icon: 'success',
-          title: `Brosur ${isImage ? 'Gambar' : 'PDF'} Berhasil Diunduh!`,
+          title: 'Brosur Gambar Berhasil Diunduh!',
           html: `
             <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
               <p style="margin-bottom: 8px;">
-                Berkas <strong>${fileName}</strong> telah otomatis disimpan ke perangkat Anda.
+                Berkas <strong>${res.fileName}</strong> telah otomatis disimpan ke perangkat Anda.
               </p>
               <div style="background-color: #f1f5f9; padding: 10px; border-radius: 10px; margin-bottom: 10px; font-size: 12px;">
-                ${isImage ? '🖼️' : '📄'} <strong>Format:</strong> ${isImage ? 'Gambar Digital (JPG/PNG)' : 'Adobe PDF Document (2 Halaman)'}<br/>
+                🖼️ <strong>Sumber:</strong> ${res.fromAdminUpload ? 'Brosur Gambar Unggahan Resmi Admin' : 'Brosur Gambar SPMB Standar'}<br/>
+                💾 <strong>Format:</strong> Gambar Digital (${schoolInfo.brochureFileType || 'JPG/PNG'})<br/>
                 🏷️ <strong>Tahun Ajaran:</strong> ${academicYear}<br/>
                 🏫 <strong>Penerbit:</strong> ${schoolInfo.name}
               </div>
               <p style="font-size: 12px; color: #059669;">
-                Anda juga dapat membuka pratinjau brosur langsung di browser ini.
+                Brosur berbentuk gambar ini berasal langsung dari berkas gambar yang diunggah oleh panitia admin.
               </p>
             </div>
           `,
@@ -80,7 +92,7 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
       } else {
         Swal.fire({
           icon: 'error',
-          title: 'Gagal Mengunduh Brosur',
+          title: 'Gagal Mengunduh Brosur Gambar',
           text: res.message || 'Terjadi kendala saat memproses berkas brosur.',
           confirmButtonColor: '#ef4444',
           customClass: { popup: 'rounded-2xl font-sans' },
@@ -90,11 +102,70 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
       Swal.fire({
         icon: 'error',
         title: 'Kendala Sistem',
-        text: 'Tidak dapat mengunduh berkas brosur saat ini. Silakan hubungi Panitia SPMB.',
+        text: 'Tidak dapat mengunduh gambar brosur saat ini. Silakan hubungi Panitia SPMB.',
         confirmButtonColor: '#ef4444',
       });
     } finally {
       setIsDownloading(false);
+      setDownloadingType(null);
+    }
+  };
+
+  // Unduh Brosur Dokumen PDF Resmi
+  const handleDownloadPdf = async () => {
+    setIsDownloading(true);
+    setDownloadingType('pdf');
+    try {
+      const res = await downloadBrochurePdf(schoolInfo, costBreakdowns, testSchedules);
+      if (res.success) {
+        Swal.fire({
+          icon: 'success',
+          title: 'Brosur PDF Berhasil Diunduh!',
+          html: `
+            <div style="text-align: left; font-size: 13px; color: #334155; line-height: 1.6;">
+              <p style="margin-bottom: 8px;">
+                Berkas <strong>${res.fileName}</strong> telah otomatis disimpan ke perangkat Anda.
+              </p>
+              <div style="background-color: #f1f5f9; padding: 10px; border-radius: 10px; margin-bottom: 10px; font-size: 12px;">
+                📄 <strong>Format:</strong> Adobe PDF Document (2 Halaman Lengkap)<br/>
+                🏷️ <strong>Tahun Ajaran:</strong> ${academicYear}<br/>
+                🏫 <strong>Penerbit:</strong> ${schoolInfo.name}
+              </div>
+            </div>
+          `,
+          confirmButtonColor: '#10b981',
+          confirmButtonText: '✔ Selesai',
+          customClass: {
+            popup: 'rounded-2xl font-sans',
+            confirmButton: 'px-5 py-2.5 rounded-xl text-xs font-bold',
+          },
+        });
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Gagal Mengunduh Brosur PDF',
+          text: res.message || 'Terjadi kendala saat memproses berkas PDF.',
+          confirmButtonColor: '#ef4444',
+        });
+      }
+    } catch (err: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Kendala Sistem',
+        text: 'Tidak dapat mengunduh berkas brosur PDF saat ini.',
+        confirmButtonColor: '#ef4444',
+      });
+    } finally {
+      setIsDownloading(false);
+      setDownloadingType(null);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (isImage) {
+      await handleDownloadImage();
+    } else {
+      await handleDownloadPdf();
     }
   };
 
@@ -322,22 +393,41 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
               <button
                 type="button"
-                onClick={handleDownload}
+                onClick={handleDownloadImage}
                 disabled={isDownloading}
-                className="flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-sm shadow-lg shadow-emerald-900/30 transition-all flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-60"
+                className="flex-1 py-3.5 px-5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-900/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 group"
               >
-                {isDownloading ? (
+                {isDownloading && downloadingType === 'image' ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Sedang Mengunduh Berkas...</span>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Mengunduh Gambar...</span>
                   </>
                 ) : (
                   <>
-                    {isImage ? <ImageIcon className="w-5 h-5" /> : <Download className="w-5 h-5" />}
-                    <span>{isImage ? 'Unduh Brosur Gambar (JPG/PNG)' : 'Unduh Brosur Resmi (PDF)'}</span>
+                    <ImageIcon className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
+                    <span>Download Gambar (Admin)</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={isDownloading}
+                className="flex-1 py-3.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs border border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                {isDownloading && downloadingType === 'pdf' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                    <span>Mengunduh PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4 text-emerald-400" />
+                    <span>Download PDF</span>
                   </>
                 )}
               </button>
@@ -346,17 +436,17 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
                 type="button"
                 onClick={handleOpenPreview}
                 disabled={isLoadingPreview || isDownloading}
-                className="py-3.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs border border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                className="py-3.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-xs border border-slate-800 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
               >
                 {isLoadingPreview ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                    <span>Menyiapkan...</span>
+                    <span>Memuat...</span>
                   </>
                 ) : (
                   <>
                     <Eye className="w-4 h-4 text-emerald-400" />
-                    <span>{isImage ? 'Pratinjau Gambar' : 'Pratinjau PDF'}</span>
+                    <span>Pratinjau</span>
                   </>
                 )}
               </button>
@@ -417,11 +507,21 @@ export const BrochureSection: React.FC<BrochureSectionProps> = ({
 
                 <button
                   type="button"
-                  onClick={handleDownload}
-                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                  onClick={handleDownloadImage}
+                  disabled={isDownloading}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Unduh {isImage ? 'Gambar' : 'PDF'}</span>
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>Download Gambar (Admin)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={isDownloading}
+                  className="hidden sm:flex px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs rounded-xl border border-slate-700 transition-all items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Download PDF</span>
                 </button>
                 <button
                   type="button"

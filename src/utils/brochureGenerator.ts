@@ -543,47 +543,207 @@ export function getBrochurePdfBlobUrl(
 }
 
 /**
- * Fungsi Terpadu untuk Mengunduh Brosur SPMB:
- * 1. Jika sekolah memiliki brochureUrl terunggah (gambar atau PDF):
- *    - Konversi ke Blob & unduh dengan nama berkas berekstensi tepat (.jpg/.png/.pdf)
- * 2. Jika belum mengunggah berkas khusus:
- *    - Secara otomatis membuat dan mengunduh Brosur Resmi SPMB SMPS Al-Hadiid (PDF)
+ * Periksa apakah admin telah mengunggah brosur berformat gambar (PNG, JPG, WEBP)
  */
-export async function downloadBrochureFile(
+export function hasAdminBrochureImage(schoolInfo?: Partial<SchoolInfo> | null): boolean {
+  if (!schoolInfo) return false;
+  return isImageBrochure(schoolInfo) && Boolean(schoolInfo.brochureUrl && schoolInfo.brochureUrl.trim() !== '');
+}
+
+/**
+ * Generate fallback visual brochure graphic as a high-res image (JPEG) via Canvas
+ * Dipakai saat admin belum mengunggah brosur gambar tersendiri
+ */
+function generateFallbackBrosurCanvasBlob(
+  schoolInfo: SchoolInfo,
+  _costBreakdowns: CostBreakdown[] = [],
+  _testSchedules: TestSchedule[] = []
+): Promise<Blob> {
+  return new Promise((resolve) => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1200;
+      canvas.height = 1700;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas 2D context not available');
+      }
+
+      // Background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 1200, 1700);
+
+      // Header Gradient
+      const grad = ctx.createLinearGradient(0, 0, 1200, 0);
+      grad.addColorStop(0, '#064e3b');
+      grad.addColorStop(0.5, '#047857');
+      grad.addColorStop(1, '#0f766e');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1200, 240);
+
+      // Header text
+      ctx.fillStyle = '#fef08a';
+      ctx.font = 'bold 22px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('YAYASAN PENDIDIKAN ISLAM AL-HADIID CILEUNGSI', 600, 52);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 36px Arial, sans-serif';
+      ctx.fillText(schoolInfo.name || 'SMPS AL-HADIID CILEUNGSI', 600, 98);
+
+      ctx.font = 'normal 18px Arial, sans-serif';
+      ctx.fillStyle = '#d1fae5';
+      ctx.fillText(schoolInfo.address || 'Jl. Raya Cileungsi - Jonggol Km. 1.5, Cileungsi Kidul, Bogor', 600, 134);
+      ctx.fillText(`Telp: ${schoolInfo.phone || '(021) 82493659'} | Website: ${schoolInfo.website || 'smpalhadid.sch.id'}`, 600, 162);
+
+      // Subheader banner
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(100, 185, 1000, 42);
+      ctx.fillStyle = '#064e3b';
+      ctx.font = 'bold 20px Arial, sans-serif';
+      ctx.fillText(`BROSUR RESMI SPMB TP ${schoolInfo.academicYear || '2027/2028'}`, 600, 213);
+
+      // Visi & Profil Section
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#047857';
+      ctx.font = 'bold 24px Arial, sans-serif';
+      ctx.fillText('A. PROFIL & PROGRAM UNGGULAN SEKOLAH', 80, 310);
+
+      ctx.fillStyle = '#334155';
+      ctx.font = 'normal 18px Arial, sans-serif';
+      ctx.fillText("1. Program Tahfidz Al-Qur'an Mutqin Minimal 3 Juz (Juz 28, 29, 30)", 90, 350);
+      ctx.fillText('2. Kurikulum Merdeka Terpadu & Pembiasaan Adab Salafush Sholih', 90, 385);
+      ctx.fillText('3. Penguatan Bahasa Asing Komunikatif (Bahasa Arab & Inggris)', 90, 420);
+      ctx.fillText('4. Literasi Digital, Laboratorium Komputer Modern & Ujian Mandiri CBT', 90, 455);
+      ctx.fillText('5. Pembinaan Karakter Kepemimpinan, Sains, & Ekstrakurikuler Berprestasi', 90, 490);
+
+      // BAM Box
+      ctx.fillStyle = '#f8fafc';
+      ctx.strokeStyle = '#059669';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(80, 540, 1040, 480, 16);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#064e3b';
+      ctx.font = 'bold 24px Arial, sans-serif';
+      ctx.fillText('B. TOTAL RINCIAN BIAYA AWAL MASUK (BAM)', 110, 585);
+
+      // Table header
+      ctx.fillStyle = '#047857';
+      ctx.fillRect(110, 610, 980, 45);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 18px Arial, sans-serif';
+      ctx.fillText('KOMPONEN BIAYA', 130, 638);
+      ctx.fillText('IKHWAN (PUTRA)', 620, 638);
+      ctx.fillText('AKHWAT (PUTRI)', 870, 638);
+
+      const bamRows = [
+        ['1. Dana Awal Pendidikan (DAP)', 'Rp 3.000.000', 'Rp 3.000.000'],
+        ['2. Perlengkapan / Seragam Siswa (4 Stel)', 'Rp 1.050.000', 'Rp 1.270.000'],
+        ['3. SPP Bulan Pertama (Juli)', 'Rp 400.000', 'Rp 400.000'],
+        ['4. Iuran Komite (Juli)', 'Rp 20.000', 'Rp 20.000'],
+        ['5. Buku Paket & LKS (1 Tahun)', 'Rp 700.000', 'Rp 700.000'],
+        ['6. Masa Pengenalan Lingkungan Sekolah (MPLS)', 'Rp 220.000', 'Rp 220.000'],
+        ['7. Evaluasi Semester & Kegiatan (PAS/PAT/Dauroh)', 'Rp 1.280.000', 'Rp 1.280.000'],
+      ];
+
+      let rowY = 685;
+      ctx.font = 'normal 17px Arial, sans-serif';
+      ctx.fillStyle = '#1e293b';
+      bamRows.forEach((row, i) => {
+        if (i % 2 === 1) {
+          ctx.fillStyle = '#f1f5f9';
+          ctx.fillRect(110, rowY - 25, 980, 32);
+        }
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(row[0], 130, rowY - 3);
+        ctx.fillText(row[1], 620, rowY - 3);
+        ctx.fillText(row[2], 870, rowY - 3);
+        rowY += 36;
+      });
+
+      // Total row
+      ctx.fillStyle = '#064e3b';
+      ctx.fillRect(110, rowY - 15, 980, 50);
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 22px Arial, sans-serif';
+      ctx.fillText('TOTAL BIAYA AWAL MASUK (BAM)', 130, rowY + 18);
+      ctx.fillText('Rp 6.670.000', 620, rowY + 18);
+      ctx.fillText('Rp 6.890.000', 870, rowY + 18);
+
+      // Section C: Bank & Registration
+      ctx.fillStyle = '#064e3b';
+      ctx.font = 'bold 24px Arial, sans-serif';
+      ctx.fillText('C. ALUR PENDAFTARAN & REKENING RESMI', 80, 1070);
+
+      ctx.fillStyle = '#1e293b';
+      ctx.font = 'normal 18px Arial, sans-serif';
+      ctx.fillText('1. Pendaftaran Online melalui website resmi: ' + (schoolInfo.website || 'smpalhadid.sch.id'), 90, 1110);
+      ctx.fillText('2. Pembayaran biaya formulir Rp 200.000 ke rekening resmi sekolah.', 90, 1145);
+      ctx.fillText(`   Bank: ${schoolInfo.bankName || 'BSI'} | No. Rekening: ${schoolInfo.bankAccountNumber || '7123891011'} a.n. ${schoolInfo.bankAccountName || 'Al-Hadiid'}`, 90, 1180);
+      ctx.fillText('3. Pengisian formulir online & unggah berkas persyaratan (KK, Akta, Pas Foto).', 90, 1215);
+      ctx.fillText('4. Mengikuti Tes Diagnostik, Akademik & Diniyyah sesuai jadwal.', 90, 1250);
+      ctx.fillText('5. Pembayaran BAM setelah dinyatakan lulus tes seleksi.', 90, 1285);
+
+      // Footer
+      ctx.fillStyle = '#047857';
+      ctx.fillRect(0, 1620, 1200, 80);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 18px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('PANITIA SPMB SMPS AL-HADIID CILEUNGSI - HOTLINE WA: 0812-3456-7890', 600, 1665);
+
+      canvas.toBlob((b) => {
+        if (b) resolve(b);
+        else resolve(new Blob([], { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.92);
+    } catch {
+      resolve(new Blob([], { type: 'image/jpeg' }));
+    }
+  });
+}
+
+/**
+ * Mengunduh berkas brosur dalam format GAMBAR (JPG / PNG):
+ * - Prioritas Utama: Mengunduh langsung berkas gambar yang diunggah oleh admin (schoolInfo.brochureUrl).
+ * - Menjaga resolusi asli, tipe biner, dan nama berkas yang diunggah admin.
+ * - Fallback: Jika admin belum mengunggah gambar, sistem mengenerate brosur format gambar beresolusi tinggi.
+ */
+export async function downloadBrochureImage(
   schoolInfo: SchoolInfo,
   costBreakdowns: CostBreakdown[] = [],
   testSchedules: TestSchedule[] = []
-): Promise<{ success: boolean; message: string }> {
-  const isImage = isImageBrochure(schoolInfo);
-  const defaultExt = isImage ? '.jpg' : '.pdf';
+): Promise<{ success: boolean; message: string; fromAdminUpload: boolean; fileName: string }> {
   const academicYearClean = (schoolInfo.academicYear || '2027_2028').replace('/', '_');
   const baseName = `Brosur_Resmi_SPMB_SMP_AlHadiid_${academicYearClean}`;
-  const rawFileName = schoolInfo.brochureFileName || `${baseName}${defaultExt}`;
+  const isImage = isImageBrochure(schoolInfo);
+  const rawFileName = schoolInfo.brochureFileName || `${baseName}.jpg`;
 
-  // Pastikan ekstensi sesuai dengan tipe berkas sebenarnya
   let fileName = rawFileName;
-  if (isImage && !/\.(png|jpe?g|webp|gif)$/i.test(fileName)) {
+  if (!/\.(png|jpe?g|webp|gif)$/i.test(fileName)) {
     fileName = `${fileName.replace(/\.[^/.]+$/, '')}.jpg`;
-  } else if (!isImage && !/\.pdf$/i.test(fileName)) {
-    fileName = `${fileName.replace(/\.[^/.]+$/, '')}.pdf`;
   }
 
   try {
-    // 1. Jika ada URL brosur terunggah
-    if (schoolInfo.brochureUrl && schoolInfo.brochureUrl.trim() !== '') {
+    // 1. Prioritas Utama: Berkas gambar yang diunggah oleh admin
+    if (isImage && schoolInfo.brochureUrl && schoolInfo.brochureUrl.trim() !== '') {
       const url = schoolInfo.brochureUrl.trim();
 
-      // Kasus A: Data URL (base64 image atau PDF)
-      if (url.startsWith('data:')) {
+      // Data URL (base64 image dari unggahan admin)
+      if (url.startsWith('data:image/')) {
         const blob = dataUrlToBlob(url);
         triggerDirectBlobDownload(blob, fileName);
         return {
           success: true,
-          message: `Brosur ${isImage ? 'gambar' : 'dokumen'} (${fileName}) berhasil diunduh.`,
+          message: `Brosur gambar resmi (${fileName}) berhasil diunduh dari berkas unggahan admin.`,
+          fromAdminUpload: true,
+          fileName,
         };
       }
 
-      // Kasus B: Remote HTTP/HTTPS URL
+      // Remote HTTP/HTTPS URL
       try {
         const response = await fetch(url, { mode: 'cors' });
         if (response.ok) {
@@ -591,11 +751,13 @@ export async function downloadBrochureFile(
           triggerDirectBlobDownload(blob, fileName);
           return {
             success: true,
-            message: `Brosur ${isImage ? 'gambar' : 'dokumen'} (${fileName}) berhasil diunduh.`,
+            message: `Brosur gambar resmi (${fileName}) berhasil diunduh dari berkas unggahan admin.`,
+            fromAdminUpload: true,
+            fileName,
           };
         }
       } catch (fetchErr) {
-        console.warn('[downloadBrochureFile] Fetch remote file gagal, fallback ke window anchor:', fetchErr);
+        console.warn('[downloadBrochureImage] Fetch remote image error, fallback anchor:', fetchErr);
         const a = document.createElement('a');
         a.href = url;
         a.download = fileName;
@@ -608,26 +770,106 @@ export async function downloadBrochureFile(
             document.body.removeChild(a);
           } catch {}
         }, 1500);
-        return { success: true, message: `Membuka berkas brosur (${fileName})` };
+        return {
+          success: true,
+          message: `Mengunduh brosur gambar (${fileName})`,
+          fromAdminUpload: true,
+          fileName,
+        };
       }
     }
 
-    // 2. Jika tidak ada file khusus terunggah, buat PDF Brosur Resmi SPMB secara dinamis
+    // 2. Fallback jika admin belum mengunggah berkas gambar:
+    // Generate gambar brosur resmi berkualitas tinggi secara dinamis
+    const canvasBlob = await generateFallbackBrosurCanvasBlob(schoolInfo, costBreakdowns, testSchedules);
+    const fallbackFileName = `${baseName}.jpg`;
+    triggerDirectBlobDownload(canvasBlob, fallbackFileName);
+    return {
+      success: true,
+      message: `Brosur gambar SPMB (${fallbackFileName}) berhasil diunduh.`,
+      fromAdminUpload: false,
+      fileName: fallbackFileName,
+    };
+  } catch (error: any) {
+    console.error('[downloadBrochureImage] Error:', error);
+    return {
+      success: false,
+      message: `Gagal mengunduh gambar brosur: ${error?.message || 'Terjadi kesalahan sistem'}`,
+      fromAdminUpload: false,
+      fileName,
+    };
+  }
+}
+
+/**
+ * Mengunduh berkas brosur dalam format PDF:
+ * - Jika admin mengunggah file PDF, mengunduh PDF dari admin.
+ * - Jika tidak, menghasilkan PDF 2 halaman resmi SPMB secara dinamis.
+ */
+export async function downloadBrochurePdf(
+  schoolInfo: SchoolInfo,
+  costBreakdowns: CostBreakdown[] = [],
+  testSchedules: TestSchedule[] = []
+): Promise<{ success: boolean; message: string; fileName: string }> {
+  const academicYearClean = (schoolInfo.academicYear || '2027_2028').replace('/', '_');
+  const defaultPdfName = `Brosur_Resmi_SPMB_SMP_AlHadiid_${academicYearClean}.pdf`;
+  const fileName = (!isImageBrochure(schoolInfo) && schoolInfo.brochureFileName)
+    ? (schoolInfo.brochureFileName.endsWith('.pdf') ? schoolInfo.brochureFileName : `${schoolInfo.brochureFileName}.pdf`)
+    : defaultPdfName;
+
+  try {
+    // Jika ada PDF terunggah oleh admin
+    if (schoolInfo.brochureUrl && !isImageBrochure(schoolInfo)) {
+      const url = schoolInfo.brochureUrl.trim();
+      if (url.startsWith('data:')) {
+        const blob = dataUrlToBlob(url);
+        triggerDirectBlobDownload(blob, fileName);
+        return {
+          success: true,
+          message: `Brosur PDF (${fileName}) berhasil diunduh.`,
+          fileName,
+        };
+      }
+    }
+
+    // Generate PDF Resmi SPMB (2 Halaman)
     const doc = generateBrosurSpmbPDF(schoolInfo, costBreakdowns, testSchedules);
     const blob = doc.output('blob');
     triggerDirectBlobDownload(blob, fileName);
-    return { success: true, message: `Brosur Resmi SPMB (${fileName}) berhasil diunduh.` };
+    return {
+      success: true,
+      message: `Brosur PDF Resmi SPMB (${fileName}) berhasil diunduh.`,
+      fileName,
+    };
   } catch (error: any) {
-    console.error('[downloadBrochureFile] Exception:', error);
-    try {
-      const doc = generateBrosurSpmbPDF(schoolInfo, costBreakdowns, testSchedules);
-      doc.save(fileName);
-      return { success: true, message: `Brosur Resmi SPMB (${fileName}) berhasil diunduh.` };
-    } catch (innerErr: any) {
-      return {
-        success: false,
-        message: `Gagal mengunduh brosur: ${innerErr?.message || 'Terjadi kesalahan sistem'}`,
-      };
-    }
+    console.error('[downloadBrochurePdf] Error:', error);
+    return {
+      success: false,
+      message: `Gagal mengunduh brosur PDF: ${error?.message || 'Terjadi kesalahan'}`,
+      fileName,
+    };
   }
 }
+
+/**
+ * Fungsi Terpadu untuk Mengunduh Brosur SPMB:
+ * 1. Jika sekolah memiliki brochureUrl terunggah (gambar atau PDF):
+ *    - Konversi ke Blob & unduh dengan nama berkas berekstensi tepat (.jpg/.png/.pdf)
+ * 2. Jika belum mengunggah berkas khusus:
+ *    - Secara otomatis membuat dan mengunduh Brosur Resmi SPMB SMPS Al-Hadiid (PDF)
+ */
+export async function downloadBrochureFile(
+  schoolInfo: SchoolInfo,
+  costBreakdowns: CostBreakdown[] = [],
+  testSchedules: TestSchedule[] = []
+): Promise<{ success: boolean; message: string }> {
+  const isImage = isImageBrochure(schoolInfo);
+  if (isImage) {
+    const res = await downloadBrochureImage(schoolInfo, costBreakdowns, testSchedules);
+    return { success: res.success, message: res.message };
+  } else {
+    const res = await downloadBrochurePdf(schoolInfo, costBreakdowns, testSchedules);
+    return { success: res.success, message: res.message };
+  }
+}
+

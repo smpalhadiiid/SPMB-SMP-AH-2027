@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StudentData, ClassQuota, CostBreakdown, SchoolInfo, TestSchedule, GasConfig, UserAccount, WebsiteConfig, ExamQuestion, BamPaymentRecord, BamInstallmentType } from '../types';
 import { exportToExcel } from '../utils/excelExporter';
 import { generateReportPDF, generateRegistrationPDF, generateExamCardPDF, generateExamResultPDF } from '../utils/pdfGenerator';
-import { downloadBrochureFile, isImageBrochure } from '../utils/brochureGenerator';
+import { downloadBrochureFile, downloadBrochureImage, downloadBrochurePdf, isImageBrochure } from '../utils/brochureGenerator';
 import { getStudentCredentials, fetchStudentCredentialsFromSupabase } from '../utils/studentCredentials';
 import { ExamQuestionRepository } from '../repositories/ExamQuestionRepository';
 import {
@@ -4213,14 +4213,35 @@ Kunci: B`}
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => downloadBrochureFile(schoolForm as any, costBreakdowns, testSchedules)}
-                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>{isImageBrochure(schoolForm) ? 'Unduh Brosur Gambar' : 'Unduh Brosur (PDF)'}</span>
-                    </button>
+                    {isImageBrochure(schoolForm) ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => downloadBrochureImage(schoolForm as any, costBreakdowns, testSchedules)}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <ImageIcon className="w-3.5 h-3.5" />
+                          <span>Unduh Brosur Gambar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadBrochurePdf(schoolForm as any, costBreakdowns, testSchedules)}
+                          className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Unduh PDF</span>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => downloadBrochurePdf(schoolForm as any, costBreakdowns, testSchedules)}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh Brosur (PDF)</span>
+                      </button>
+                    )}
 
                     {schoolForm.brochureUrl && (
                       <button
