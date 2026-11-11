@@ -1470,6 +1470,47 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
         </div>
       )}
+
+      {/* Floating Kontak WhatsApp (Pojok Kiri Bawah Landing Page) */}
+      {(() => {
+        const rawWa = (schoolInfo?.whatsapp || '6285814998782').replace(/[^0-9]/g, '');
+        const normalizedWa = rawWa.startsWith('0') ? `62${rawWa.slice(1)}` : rawWa;
+        const waHref = `https://wa.me/${normalizedWa}?text=${encodeURIComponent("Assalamu'alaikum Panitia SPMB SMP Al-Hadiid Cileungsi, saya ingin bertanya mengenai pendaftaran.")}`;
+        const displayWa = normalizedWa.startsWith('62')
+          ? `0${normalizedWa.slice(2)}`
+          : normalizedWa;
+
+        return (
+          <a
+            href={waHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Hubungi WhatsApp Panitia SPMB (${displayWa})`}
+            className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 group flex items-center gap-2.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl shadow-2xl border border-emerald-400/50 transition-all duration-200 hover:-translate-y-0.5 active:scale-95"
+          >
+            <span className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-white/15 shrink-0">
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-300 animate-ping opacity-80" />
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-200" />
+              <svg
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="w-5 h-5 text-white"
+                aria-hidden="true"
+              >
+                <path d="M12.031 2c-5.516 0-9.969 4.453-9.969 9.969 0 1.766.469 3.484 1.344 5l-1.406 5.156 5.281-1.375c1.469.797 3.109 1.219 4.75 1.219 5.516 0 9.969-4.453 9.969-9.969S17.547 2 12.031 2zm5.813 14.125c-.25.703-1.438 1.344-2 1.438-.531.078-1.203.109-1.938-.125-.453-.141-1.031-.344-1.781-.656-3.125-1.344-5.156-4.5-5.313-4.703-.156-.219-1.266-1.688-1.266-3.219s.797-2.281 1.078-2.594c.281-.313.625-.391.828-.391.203 0 .422.016.609.016.203 0 .469-.078.734.563.266.656.922 2.25 1 2.406.078.156.125.344.016.563-.109.219-.156.344-.313.531-.156.188-.328.422-.469.563-.156.156-.313.328-.141.625.172.313.781 1.281 1.672 2.078 1.156 1.031 2.125 1.344 2.438 1.5.313.156.5.125.688-.078.188-.219.797-.922 1.016-1.234.219-.313.422-.266.703-.156.281.109 1.813.859 2.125 1.016.313.156.516.234.594.359.078.125.078.734-.172 1.438z" />
+              </svg>
+            </span>
+            <div className="flex flex-col text-left leading-tight pr-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-100">
+                WhatsApp SPMB
+              </span>
+              <span className="text-xs sm:text-sm font-extrabold text-white tracking-tight">
+                {displayWa}
+              </span>
+            </div>
+          </a>
+        );
+      })()}
     </div>
   );
 };

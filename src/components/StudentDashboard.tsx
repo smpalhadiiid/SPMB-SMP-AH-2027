@@ -53,7 +53,6 @@ import {
   isPdfProof,
 } from '../utils/paymentProofStorage';
 import {
-  BAM_CONFIG,
   BAM_BREAKDOWN_ITEMS,
   BAM_INSTALLMENT_STEPS,
   getStudentCategory,
@@ -4650,10 +4649,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             4. Nominal Transfer (Rp) <span className="text-rose-500">*</span>
                           </label>
                           {(() => {
-                            const category = getStudentCategory(studentData);
                             return (
                               <span className="text-[10px] text-slate-500">
-                                Target BAM: <span className="font-bold font-mono text-emerald-700">Rp {getTotalBamCost(category).toLocaleString('id-ID')}</span>
+                                Target BAM: <span className="font-bold font-mono text-emerald-700">Rp {(totalBamCost || getTotalBamCost(studentData)).toLocaleString('id-ID')}</span>
                               </span>
                             );
                           })()}
@@ -4661,8 +4659,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <input
                           type="number"
                           placeholder={(() => {
-                            const category = getStudentCategory(studentData);
-                            return `Contoh: ${category === 'Internal' ? '10500000 (Lunas) / 5000000 (Tahap 1)' : '11500000 (Lunas) / 6000000 (Tahap 1)'}`;
+                            const targetTotal = totalBamCost || getTotalBamCost(studentData);
+                            const dpStep = BAM_INSTALLMENT_STEPS?.[0];
+                            const dpVal = dpStep ? dpStep.amountInternal : 4000000;
+                            return `Contoh: ${targetTotal} (Lunas) / ${dpVal} (Tahap 1)`;
                           })()}
                           value={initialPaymentAmountInput}
                           onChange={(e) => setInitialPaymentAmountInput(e.target.value)}
@@ -4672,18 +4672,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                       {/* Quick Nominal Presets */}
                       {(() => {
-                        const category = getStudentCategory(studentData);
-                        const lunasAmount = category === 'Internal' ? BAM_CONFIG.totalInternalLunas : BAM_CONFIG.totalExternalLunas;
-                        const tahap1 = category === 'Internal' ? BAM_INSTALLMENT_STEPS[0].amountInternal : BAM_INSTALLMENT_STEPS[0].amountExternal;
-                        const tahap2 = category === 'Internal' ? BAM_INSTALLMENT_STEPS[1].amountInternal : BAM_INSTALLMENT_STEPS[1].amountExternal;
-                        const tahap3 = category === 'Internal' ? BAM_INSTALLMENT_STEPS[2].amountInternal : BAM_INSTALLMENT_STEPS[2].amountExternal;
+                        const isAkhwatStudent =
+                          (studentData.gender || '').toLowerCase().includes('perempuan') ||
+                          (studentData.gender || '').toLowerCase() === 'akhwat';
+                        const genderLabel = isAkhwatStudent ? 'Akhwat' : 'Ikhwan';
+                        const lunasAmount = totalBamCost || getTotalBamCost(studentData) || (isAkhwatStudent ? 6890000 : 6670000);
+                        const step1 = BAM_INSTALLMENT_STEPS?.[0];
+                        const step2 = BAM_INSTALLMENT_STEPS?.[1];
+                        const tahap1 = step1 ? (isAkhwatStudent ? step1.amountExternal : step1.amountInternal) : 4000000;
+                        const tahap2 = step2
+                          ? (isAkhwatStudent ? step2.amountExternal : step2.amountInternal)
+                          : Math.max(0, lunasAmount - tahap1);
 
                         return (
                           <div className="bg-slate-100/80 p-2.5 rounded-xl border border-slate-200">
                             <div className="text-[10px] font-bold text-slate-600 mb-1.5 flex items-center gap-1">
-                              <span>⚡ Pilih Cepat Nominal ({category}):</span>
+                              <span>⚡ Pilih Cepat Nominal ({genderLabel}):</span>
                             </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -4693,7 +4699,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 className="px-2 py-1.5 bg-white hover:bg-emerald-50 hover:border-emerald-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
                               >
                                 <span className="block text-emerald-700">Lunas Langsung</span>
-                                <span className="font-mono">Rp {(lunasAmount / 1000000).toFixed(1)} jt</span>
+                                <span className="font-mono">Rp {lunasAmount.toLocaleString('id-ID')}</span>
                               </button>
                               <button
                                 type="button"
@@ -4704,7 +4710,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 className="px-2 py-1.5 bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
                               >
                                 <span className="block text-indigo-700">Tahap 1 (DP)</span>
-                                <span className="font-mono">Rp {(tahap1 / 1000000).toFixed(1)} jt</span>
+                                <span className="font-mono">Rp {tahap1.toLocaleString('id-ID')}</span>
                               </button>
                               <button
                                 type="button"
@@ -4714,19 +4720,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 }}
                                 className="px-2 py-1.5 bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
                               >
-                                <span className="block text-indigo-700">Tahap 2</span>
-                                <span className="font-mono">Rp {(tahap2 / 1000000).toFixed(1)} jt</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setInitialPaymentAmountInput(tahap3.toString());
-                                  setInitialPaymentTypeInput('Cicilan 3');
-                                }}
-                                className="px-2 py-1.5 bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 transition-all text-center cursor-pointer shadow-xs"
-                              >
-                                <span className="block text-indigo-700">Tahap 3</span>
-                                <span className="font-mono">Rp {(tahap3 / 1000000).toFixed(1)} jt</span>
+                                <span className="block text-indigo-700">Tahap 2 (Pelunasan)</span>
+                                <span className="font-mono">Rp {tahap2.toLocaleString('id-ID')}</span>
                               </button>
                             </div>
                           </div>

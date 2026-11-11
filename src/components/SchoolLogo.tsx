@@ -9,6 +9,7 @@ interface SchoolLogoProps {
   textColor?: string;
   subtextColor?: string;
   customLogoUrl?: string;
+  variant?: 'light' | 'dark';
 }
 
 export const SchoolLogo: React.FC<SchoolLogoProps> = ({
@@ -18,6 +19,7 @@ export const SchoolLogo: React.FC<SchoolLogoProps> = ({
   textColor = 'text-white',
   subtextColor = 'text-slate-400',
   customLogoUrl,
+  variant = 'light',
 }) => {
   const storedInfo = typeof window !== 'undefined' ? getStoredSchoolInfo() : null;
   const activeLogo = customLogoUrl || storedInfo?.logoUrl || logoSvg;
@@ -29,9 +31,14 @@ export const SchoolLogo: React.FC<SchoolLogoProps> = ({
     xl: 'w-16 h-16',
   };
 
+  const frameClasses =
+    variant === 'dark'
+      ? 'rounded-xl bg-[#2f3746] p-1.5 border border-slate-500/40 shadow-lg'
+      : 'rounded-lg bg-white p-1 border border-slate-200/30 shadow-md';
+
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <div className={`relative ${sizeClasses[size]} rounded-lg overflow-hidden bg-white p-1 border border-slate-200/30 shadow-md shrink-0 flex items-center justify-center`}>
+      <div className={`relative ${sizeClasses[size]} overflow-hidden ${frameClasses} shrink-0 flex items-center justify-center`}>
         <img
           src={activeLogo}
           alt="Logo SMP Al-Hadiid Cileungsi"
