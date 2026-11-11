@@ -602,37 +602,47 @@ export async function syncFormPaymentsToSupabase(records: FormPaymentRecord[]): 
   if (!records || records.length === 0) return;
 
   try {
-    const paymentRows = records.map(r => ({
-      id: (r.id && isValidUUID(r.id)) ? r.id : generateUUID(),
-      student_id: r.studentId,
-      registration_number: r.registrationNumber,
-      student_name: r.studentName,
-      payment_type: 'formulir',
-      amount: Number(r.amount || 200000),
-      status: 'verified',
-      payment_method: 'manual_transfer',
-      proof_url: r.proofUrl || null,
-      notes: r.notes || '',
-      created_at: r.createdAt || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }));
+    const paymentRows = records.map(r => {
+      const resolvedStatus = (r as any).status || 'verified';
+      return {
+        id: (r.id && isValidUUID(r.id)) ? r.id : generateUUID(),
+        student_id: r.studentId,
+        registration_number: r.registrationNumber,
+        student_name: r.studentName,
+        payment_type: 'formulir',
+        amount: Number(r.amount || 200000),
+        status: resolvedStatus,
+        payment_method: 'manual_transfer',
+        proof_url: r.proofUrl || null,
+        notes: r.notes || '',
+        created_at: r.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    });
 
     // Simpan ke tabel relasional tunggal public.payments
-    await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+    const { error: upsertErr } = await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+    if (upsertErr) {
+      console.warn('Sync to public.payments (form) upsert warning:', upsertErr.message);
+    }
 
     // Perbarui status pendaftaran siswa
     for (const r of records) {
       if (r.studentId) {
-        await supabase
+        const resolvedStatus = (r as any).status || 'verified';
+        const { error: stErr } = await supabase
           .from('students')
           .update({
-            is_form_verified: true,
-            form_payment_status: 'verified',
+            is_form_verified: resolvedStatus === 'verified',
+            form_payment_status: resolvedStatus,
             form_payment_amount: Number(r.amount || 200000),
             form_payment_proof_url: r.proofUrl || null,
             updated_at: new Date().toISOString(),
           })
           .eq('id', r.studentId);
+        if (stErr) {
+          console.warn('Sync student form payment status warning:', stErr.message);
+        }
       }
     }
   } catch (e) {
@@ -677,36 +687,55 @@ export async function syncBamPaymentsToSupabase(records: BamPaymentRecord[]): Pr
   if (!records || records.length === 0) return;
 
   try {
-    const paymentRows = records.map(r => ({
-      id: (r.id && isValidUUID(r.id)) ? r.id : generateUUID(),
-      student_id: r.studentId,
-      registration_number: r.registrationNumber,
-      student_name: r.studentName,
-      payment_type: 'daftar_ulang',
-      amount: Number(r.amountPaid || 0),
-      status: 'verified',
-      payment_method: 'manual_transfer',
-      proof_url: r.proofUrl || null,
-      notes: r.notes || '',
-      created_at: r.createdAt || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }));
+    const resolveBamStatus = (r: BamPaymentRecord): 'unpaid' | 'pending' | 'verified' | 'rejected' => {
+      if (r.status) return r.status;
+      if (r.verificationStatus) return r.verificationStatus;
+      if (r.paymentStatus === 'Lunas' || r.paymentStatus === 'LUNAS' || r.paymentStatus === 'Diangsur' || r.paymentStatus === 'SEBAGIAN') {
+        return 'verified';
+      }
+      return 'pending';
+    };
 
-    // Simpan ke tabel relasional tunggal public.payments
-    await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+    const paymentRows = records.map(r => {
+      const resolvedStatus = resolveBamStatus(r);
+      return {
+        id: (r.id && isValidUUID(r.id)) ? r.id : generateUUID(),
+        student_id: r.studentId,
+        registration_number: r.registrationNumber,
+        student_name: r.studentName,
+        payment_type: 'daftar_ulang',
+        amount: Number(r.amountPaid || 0),
+        status: resolvedStatus,
+        payment_method: r.paymentMethod || 'manual_transfer',
+        proof_url: r.proofUrl || null,
+        notes: r.notes || '',
+        created_at: r.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    });
 
-    // Perbarui nominal BAM siswa
+    // Simpan ke tabel relasional tunggal public.payments (preserve status pending/verified/rejected)
+    const { error: upsertErr } = await supabase.from('payments').upsert(paymentRows, { onConflict: 'id' });
+    if (upsertErr) {
+      console.warn('Sync to public.payments (bam) upsert warning:', upsertErr.message);
+    }
+
+    // Perbarui status & nominal BAM siswa secara ketat sesuai status verifikasi
     for (const r of records) {
-      if (r.studentId && r.amountPaid > 0) {
-        await supabase
+      const resolvedStatus = resolveBamStatus(r);
+      if (r.studentId && r.amountPaid > 0 && resolvedStatus !== 'rejected') {
+        const { error: stErr } = await supabase
           .from('students')
           .update({
-            initial_payment_amount: Number(r.amountPaid),
-            initial_payment_status: 'verified',
+            initial_payment_amount: Number(r.totalPaidToDate || r.amountPaid),
+            initial_payment_status: resolvedStatus,
             initial_payment_proof_url: r.proofUrl || null,
             updated_at: new Date().toISOString(),
           })
           .eq('id', r.studentId);
+        if (stErr) {
+          console.warn('Sync student BAM status warning:', stErr.message);
+        }
       }
     }
   } catch (e) {
@@ -1139,6 +1168,12 @@ export async function signUpWithSupabase(params: {
     // 2. Registrasi Supabase Auth di latar belakang (jika email auth aktif di project)
     let authUserId: string | undefined = undefined;
     try {
+      // Pastikan tidak ada sesi Auth pengguna lain (mis. super_admin) yang tertinggal di browser
+      const { data: { session: existingAuthSession } } = await supabase.auth.getSession();
+      if (existingAuthSession?.user?.email && existingAuthSession.user.email.toLowerCase() !== cleanEmail) {
+        await supabase.auth.signOut();
+      }
+
       const cleanOrigin = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : undefined;
       const { data: authData } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -1296,9 +1331,9 @@ export async function ensureSupabaseAuthSession(
       }
     }
 
-    // 4. Check if there's any active session
+    // 4. Check if there's a matching active session for the same user email
     const { data: finalCheck } = await supabase.auth.getSession();
-    if (finalCheck.session) {
+    if (finalCheck.session?.user?.email?.toLowerCase() === email.toLowerCase()) {
       return { ok: true, session: finalCheck.session };
     }
 
@@ -1450,6 +1485,16 @@ export async function signInWithSupabase(
     // Determine target email for Supabase Auth
     const targetEmail = dbUser?.email || cleanIdentifier;
 
+    // Bersihkan sesi Auth lama jika email berbeda (mencegah sesi superadmin tertinggal saat login murid)
+    try {
+      const { data: { session: prevSession } } = await supabase.auth.getSession();
+      if (prevSession?.user?.email && prevSession.user.email.toLowerCase() !== targetEmail.toLowerCase()) {
+        await supabase.auth.signOut();
+      }
+    } catch {
+      // ignore
+    }
+
     // 2. Authenticate through Supabase Auth
     let authSucceeded = false;
     let authUser: any = null;
@@ -1518,6 +1563,16 @@ export async function signInWithSupabase(
       const isPasswordValid = await verifyPassword(cleanPassword, dbUser.password_hash, dbUser.role);
 
       if (isPasswordValid) {
+        // Pastikan tidak ada sesi Supabase Auth akun lain (mis. super_admin) yang tertinggal saat fallback password berhasil
+        try {
+          const { data: { session: activeSess } } = await supabase.auth.getSession();
+          if (activeSess?.user?.email && activeSess.user.email.toLowerCase() !== targetEmail.toLowerCase()) {
+            await supabase.auth.signOut();
+          }
+        } catch {
+          // ignore
+        }
+
         // Asynchronously migrate to sha256 hash in DB if it was not yet hashed
         if (!dbUser.password_hash || !dbUser.password_hash.startsWith('sha256:')) {
           hashPassword(cleanPassword).then((newHash) => {

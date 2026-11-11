@@ -14,7 +14,7 @@ export const Footer: React.FC<FooterProps> = ({ schoolInfo, onOpenWhatsApp }) =>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
         {/* Col 1: School Info */}
         <div className="space-y-4">
-          <SchoolLogo size="lg" showText={true} />
+          <SchoolLogo size="lg" showText={false} />
           <p className="text-xs leading-relaxed text-slate-400">
             {schoolInfo.tagline}
           </p>

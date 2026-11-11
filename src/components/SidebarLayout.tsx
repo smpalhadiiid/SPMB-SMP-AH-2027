@@ -11,6 +11,7 @@ import { SchoolLogo } from './SchoolLogo';
 import { SupabaseBadge } from './SupabaseBadge';
 import { SupabaseSyncButton } from './SupabaseSyncButton';
 import { getStoredWebsiteConfig } from '../utils/storage';
+import { getTotalBamCost } from '../utils/bamPricing';
 
 interface SidebarLayoutProps {
   currentUser: UserAccount | null;
@@ -159,7 +160,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
   };
 
   const userRole = currentUser?.role || 'student';
-  const currentRoleMeta = roleConfig[activeRoleView] || roleConfig.admin;
+  const currentRoleMeta = roleConfig[activeRoleView] || roleConfig[userRole] || roleConfig.student;
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col lg:flex-row text-slate-100 font-sans">
@@ -184,7 +185,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
               onClick={onNavigateHome}
               className="flex items-center gap-3 text-left group"
             >
-              <SchoolLogo size="md" showText={true} />
+              <SchoolLogo size="md" showText={false} />
             </button>
             <button
               onClick={() => setMobileSidebarOpen(false)}
@@ -371,10 +372,13 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
                       }
                     } else if (item.id === 'payment_initial') {
                       const isBamUnlocked = studentData.status === 'passed' || studentData.status === 're_registration_paid' || studentData.status === 're_registered' || studentData.status === 'class_assigned';
-                      const isLunas = studentData.initialPaymentStatus === 'verified' || studentData.status === 're_registered' || (Number(studentData.initialPaymentAmount) >= 10500000);
-                      const isAngsuran = !isLunas && (Number(studentData.initialPaymentAmount) > 0 || studentData.initialPaymentStatus === 'pending' || studentData.status === 're_registration_paid');
+                      const totalBam = getTotalBamCost(studentData);
+                      const verifiedPaid = studentData.initialPaymentStatus === 'verified' ? (Number(studentData.initialPaymentAmount) || 0) : 0;
+                      const isLunas = (studentData.initialPaymentStatus === 'verified' && verifiedPaid >= totalBam && totalBam > 0) || studentData.status === 're_registered';
+                      const isDiangsur = !isLunas && studentData.initialPaymentStatus === 'verified' && verifiedPaid > 0;
+                      const isPendingVerify = !isLunas && !isDiangsur && (studentData.initialPaymentStatus === 'pending' || Boolean(studentData.initialPaymentProofUrl));
 
-                      if (!isBamUnlocked && !isLunas && !isAngsuran) {
+                      if (!isBamUnlocked && !isLunas && !isDiangsur && !isPendingVerify) {
                         studentBadge = <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-0.5 font-bold"><Lock className="w-2.5 h-2.5 text-amber-500" /> TERKUNCI</span>;
                       } else if (isLunas) {
                         studentBadge = (
@@ -383,11 +387,24 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
                             <span>Lunas</span>
                           </span>
                         );
-                      } else if (isAngsuran) {
+                      } else if (isDiangsur) {
                         studentBadge = (
-                          <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.5 rounded font-black flex items-center gap-1 shadow-xs" title="Angsuran / Cicilan (Tanda Jempol Kuning)">
+                          <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.5 rounded font-black flex items-center gap-1 shadow-xs" title="Diangsur / Cicilan (Tanda Jempol Kuning)">
                             <span className="text-amber-400">👍</span>
-                            <span>Angsuran</span>
+                            <span>Diangsur</span>
+                          </span>
+                        );
+                      } else if (isPendingVerify) {
+                        studentBadge = (
+                          <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold flex items-center gap-1" title="Menunggu Verifikasi Admin">
+                            <span>⏳</span>
+                            <span>Verifikasi</span>
+                          </span>
+                        );
+                      } else {
+                        studentBadge = (
+                          <span className="text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/40 px-1.5 py-0.5 rounded font-bold">
+                            Belum Bayar
                           </span>
                         );
                       }

@@ -580,7 +580,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
           verifiedAt: p.verifiedAt,
           verifiedBy: p.verifiedBy,
           rejectionReason: p.rejectionReason,
-          paymentStatus: p.status === 'verified' ? 'LUNAS' : undefined,
+          paymentStatus: p.status === 'verified' ? undefined : 'Belum Bayar',
           paymentMethod: p.paymentMethod || 'Transfer Bank',
           totalPaidToDate: p.status === 'verified' ? (p.amount || 0) : 0,
           remainingBalance: 0,
@@ -610,7 +610,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     totalBam: number;
     amountPaid: number;
     remaining: number;
-    status: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS';
+    status: 'Belum Bayar' | 'Diangsur' | 'Lunas';
     latestPaymentDate?: string;
     paymentMethod?: string;
     proofUrl?: string;
@@ -641,7 +641,11 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       const verifiedPayments = studentPayments.filter(p => {
         if (p.status === 'pending' || p.verificationStatus === 'pending') return false;
         if (p.status === 'rejected' || p.verificationStatus === 'rejected') return false;
-        return p.status === 'verified' || p.verificationStatus === 'verified' || (!p.status && !p.verificationStatus && (p.paymentStatus === 'LUNAS' || p.paymentStatus === 'SEBAGIAN'));
+        return (
+          p.status === 'verified' ||
+          p.verificationStatus === 'verified' ||
+          (!p.status && !p.verificationStatus && (p.paymentStatus === 'Lunas' || p.paymentStatus === 'Diangsur' || p.paymentStatus === 'LUNAS' || p.paymentStatus === 'SEBAGIAN'))
+        );
       });
 
       const pendingPayments = studentPayments.filter(p => {
@@ -780,9 +784,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     const totalPembayaranBAM = studentBamSummaries.reduce((a, c) => a + c.amountPaid, 0);
     const totalTunggakan = studentBamSummaries.reduce((a, c) => a + c.remaining, 0);
 
-    const jumlahLunas = studentBamSummaries.filter(s => s.status === 'LUNAS').length;
-    const jumlahSebagian = studentBamSummaries.filter(s => s.status === 'SEBAGIAN').length;
-    const jumlahBelumBayar = studentBamSummaries.filter(s => s.status === 'BELUM BAYAR').length;
+    const jumlahLunas = studentBamSummaries.filter(s => s.status === 'Lunas').length;
+    const jumlahSebagian = studentBamSummaries.filter(s => s.status === 'Diangsur').length;
+    const jumlahBelumBayar = studentBamSummaries.filter(s => s.status === 'Belum Bayar').length;
 
     return {
       totalCalonMurid,
@@ -809,7 +813,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       // Filter Status
       if (filterStudentStatus === 'PENDING_VERIFIKASI') {
         if (!row.hasPendingVerification) return false;
-      } else if (filterStudentStatus !== 'all' && row.status !== filterStudentStatus) {
+      } else if (filterStudentStatus !== 'all' && row.status.toLowerCase() !== filterStudentStatus.toLowerCase()) {
         return false;
       }
 
@@ -994,7 +998,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
               amountPaid: verifiedAmount,
               paymentDate: verifiedDate,
               paymentMethod: verifiedMethod,
-              paymentStatus: isNowLunas ? 'LUNAS' as const : 'SEBAGIAN' as const,
+              paymentStatus: isNowLunas ? 'Lunas' as const : 'Diangsur' as const,
               totalPaidToDate: newTotalPaid,
               remainingBalance: calculateBamRemaining(totalBam, newTotalPaid),
               verifiedAt: new Date().toISOString(),
@@ -1016,7 +1020,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
           totalBamCost: totalBam,
           amountPaid: verifiedAmount,
           installmentType: isNowLunas ? 'Lunas' : 'Cicilan 1',
-          paymentStatus: isNowLunas ? 'LUNAS' : 'SEBAGIAN',
+          paymentStatus: isNowLunas ? 'Lunas' : 'Diangsur',
           paymentMethod: verifiedMethod,
           totalPaidToDate: newTotalPaid,
           remainingBalance: calculateBamRemaining(totalBam, newTotalPaid),
@@ -1100,7 +1104,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
       setRejectTargetItem(null);
       setRejectReason('');
-      setSaveSuccessMessage(`Bukti transfer BAM untuk ${student.fullName} telah DITOLAK. Status tetap BELUM BAYAR dan calon murid dapat mengunggah bukti perbaikan.`);
+      setSaveSuccessMessage(`Bukti transfer BAM untuk ${student.fullName} telah DITOLAK. Status tetap Belum Bayar dan calon murid dapat mengunggah bukti perbaikan.`);
       setTimeout(() => setSaveSuccessMessage(null), 5000);
     } catch (err: any) {
       alert(`Gagal menolak bukti transfer: ${err?.message || 'Terjadi kesalahan'}`);
@@ -1135,9 +1139,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       }
 
       const itemRemaining = Math.max(0, itemCost - itemPaid);
-      let itemStatus: 'LUNAS' | 'SEBAGIAN' | 'BELUM BAYAR' = 'BELUM BAYAR';
-      if (itemPaid >= itemCost) itemStatus = 'LUNAS';
-      else if (itemPaid > 0) itemStatus = 'SEBAGIAN';
+      let itemStatus: 'Lunas' | 'Diangsur' | 'Belum Bayar' = 'Belum Bayar';
+      if (itemPaid >= itemCost) itemStatus = 'Lunas';
+      else if (itemPaid > 0) itemStatus = 'Diangsur';
 
       runningAccumulator += itemCost;
 
@@ -1196,7 +1200,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         payment_method: 'Transfer Bank',
         bank_name: 'BSI',
         payment_date: summary.latestPaymentDate || new Date().toISOString().split('T')[0],
-        status: summary.status === 'LUNAS' ? 'verified' : 'pending',
+        status: (summary.status === 'Lunas' || summary.status === 'Diangsur') ? 'verified' : 'pending',
         notes: `Pembayaran BAM (${summary.status}) - Saldo Sisa: Rp ${summary.remaining.toLocaleString('id-ID')}`,
         verified_by: 'Bagian Administrasi Keuangan SPMB',
       },
@@ -1234,11 +1238,12 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
     const newStatus = getBamPaymentStatus(payingStudent.totalBam, newTotalPaid);
 
     try {
-      // 1. Simpan ke PaymentRepository (Supabase payments table)
-      await PaymentRepository.create({
+      // 1. Simpan ke PaymentRepository (Supabase payments table) terlebih dahulu untuk mendapatkan UUID resmi
+      const { data: createdPay, error: payErr } = await PaymentRepository.create({
         studentId: payingStudent.student.id,
         registrationNumber: payingStudent.registrationNumber,
         studentName: payingStudent.fullName,
+        gender: payingStudent.gender,
         paymentType: 'bam',
         amount: inputPaymentAmount,
         status: 'verified',
@@ -1248,26 +1253,30 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         notes: inputPaymentNotes || `Pembayaran BAM (${newStatus}) - Sisa: Rp ${remaining.toLocaleString('id-ID')}`,
       });
 
-      // 2. Perbarui data siswa di student state
+      if (payErr) {
+        throw payErr;
+      }
+
+      // 2. Perbarui data siswa di student state dan database Supabase
       const updatedStudents = students.map(s => {
         if (s.id === payingStudent.student.id) {
           return {
             ...s,
             initialPaymentAmount: newTotalPaid,
             initialPaymentDate: inputPaymentDate,
-            initialPaymentStatus: (newStatus === 'LUNAS' ? 'verified' : 'pending') as any,
+            initialPaymentStatus: 'verified' as const,
             initialPaymentNotes: inputPaymentNotes,
-            status: newStatus === 'LUNAS' ? ('re_registered' as const) : s.status,
+            status: newStatus === 'Lunas' ? ('re_registered' as const) : ('re_registration_paid' as const),
           };
         }
         return s;
       });
-      onUpdateStudents(updatedStudents);
+      await onUpdateStudents(updatedStudents);
 
-      // 3. Tambahkan ke records lokal
+      // 3. Tambahkan ke records lokal dengan ID UUID dari Supabase & status verified
       const newRecord: BamPaymentRecord = {
-        id: `bam_${Date.now()}`,
-        transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
+        id: createdPay?.id || `bam_${Date.now()}`,
+        transactionNumber: createdPay?.receiptNumber || `TRX-BAM-${Date.now().toString().slice(-6)}`,
         registrationNumber: payingStudent.registrationNumber,
         studentId: payingStudent.student.id,
         studentName: payingStudent.fullName,
@@ -1275,12 +1284,17 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
         paymentDate: inputPaymentDate,
         totalBamCost: payingStudent.totalBam,
         amountPaid: inputPaymentAmount,
-        installmentType: newStatus === 'LUNAS' ? 'Lunas' : 'Cicilan 1',
+        installmentType: newStatus === 'Lunas' ? 'Lunas' : 'Cicilan 1',
         paymentStatus: newStatus,
+        status: 'verified',
+        verificationStatus: 'verified',
+        verifiedAt: new Date().toISOString(),
+        verifiedBy: 'Panitia Keuangan SPMB',
         paymentMethod: inputPaymentMethod,
         totalPaidToDate: newTotalPaid,
         remainingBalance: remaining,
         notes: inputPaymentNotes,
+        createdAt: createdPay?.createdAt || new Date().toISOString(),
       };
 
       const updatedRecords = [newRecord, ...bamPayments];
@@ -1288,7 +1302,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       saveBamPayments(updatedRecords);
 
       setPayingStudent(null);
-      setSaveSuccessMessage(`Pembayaran Rp ${inputPaymentAmount.toLocaleString('id-ID')} untuk ${payingStudent.fullName} berhasil disimpan ke Supabase.`);
+      setSaveSuccessMessage(`Pembayaran Rp ${inputPaymentAmount.toLocaleString('id-ID')} (${newStatus}) untuk ${payingStudent.fullName} berhasil disimpan ke Supabase.`);
       setTimeout(() => setSaveSuccessMessage(null), 4000);
     } catch (e: any) {
       alert(`Gagal menyimpan pembayaran: ${e.message}`);
@@ -1339,7 +1353,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
       'Gender': s.gender,
       'Total_BAM': `Rp ${s.totalBam.toLocaleString('id-ID')}`,
       'Total_Dibayar': `Rp ${s.amountPaid.toLocaleString('id-ID')}`,
-      'Tunggakan': s.remaining > 0 ? `Rp ${s.remaining.toLocaleString('id-ID')}` : 'Rp 0 (LUNAS)',
+      'Tunggakan': s.remaining > 0 ? `Rp ${s.remaining.toLocaleString('id-ID')}` : 'Rp 0 (Lunas)',
       'Status': s.status,
     }));
 
@@ -1532,7 +1546,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
 
             <div className="bg-amber-50/80 p-3.5 rounded-xl border border-amber-200 flex items-center justify-between">
               <div>
-                <div className="text-xs font-bold text-amber-800 uppercase">Jumlah Sebagian (Cicilan)</div>
+                <div className="text-xs font-bold text-amber-800 uppercase">Jumlah Diangsur (Cicilan)</div>
                 <div className="text-xl font-extrabold text-amber-900 mt-0.5">{kpiData.jumlahSebagian} Siswa</div>
                 <div className="text-[10px] text-amber-700 font-semibold">Angsuran Berjalan</div>
               </div>
@@ -1585,9 +1599,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 >
                   <option value="all">Semua</option>
                   <option value="PENDING_VERIFIKASI">⏳ Menunggu Verifikasi ({pendingVerificationCount})</option>
-                  <option value="LUNAS">Lunas</option>
-                  <option value="SEBAGIAN">Sebagian</option>
-                  <option value="BELUM BAYAR">Belum Bayar</option>
+                  <option value="Lunas">Lunas</option>
+                  <option value="Diangsur">Diangsur</option>
+                  <option value="Belum Bayar">Belum Bayar</option>
                 </select>
               </div>
 
@@ -1669,7 +1683,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                         </td>
                         <td className="p-3 font-extrabold">
                           {s.remaining === 0 ? (
-                            <span className="text-emerald-600">Rp 0 (LUNAS)</span>
+                            <span className="text-emerald-600">Rp 0 (Lunas)</span>
                           ) : (
                             <span className="text-rose-600">Rp {s.remaining.toLocaleString('id-ID')}</span>
                           )}
@@ -1680,9 +1694,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                         <td className="p-3">
                           <div className="flex flex-col gap-1 items-start">
                             <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${
-                              s.status === 'LUNAS'
+                              s.status === 'Lunas'
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                : s.status === 'SEBAGIAN'
+                                : s.status === 'Diangsur'
                                 ? 'bg-amber-100 text-amber-800 border border-amber-300'
                                 : 'bg-rose-100 text-rose-800 border border-rose-300'
                             }`}>
@@ -1709,7 +1723,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                                   regNo: s.registrationNumber,
                                   paymentType: 'bam',
                                   amount: s.amountPaid > 0 ? s.amountPaid : s.pendingAmount,
-                                  status: s.hasPendingVerification ? 'pending' : (s.status === 'LUNAS' || s.status === 'SEBAGIAN' ? 'verified' : 'pending'),
+                                  status: s.hasPendingVerification ? 'pending' : (s.status === 'Lunas' || s.status === 'Diangsur' ? 'verified' : 'pending'),
                                   date: s.latestPaymentDate,
                                   notes: s.notes,
                                 })}
@@ -2442,9 +2456,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 <div>
                   <span className="text-slate-500">Status Pembayaran:</span>{' '}
                   <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                    selectedStudentSummary.status === 'LUNAS'
+                    selectedStudentSummary.status === 'Lunas'
                       ? 'bg-emerald-100 text-emerald-800'
-                      : selectedStudentSummary.status === 'SEBAGIAN'
+                      : selectedStudentSummary.status === 'Diangsur'
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-rose-100 text-rose-800'
                   }`}>
@@ -2468,7 +2482,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                       regNo: selectedStudentSummary.registrationNumber,
                       paymentType: 'bam',
                       amount: selectedStudentSummary.amountPaid,
-                      status: selectedStudentSummary.status === 'LUNAS' || selectedStudentSummary.status === 'SEBAGIAN' ? 'verified' : 'pending',
+                      status: selectedStudentSummary.status === 'Lunas' || selectedStudentSummary.status === 'Diangsur' ? 'verified' : 'pending',
                       date: selectedStudentSummary.latestPaymentDate,
                       notes: selectedStudentSummary.notes,
                     })}
@@ -2491,7 +2505,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                     regNo: selectedStudentSummary.registrationNumber,
                     paymentType: 'bam',
                     amount: selectedStudentSummary.amountPaid,
-                    status: selectedStudentSummary.status === 'LUNAS' || selectedStudentSummary.status === 'SEBAGIAN' ? 'verified' : 'pending',
+                    status: selectedStudentSummary.status === 'Lunas' || selectedStudentSummary.status === 'Diangsur' ? 'verified' : 'pending',
                     date: selectedStudentSummary.latestPaymentDate,
                     notes: selectedStudentSummary.notes,
                   })}
@@ -2536,9 +2550,9 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                         </td>
                         <td className="p-2.5 text-center">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            item.status === 'LUNAS'
+                            item.status === 'Lunas'
                               ? 'bg-emerald-100 text-emerald-800'
-                              : item.status === 'SEBAGIAN'
+                              : item.status === 'Diangsur'
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-rose-100 text-rose-800'
                           }`}>
@@ -2569,7 +2583,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
               <div className="flex justify-between items-center text-rose-400 font-extrabold text-sm border-t border-slate-800 pt-2">
                 <span>TOTAL TUNGGAKAN:</span>
                 <span>
-                  {selectedStudentSummary.remaining === 0 ? 'Rp 0 (LUNAS)' : `Rp ${selectedStudentSummary.remaining.toLocaleString('id-ID')}`}
+                  {selectedStudentSummary.remaining === 0 ? 'Rp 0 (Lunas)' : `Rp ${selectedStudentSummary.remaining.toLocaleString('id-ID')}`}
                 </span>
               </div>
             </div>
@@ -2957,7 +2971,7 @@ export const AdminBamPaymentSection: React.FC<AdminBamPaymentSectionProps> = ({
                 <span>Konsekuensi Penolakan Bukti Transfer</span>
               </div>
               <p className="text-[11px] text-rose-800 leading-relaxed">
-                Pembayaran <strong>tidak akan masuk</strong> ke Daftar Pembayaran resmi. Status calon murid tetap <strong>BELUM BAYAR</strong>. Alasan penolakan akan dikirim ke dashboard calon murid agar dapat mengunggah bukti perbaikan.
+                Pembayaran <strong>tidak akan masuk</strong> ke Daftar Pembayaran resmi. Status calon murid tetap <strong>Belum Bayar</strong>. Alasan penolakan akan dikirim ke dashboard calon murid agar dapat mengunggah bukti perbaikan.
               </p>
             </div>
 

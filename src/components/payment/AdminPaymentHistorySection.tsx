@@ -526,6 +526,23 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
     });
   }, [allStoredProofs, galleryFilterType, galleryFilterGender, galleryFilterStatus, gallerySearchQuery]);
 
+  const getBamPaymentDisplayStatus = (p: PaymentItem): 'Lunas' | 'Diangsur' | 'Pending' | 'Ditolak' | 'Belum Bayar' => {
+    if (p.status === 'rejected') return 'Ditolak';
+    if (p.status === 'pending') return 'Pending';
+    if (p.status === 'unpaid') return 'Belum Bayar';
+    if (p.paymentType === 'bam') {
+      const linkedStudent = students.find(s => s.id === p.studentId || s.registrationNumber === p.registrationNumber);
+      const bamTarget = getTotalBamCost(linkedStudent || p.gender || 'Laki-laki');
+      const totalVerifiedPaid = payments
+        .filter(x => (x.studentId === p.studentId || x.registrationNumber === p.registrationNumber) && x.paymentType === 'bam' && x.status === 'verified')
+        .reduce((acc, x) => acc + (Number(x.amount) || 0), 0);
+      const effectivePaid = Math.max(totalVerifiedPaid, Number(linkedStudent?.initialPaymentStatus === 'verified' ? linkedStudent.initialPaymentAmount : 0));
+      if (effectivePaid <= 0) return 'Belum Bayar';
+      if (effectivePaid < bamTarget) return 'Diangsur';
+    }
+    return 'Lunas';
+  };
+
   // Export Excel
   const handleExportExcel = () => {
     const data = filteredPayments.map((p, i) => ({
@@ -540,7 +557,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
       Metode: p.paymentMethod || 'Transfer Bank',
       Bank: p.bankName || '-',
       Pengirim: p.senderName || '-',
-      Status: p.status === 'verified' ? 'LUNAS' : p.status.toUpperCase(),
+      Status: getBamPaymentDisplayStatus(p),
       Catatan: p.notes || '-',
     }));
     exportToExcel(data, `Data_Transaksi_Pembayaran_SPMB_${activeGender}_${new Date().toISOString().split('T')[0]}`);
@@ -556,7 +573,7 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
       JK: p.gender === 'Perempuan' ? 'P' : 'L',
       Jenis: p.paymentType.toUpperCase(),
       Nominal: `Rp ${p.amount.toLocaleString('id-ID')}`,
-      Status: p.status === 'verified' ? 'LUNAS' : p.status.toUpperCase(),
+      Status: getBamPaymentDisplayStatus(p),
     }));
     generateReportPDF(
       `Laporan_Pembayaran_${activeGender}`,
@@ -864,12 +881,18 @@ export const AdminPaymentHistorySection: React.FC<AdminPaymentHistorySectionProp
                     </td>
                     <td className="p-3 text-center">
                       {p.status === 'verified' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold text-[10px]">
-                          <Check className="w-3 h-3" /> LUNAS
-                        </span>
+                        getBamPaymentDisplayStatus(p) === 'Diangsur' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 border border-amber-300 rounded-full font-bold text-[10px]">
+                            <Clock className="w-3 h-3" /> Diangsur
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold text-[10px]">
+                            <Check className="w-3 h-3" /> Lunas
+                          </span>
+                        )
                       ) : p.status === 'rejected' ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-100 text-rose-800 rounded-full font-bold text-[10px]">
-                          <XCircle className="w-3 h-3" /> DITOLAK
+                          <XCircle className="w-3 h-3" /> Ditolak
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full font-bold text-[10px]">

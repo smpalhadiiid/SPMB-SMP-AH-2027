@@ -58,6 +58,7 @@ import { UserManagementSection } from './UserManagementSection';
 import { AccountSettingsSection } from './AccountSettingsSection';
 import { FilledClassesSection } from './FilledClassesSection';
 import { PaymentRepository } from '../repositories/PaymentRepository';
+import { generateUUID } from '../utils/uuid';
 import { StudentRepository } from '../repositories/StudentRepository';
 import { ClassQuotaRepository } from '../repositories/ClassQuotaRepository';
 import { getStudentCategory, getTotalBamCost, normalizeBamGender } from '../utils/bamPricing';
@@ -1154,7 +1155,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const isLunas = effectiveNominal >= totalCost || installmentType === 'Lunas';
       const formattedDate = paymentDate || new Date().toISOString().split('T')[0];
 
-      // 1. Update students state
+      const newPaymentUuid = generateUUID();
+
+      // 1. Sync to Supabase payments table first to guarantee persistence & UUID
+      const { data: createdPay, error: payErr } = await PaymentRepository.create({
+        id: newPaymentUuid,
+        studentId: student.id,
+        registrationNumber: student.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`,
+        studentName: student.fullName,
+        gender: student.gender === 'Perempuan' ? 'Perempuan' : 'Laki-laki',
+        paymentType: 'bam',
+        amount: effectiveNominal,
+        status: 'verified',
+        paymentMethod: 'Transfer Bank',
+        bankName: 'BSI',
+        paymentDate: formattedDate,
+        proofUrl: student.initialPaymentProofUrl,
+        notes: notes || `Verifikasi Pembayaran BAM Panitia SPMB (${installmentType})`,
+      });
+      if (payErr) {
+        throw payErr;
+      }
+
+      // 2. Update students state (awaited so Supabase students row updates too)
       const updated = students.map(s => {
         if (s.id === student.id) {
           return {
@@ -1163,18 +1186,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             initialPaymentAmount: effectiveNominal,
             initialPaymentDate: formattedDate,
             initialPaymentNotes: notes || `Verifikasi Pembayaran BAM (${installmentType})`,
-            status: isLunas ? ('re_registered' as const) : s.status,
+            status: isLunas ? ('re_registered' as const) : ('re_registration_paid' as const),
           };
         }
         return s;
       });
-      onUpdateStudents(updated);
+      await onUpdateStudents(updated);
 
-      // 2. Add to BAM payment records
+      // 3. Add to BAM payment records using the persisted UUID
       const existingBamRecords = getStoredBamPayments();
       const newRecord: BamPaymentRecord = {
-        id: `bam_${Date.now()}`,
-        transactionNumber: `TRX-BAM-${Date.now().toString().slice(-6)}`,
+        id: createdPay?.id || newPaymentUuid,
+        transactionNumber: createdPay?.receiptNumber || `TRX-BAM-${Date.now().toString().slice(-6)}`,
         paymentDate: formattedDate,
         studentId: student.id,
         studentName: student.fullName,
@@ -1183,33 +1206,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         totalBamCost: totalCost,
         amountPaid: effectiveNominal,
         installmentType: installmentType,
+        paymentStatus: isLunas ? 'Lunas' : 'Diangsur',
+        status: 'verified',
+        verificationStatus: 'verified',
+        verifiedAt: new Date().toISOString(),
+        verifiedBy: 'Panitia Keuangan SPMB',
         totalPaidToDate: effectiveNominal,
         remainingBalance: Math.max(0, totalCost - effectiveNominal),
         proofUrl: student.initialPaymentProofUrl,
         notes: notes || `Verifikasi Pembayaran BAM Panitia SPMB (${installmentType})`,
-        createdAt: new Date().toISOString(),
+        createdAt: createdPay?.createdAt || new Date().toISOString(),
       };
       const updatedBamRecords = [newRecord, ...existingBamRecords.filter(r => r.studentId !== student.id)];
       saveBamPayments(updatedBamRecords);
-
-      // 3. Sync to Supabase payments table
-      try {
-        await PaymentRepository.create({
-          studentId: student.id,
-          registrationNumber: student.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`,
-          studentName: student.fullName,
-          paymentType: 'bam',
-          amount: effectiveNominal,
-          status: 'verified',
-          paymentMethod: 'Transfer Bank',
-          bankName: 'BSI',
-          paymentDate: formattedDate,
-          proofUrl: student.initialPaymentProofUrl,
-          notes: notes || `Verifikasi Pembayaran BAM Panitia SPMB (${installmentType})`,
-        });
-      } catch (err) {
-        console.warn('PaymentRepository BAM sync warning:', err);
-      }
 
       // Update student in modal
       setSelectedStudent(prev => prev ? {

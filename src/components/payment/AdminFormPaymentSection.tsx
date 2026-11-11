@@ -15,6 +15,7 @@ import { getStoredBamPayments } from '../../utils/storage';
 import { PaymentProofModal, ProofModalData } from './PaymentProofModal';
 import { PaymentProofThumbnail } from './PaymentProofThumbnail';
 import { getStoredPaymentProofs, downloadPaymentProof } from '../../utils/paymentProofStorage';
+import { generateUUID } from '../../utils/uuid';
 
 interface AdminFormPaymentSectionProps {
   students: StudentData[];
@@ -269,7 +270,7 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
   };
 
   // Submit Form Payment
-  const handleSubmitPayment = (e: React.FormEvent) => {
+  const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentName.trim()) {
       alert('Mohon pilih atau masukkan Nama Calon Murid');
@@ -278,82 +279,110 @@ export const AdminFormPaymentSection: React.FC<AdminFormPaymentSectionProps> = (
 
     const selectedStudent = students.find(s => s.id === selectedStudentId);
     const regNo = selectedStudent?.registrationNumber || `SPMB${Date.now().toString().slice(-8)}`;
+    const resolvedStudentId = selectedStudentId || generateUUID();
 
     let updatedRecords: FormPaymentRecord[];
 
-    if (editingRecordId) {
-      updatedRecords = records.map(r => {
-        if (r.id === editingRecordId) {
-          return {
-            ...r,
-            transactionNumber,
-            registrationNumber: regNo,
-            studentId: selectedStudentId || r.studentId,
-            studentName,
-            gender,
-            paymentDate,
-            amount: Number(amount) || 200000,
-            category,
-            notes,
-          };
+    try {
+      if (editingRecordId) {
+        const { error: updErr } = await PaymentRepository.update(editingRecordId, {
+          studentId: selectedStudentId || undefined,
+          registrationNumber: regNo,
+          studentName,
+          gender,
+          paymentDate,
+          amount: Number(amount) || 200000,
+          status: 'verified',
+          notes: category + (notes ? ` | ${notes}` : ''),
+        });
+        if (updErr) {
+          console.warn('PaymentRepository form update err:', updErr.message);
         }
-        return r;
-      });
-      setSuccessMsg('✓ Perubahan data pembayaran formulir berhasil disimpan!');
-    } else {
-      const newRecord: FormPaymentRecord = {
-        id: `fpay_${Date.now()}`,
-        transactionNumber,
-        registrationNumber: regNo,
-        studentId: selectedStudentId || `std_${Date.now()}`,
-        studentName,
-        gender,
-        paymentDate,
-        amount: Number(amount) || 200000,
-        category,
-        notes,
-        createdAt: new Date().toISOString(),
-      };
-      updatedRecords = [newRecord, ...records];
-      setSuccessMsg('✓ Pembayaran Formulir berhasil disimpan dan diverifikasi!');
 
-      PaymentRepository.create({
-        studentId: selectedStudentId || `std_${Date.now()}`,
-        registrationNumber: regNo,
-        studentName,
-        paymentType: 'form',
-        amount: Number(amount) || 200000,
-        status: 'verified',
-        paymentMethod: 'Transfer Bank',
-        bankName: 'BSI',
-        paymentDate,
-        notes: category + (notes ? ` | ${notes}` : ''),
-      }).catch(err => console.warn('PaymentRepository form create err:', err));
-    }
+        updatedRecords = records.map(r => {
+          if (r.id === editingRecordId) {
+            return {
+              ...r,
+              transactionNumber,
+              registrationNumber: regNo,
+              studentId: selectedStudentId || r.studentId,
+              studentName,
+              gender,
+              paymentDate,
+              amount: Number(amount) || 200000,
+              category,
+              notes,
+              status: 'verified',
+            };
+          }
+          return r;
+        });
+        setSuccessMsg('✓ Perubahan data pembayaran formulir berhasil disimpan ke Supabase!');
+      } else {
+        const newPaymentUuid = generateUUID();
+        const { data: createdPay, error: createErr } = await PaymentRepository.create({
+          id: newPaymentUuid,
+          studentId: resolvedStudentId,
+          registrationNumber: regNo,
+          studentName,
+          gender,
+          paymentType: 'form',
+          amount: Number(amount) || 200000,
+          status: 'verified',
+          paymentMethod: 'Transfer Bank',
+          bankName: 'BSI',
+          paymentDate,
+          notes: category + (notes ? ` | ${notes}` : ''),
+        });
 
-    setRecords(updatedRecords);
-    saveFormPayments(updatedRecords);
-
-    // Update student form status in main state if student is linked
-    if (selectedStudentId) {
-      const updatedStudents = students.map(s => {
-        if (s.id === selectedStudentId) {
-          return {
-            ...s,
-            formPaymentStatus: 'verified' as const,
-            formPaymentAmount: Number(amount) || 200000,
-            formPaymentDate: paymentDate,
-            formPaymentNotes: category,
-            isFormVerified: true,
-          };
+        if (createErr) {
+          throw createErr;
         }
-        return s;
-      });
-      onUpdateStudents(updatedStudents);
-    }
 
-    setShowModal(false);
-    setTimeout(() => setSuccessMsg(''), 4000);
+        const newRecord: FormPaymentRecord = {
+          id: createdPay?.id || newPaymentUuid,
+          transactionNumber,
+          registrationNumber: regNo,
+          studentId: resolvedStudentId,
+          studentName,
+          gender,
+          paymentDate,
+          amount: Number(amount) || 200000,
+          category,
+          notes,
+          status: 'verified',
+          createdAt: createdPay?.createdAt || new Date().toISOString(),
+        };
+        updatedRecords = [newRecord, ...records];
+        setSuccessMsg('✓ Pembayaran Formulir berhasil disimpan ke Supabase dan diverifikasi!');
+      }
+
+      setRecords(updatedRecords);
+      saveFormPayments(updatedRecords);
+
+      // Update student form status in main state if student is linked
+      if (selectedStudentId) {
+        const updatedStudents = students.map(s => {
+          if (s.id === selectedStudentId) {
+            return {
+              ...s,
+              formPaymentStatus: 'verified' as const,
+              formPaymentAmount: Number(amount) || 200000,
+              formPaymentDate: paymentDate,
+              formPaymentNotes: category,
+              isFormVerified: true,
+            };
+          }
+          return s;
+        });
+        await onUpdateStudents(updatedStudents);
+      }
+
+      setShowModal(false);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err: any) {
+      alert(`Gagal menyimpan pembayaran formulir ke Supabase: ${err?.message || 'Terjadi kesalahan'}`);
+    }
   };
 
   // Delete payment record

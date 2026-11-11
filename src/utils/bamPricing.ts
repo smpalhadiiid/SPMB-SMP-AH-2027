@@ -8,7 +8,7 @@
 // - Nominal BAM Ikhwan dan Akhwat dipisahkan secara ketat
 // - Nominal BAM TIDAK di-hardcode bila data dari upload/Supabase tersedia
 // - Sisa Tunggakan = Total BAM - Total Pembayaran
-// - Status Pembayaran: BELUM BAYAR | SEBAGIAN | LUNAS
+// - Status Pembayaran: Belum Bayar | Diangsur | Lunas
 // =====================================================================
 
 import { StudentData, BamItem, BamGender, BamInstallmentType, BamPaymentStatus } from '../types';
@@ -226,12 +226,12 @@ export function calculateBamRemaining(totalCost: number, totalPaid: number): num
 }
 
 /**
- * Menentukan status BAM sesuai spesifikasi (BELUM BAYAR | SEBAGIAN | LUNAS)
+ * Menentukan status BAM sesuai spesifikasi (Belum Bayar | Diangsur | Lunas)
  */
-export function getBamPaymentStatus(totalCost: number, amountPaid: number): 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS' {
-  if (!amountPaid || amountPaid <= 0) return 'BELUM BAYAR';
-  if (amountPaid >= totalCost) return 'LUNAS';
-  return 'SEBAGIAN';
+export function getBamPaymentStatus(totalCost: number, amountPaid: number): 'Belum Bayar' | 'Diangsur' | 'Lunas' {
+  if (!amountPaid || amountPaid <= 0) return 'Belum Bayar';
+  if (amountPaid >= totalCost && totalCost > 0) return 'Lunas';
+  return 'Diangsur';
 }
 
 /**
@@ -243,7 +243,7 @@ export function getBamInstallmentType(totalCost: number, amountPaid: number, _ca
   const ratio = totalCost > 0 ? amountPaid / totalCost : 0;
   if (ratio >= 0.66) return 'Cicilan 2';
   if (ratio >= 0.33) return 'Cicilan 1';
-  return 'Sebagian';
+  return 'Diangsur';
 }
 
 /**

@@ -218,7 +218,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
     totalBam: number;
     sudahDibayar: number;
     tunggakan: number;
-    status: 'LUNAS' | 'SEBAGIAN' | 'BELUM BAYAR';
+    status: 'Lunas' | 'Diangsur' | 'Belum Bayar';
     paymentDate: string;
     proofUrl?: string;
     student: StudentData;
@@ -288,9 +288,9 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
     const totalPembayaranBAM = bamReportRows.reduce((acc, r) => acc + r.sudahDibayar, 0);
     const totalTunggakan = bamReportRows.reduce((acc, r) => acc + r.tunggakan, 0);
 
-    const jumlahLunas = bamReportRows.filter(r => r.status === 'LUNAS').length;
-    const jumlahSebagian = bamReportRows.filter(r => r.status === 'SEBAGIAN').length;
-    const jumlahBelumBayar = bamReportRows.filter(r => r.status === 'BELUM BAYAR').length;
+    const jumlahLunas = bamReportRows.filter(r => r.status === 'Lunas').length;
+    const jumlahSebagian = bamReportRows.filter(r => r.status === 'Diangsur').length;
+    const jumlahBelumBayar = bamReportRows.filter(r => r.status === 'Belum Bayar').length;
 
     return {
       totalCalonMurid,
@@ -310,9 +310,9 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
       if (genderFilter === 'ikhwan' && row.rawGender !== 'ikhwan') return false;
       if (genderFilter === 'akhwat' && row.rawGender !== 'akhwat') return false;
 
-      // Filter Status (Lunas, Sebagian, Belum Bayar)
+      // Filter Status (Lunas, Diangsur, Belum Bayar)
       if (statusFilter !== 'all') {
-        if (row.status !== statusFilter.toUpperCase()) return false;
+        if (row.status.toUpperCase() !== statusFilter.toUpperCase()) return false;
       }
 
       // Filter Search
@@ -415,7 +415,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
         'Gender': r.gender,
         'Total_BAM': `Rp ${r.totalBam.toLocaleString('id-ID')}`,
         'Total_Dibayar': `Rp ${r.sudahDibayar.toLocaleString('id-ID')}`,
-        'Tunggakan': r.tunggakan > 0 ? `Rp ${r.tunggakan.toLocaleString('id-ID')}` : 'Rp 0 (LUNAS)',
+        'Tunggakan': r.tunggakan > 0 ? `Rp ${r.tunggakan.toLocaleString('id-ID')}` : 'Rp 0 (Lunas)',
         'Status': r.status,
       }));
 
@@ -765,7 +765,7 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
 
             <div className="bg-amber-50/80 p-3.5 rounded-xl border border-amber-200 flex items-center justify-between">
               <div>
-                <div className="text-xs font-bold text-amber-800 uppercase">Jumlah Sebagian (Cicilan)</div>
+                <div className="text-xs font-bold text-amber-800 uppercase">Jumlah Diangsur (Cicilan)</div>
                 <div className="text-xl font-extrabold text-amber-900 mt-0.5">{bamMetrics.jumlahSebagian} Siswa</div>
               </div>
               <Clock className="w-8 h-8 text-amber-500 opacity-80" />
@@ -815,9 +815,9 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
                   className="border border-slate-300 rounded-lg p-2 text-xs bg-white font-semibold"
                 >
                   <option value="all">Semua</option>
-                  <option value="LUNAS">Lunas</option>
-                  <option value="SEBAGIAN">Sebagian</option>
-                  <option value="BELUM BAYAR">Belum Bayar</option>
+                  <option value="Lunas">Lunas</option>
+                  <option value="Diangsur">Diangsur</option>
+                  <option value="Belum Bayar">Belum Bayar</option>
                 </select>
               </div>
 
@@ -893,16 +893,16 @@ export const KepsekPaymentReportSection: React.FC<KepsekPaymentReportSectionProp
                         </td>
                         <td className="p-3 font-extrabold">
                           {r.tunggakan === 0 ? (
-                            <span className="text-emerald-600">Rp 0 (LUNAS)</span>
+                            <span className="text-emerald-600">Rp 0 (Lunas)</span>
                           ) : (
                             <span className="text-rose-600">Rp {r.tunggakan.toLocaleString('id-ID')}</span>
                           )}
                         </td>
                         <td className="p-3">
                           <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${
-                            r.status === 'LUNAS'
+                            r.status === 'Lunas'
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : r.status === 'SEBAGIAN'
+                              : r.status === 'Diangsur'
                               ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : 'bg-rose-100 text-rose-800 border border-rose-300'
                           }`}>

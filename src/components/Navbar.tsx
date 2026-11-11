@@ -59,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={onNavigateHome}
           className="flex items-center gap-3 text-left group focus:outline-none"
         >
-          <SchoolLogo size="md" showText={true} />
+          <SchoolLogo size="md" showText={false} />
         </button>
 
         {/* Desktop Quick Nav Links */}
@@ -100,7 +100,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           {currentUser ? (
             <div className="flex items-center gap-3 pl-2 border-l border-slate-800">
               <button
-                onClick={() => onSelectRoleView(activeRoleView || currentUser?.role || 'admin')}
+                onClick={() => {
+                  const targetRole = currentUser.role === 'super_admin'
+                    ? (activeRoleView || 'super_admin')
+                    : (currentUser?.role || 'student');
+                  onSelectRoleView(targetRole);
+                }}
                 className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <span>Buka Dashboard</span>

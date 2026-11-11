@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserAccount, UserRole } from '../types';
-import { saveUserToDb, setCurrentUser } from '../utils/storage';
+import { saveUserToDb, setCurrentUser, safeSetItem } from '../utils/storage';
 import { signUpWithSupabase, signInWithSupabase } from '../utils/supabaseClient';
 import { getDefaultCredentials, fetchDefaultCredentialsFromSupabase, DefaultCredentialsConfig } from '../utils/defaultCredentials';
 import { saveStudentAccountCredentials } from '../utils/studentCredentials';
@@ -236,6 +236,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (result.isConfirmed) {
         // Otomatis login langsung ke sesi aktif calon murid
         setCurrentUser(newUser);
+        safeSetItem('alhadiid_spmb_active_role_view', 'student');
+        safeSetItem('alhadiid_spmb_active_tab', 'timeline');
+        safeSetItem('alhadiid_spmb_view_mode', 'dashboard');
         onLoginSuccess(newUser);
         onClose();
       } else {
@@ -291,6 +294,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         saveUserToDb(activeUserSession);
         setCurrentUser(activeUserSession);
+        safeSetItem('alhadiid_spmb_active_role_view', 'student');
+        safeSetItem('alhadiid_spmb_active_tab', 'timeline');
+        safeSetItem('alhadiid_spmb_view_mode', 'dashboard');
 
         Swal.fire({
           icon: 'success',

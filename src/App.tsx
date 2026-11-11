@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   UserAccount, UserRole, StudentData, ClassQuota,
   CostBreakdown, SchoolInfo, TestSchedule, GasConfig, WebsiteConfig
@@ -43,7 +43,7 @@ export default function App() {
       }
       return user.role;
     }
-    return saved && ['student', 'admin', 'kepsek', 'super_admin'].includes(saved) ? saved : 'student';
+    return 'student';
   });
 
   // Students SSOT is Supabase: initialized as empty array [] and populated via StudentRepository
@@ -220,6 +220,21 @@ export default function App() {
     return ['student']; // Calon Murid strictly accesses student view
   };
 
+  // Synchronous role view enforcement so a student session can NEVER render Admin/Superadmin even on initial mount/refresh
+  const effectiveRoleView: UserRole = useMemo(() => {
+    const userRole = currentUser?.role || 'student';
+    const allowed = getAllowedRoleViews(userRole);
+    return allowed.includes(activeRoleView) ? activeRoleView : (allowed[0] || 'student');
+  }, [currentUser?.role, activeRoleView]);
+
+  const STUDENT_TABS = ['timeline', 'payment_form', 'form', 'download_form', 'test_schedule', 'result', 'payment_initial', 'class'];
+  const effectiveTab: string = useMemo(() => {
+    if (effectiveRoleView === 'student') {
+      return STUDENT_TABS.includes(activeTab) ? activeTab : 'timeline';
+    }
+    return activeTab || 'overview';
+  }, [effectiveRoleView, activeTab]);
+
   const handleSelectRoleView = (role: UserRole, overrideUserRole?: UserRole) => {
     const userRole = overrideUserRole || currentUser?.role || 'student';
     const allowed = getAllowedRoleViews(userRole);
@@ -324,11 +339,16 @@ export default function App() {
       try {
         const localUser = getCurrentUser();
         if (localUser) {
-          if (session?.user && localUser.email.toLowerCase() === session.user.email?.toLowerCase()) {
-            const userProfile = await getAuthUserProfile(session.user.id, session.user.email);
-            if (userProfile && isMounted) {
-              setCurrentUserLocal(userProfile);
-              setCurrentUser(userProfile);
+          if (session?.user) {
+            if (localUser.email.toLowerCase() === session.user.email?.toLowerCase()) {
+              const userProfile = await getAuthUserProfile(session.user.id, session.user.email);
+              if (userProfile && isMounted) {
+                setCurrentUserLocal(userProfile);
+                setCurrentUser(userProfile);
+              }
+            } else {
+              // Sesi Auth browser berbeda dengan pengguna aktif lokal (mis. sisa sesi superadmin): bersihkan sesi Auth lama!
+              await signOutWithSupabase();
             }
           }
           return;
@@ -339,6 +359,8 @@ export default function App() {
           if (userProfile && isMounted) {
             setCurrentUserLocal(userProfile);
             setCurrentUser(userProfile);
+            setActiveRoleView(userProfile.role);
+            safeSetItem('alhadiid_spmb_active_role_view', userProfile.role);
           }
         }
       } catch (err) {
@@ -385,8 +407,20 @@ export default function App() {
       const defaultRole = allowed.includes(userRole) ? userRole : 'student';
       setActiveRoleView(defaultRole);
       safeSetItem('alhadiid_spmb_active_role_view', defaultRole);
-      if (defaultRole === 'student') setActiveTab('timeline');
-      else setActiveTab('overview');
+      if (defaultRole === 'student') {
+        setActiveTab('timeline');
+        safeSetItem('alhadiid_spmb_active_tab', 'timeline');
+      } else {
+        setActiveTab('overview');
+        safeSetItem('alhadiid_spmb_active_tab', 'overview');
+      }
+    } else if (userRole !== 'super_admin') {
+      // Pastikan role tersimpan selalu sinkron dengan role akun aktif (bukan sisa role lain)
+      safeSetItem('alhadiid_spmb_active_role_view', userRole);
+      if (userRole === 'student' && !STUDENT_TABS.includes(activeTab)) {
+        setActiveTab('timeline');
+        safeSetItem('alhadiid_spmb_active_tab', 'timeline');
+      }
     }
 
     // Refresh running text configuration from Supabase so every logged-in account displays the exact same announcement
@@ -529,7 +563,7 @@ export default function App() {
           {/* Header Navigation for Landing Page */}
           <Navbar
             currentUser={currentUser}
-            activeRoleView={activeRoleView}
+            activeRoleView={effectiveRoleView}
             onSelectRoleView={handleSelectRoleView}
             onOpenAuth={(mode) => {
               setAuthMode(mode);
@@ -595,18 +629,18 @@ export default function App() {
         /* Dashboard Mode with Left Sidebar Navigation Layout */
         <SidebarLayout
           currentUser={currentUser}
-          activeRoleView={activeRoleView}
+          activeRoleView={effectiveRoleView}
           onSelectRoleView={handleSelectRoleView}
           onLogout={handleLogout}
           onNavigateHome={handleNavigateHome}
           onOpenWhatsApp={handleOpenWhatsApp}
-          activeTab={activeTab}
+          activeTab={effectiveTab}
           onTabChange={handleTabChange}
           studentData={currentStudentData}
           onRefreshAllData={handleRefreshAllData}
           websiteConfig={websiteConfig}
         >
-          {activeRoleView === 'student' && (
+          {effectiveRoleView === 'student' && (
             <StudentDashboard
               currentUser={currentUser}
               studentData={currentStudentData}
@@ -614,12 +648,12 @@ export default function App() {
               costBreakdowns={costBreakdowns}
               testSchedules={testSchedules}
               onUpdateStudentData={handleUpdateStudentSingle}
-              activeTab={activeTab}
-              onTabChange={(tab) => setActiveTab(tab)}
+              activeTab={effectiveTab}
+              onTabChange={handleTabChange}
             />
           )}
 
-          {(activeRoleView === 'admin' || activeRoleView === 'super_admin') && (
+          {(effectiveRoleView === 'admin' || effectiveRoleView === 'super_admin') && (
             <AdminDashboard
               currentUser={currentUser}
               students={students}
@@ -637,18 +671,18 @@ export default function App() {
               onUpdateWebsiteConfig={handleUpdateWebsiteConfig}
               onUpdateSchedules={handleUpdateSchedules}
               onRefreshAllData={handleRefreshAllData}
-              activeTab={activeTab}
-              onTabChange={(tab) => setActiveTab(tab)}
+              activeTab={effectiveTab}
+              onTabChange={handleTabChange}
             />
           )}
 
-          {activeRoleView === 'kepsek' && (
+          {effectiveRoleView === 'kepsek' && (
             <KepsekDashboard
               currentUser={currentUser}
               students={students}
               classQuotas={classQuotas}
               schoolInfo={schoolInfo}
-              activeTab={activeTab}
+              activeTab={effectiveTab}
               onUpdateStudents={handleUpdateStudents}
               onRefreshAllData={handleRefreshAllData}
             />

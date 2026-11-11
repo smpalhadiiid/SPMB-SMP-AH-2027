@@ -67,7 +67,7 @@ interface StudentDashboardProps {
   schoolInfo: SchoolInfo;
   costBreakdowns: CostBreakdown[];
   testSchedules?: TestSchedule[];
-  onUpdateStudentData: (updated: StudentData) => void;
+  onUpdateStudentData: (updated: StudentData) => void | Promise<StudentData>;
   activeTab?: string;
   onTabChange?: (tab: string) => void;
 }
@@ -387,7 +387,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             totalBamCost: targetBamCost,
             amountPaid: Number(p.amount) || 0,
             installmentType: Number(p.amount) >= targetBamCost ? 'Lunas' : (Number(p.amount) >= 4000000 ? 'Tahap 1 (DP)' : 'Cicilan 1'),
-            paymentStatus: (p.status === 'verified' && Number(p.amount) >= targetBamCost ? 'LUNAS' : (Number(p.amount) > 0 ? 'SEBAGIAN' : 'BELUM BAYAR')),
+            paymentStatus: (p.status === 'verified' && Number(p.amount) >= targetBamCost ? 'Lunas' : (Number(p.amount) > 0 ? 'Diangsur' : 'Belum Bayar')),
             paymentMethod: p.paymentMethod || 'Transfer Bank',
             totalPaidToDate: Number(p.amount) || 0,
             remainingBalance: Math.max(0, targetBamCost - Number(p.amount || 0)),
@@ -438,7 +438,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return allStudentBamPayments.filter((b: any) => {
       if (b.status === 'pending' || b.verificationStatus === 'pending') return false;
       if (b.status === 'rejected' || b.verificationStatus === 'rejected') return false;
-      return b.status === 'verified' || b.verificationStatus === 'verified' || (!b.status && !b.verificationStatus && (b.paymentStatus === 'LUNAS' || b.paymentStatus === 'SEBAGIAN'));
+      return (
+        b.status === 'verified' ||
+        b.verificationStatus === 'verified' ||
+        (!b.status && !b.verificationStatus && (b.paymentStatus === 'Lunas' || b.paymentStatus === 'Diangsur' || b.paymentStatus === 'LUNAS' || b.paymentStatus === 'SEBAGIAN'))
+      );
     });
   }, [allStudentBamPayments]);
 
@@ -480,7 +484,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Status Lunas vs Mengangsur / Cicilan (Hanya berdasarkan pembayaran yang terverifikasi admin)
   const isLunas = (currentPaidAmount >= totalBamCost && totalBamCost > 0) ||
                   (studentData.initialPaymentStatus === 'verified' && (Number(studentData.initialPaymentAmount) >= totalBamCost || studentData.status === 're_registered')) ||
-                  matchingBamPayments.some((p: any) => p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas');
+                  matchingBamPayments.some((p: any) => p.paymentStatus === 'Lunas' || p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas');
 
   const isAngsuran = !isLunas && currentPaidAmount > 0;
 
@@ -822,7 +826,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       status: 'scheduled_test',
     };
 
-    onUpdateStudentData(updated);
+    await onUpdateStudentData(updated);
     setShowRetakeConfirmModal(false);
 
     // Resolve Database Ujian ID for monitoring
@@ -839,12 +843,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     const startTimeIso = new Date().toISOString();
     const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
-
-    supabase.from('students').update({
-      is_test_active: true,
-      test_submitted: false,
-      updated_at: startTimeIso,
-    }).eq('id', studentData.id).then(() => {}, () => {});
 
     sendCbtHeartbeatSupabase({
       exam_id: validDbUjianId,
@@ -936,18 +934,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const startTimeIso = new Date().toISOString();
     const endTimeIso = new Date(Date.now() + duration * 60 * 1000).toISOString();
 
-    // 1. Update status murid menjadi isTestActive: true
+    // 1. Update status murid menjadi isTestActive: true melalui Single Source of Truth StudentRepository
     const updatedStudent: StudentData = {
       ...studentData,
       isTestActive: true,
       testSubmitted: false,
     };
-    onUpdateStudentData(updatedStudent);
-    supabase.from('students').update({
-      is_test_active: true,
-      test_submitted: false,
-      updated_at: startTimeIso,
-    }).eq('id', studentData.id).then(() => {}, () => {});
+    await onUpdateStudentData(updatedStudent);
 
     // 2. Kirim Heartbeat pertama ke Supabase Realtime & Database SSOT
     sendCbtHeartbeatSupabase({
@@ -1147,17 +1140,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       tanggalUjian: new Date().toISOString().split('T')[0],
     }).catch(err => console.warn('saveHasilUjianSupabase error:', err));
 
-    // 3. Update tabel students
-    supabase.from('students').update({
-      diagnostic_score: diagnosticScore,
-      general_score: generalScore,
-      religious_score: religiousScore,
-      final_score: finalScore,
-      is_test_active: false,
-      test_submitted: true,
-      status: 'test_completed',
-      updated_at: new Date().toISOString(),
-    }).eq('id', studentData.id).then(() => {}, () => {});
+    // 3. Data skor dan status ujian sudah otomatis tersimpan ke tabel public.students via onUpdateStudentData(updatedStudent)
 
     // 4. Catat aktivitas selesai ujian
     recordCbtActivityLogSupabase({
@@ -1450,21 +1433,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           : studentData.status,
       };
 
-      // Simpan langsung ke Supabase melalui StudentRepository
-      if (studentData.id) {
-        await StudentRepository.update(studentData.id, updated);
+      // Simpan melalui Single Source of Truth (StudentRepository.update dengan OCC version check di App.tsx)
+      await onUpdateStudentData(updated);
 
-        // Sinkronkan nama dan nomor telepon akun di users jika berubah
-        if (fullName !== studentData.fullName || phone !== studentData.phone) {
-          supabase.from('users').update({
-            name: fullName.trim(),
-            phone: phone.trim(),
-            updated_at: new Date().toISOString(),
-          }).eq('id', studentData.id).then(() => {}, () => {});
+      // Sinkronkan nama dan nomor telepon akun di public.users jika berubah
+      if (studentData.id && (fullName !== studentData.fullName || phone !== studentData.phone)) {
+        const { error: userUpdateErr } = await supabase.from('users').update({
+          name: fullName.trim(),
+          phone: phone.trim(),
+          updated_at: new Date().toISOString(),
+        }).eq('id', studentData.id);
+        if (userUpdateErr) {
+          console.warn('Sync users profile warning:', userUpdateErr.message);
         }
       }
-
-      onUpdateStudentData(updated);
       setIsSaving(false);
       const isAlreadySubmitted = studentData.status !== 'draft' && studentData.status !== 'filling_form' && studentData.status !== 'pending_payment';
       setSaveMessage(isAlreadySubmitted ? '✓ Pembaruan data pendaftaran calon murid berhasil disimpan ke database!' : '✓ Formulir data pendaftaran berhasil dikirim!');
@@ -1559,7 +1541,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       status: 're_registration_paid',
     };
 
-    onUpdateStudentData(updated);
+    await onUpdateStudentData(updated);
 
     try {
       const existingBamPayments = getStoredBamPayments();
@@ -3911,13 +3893,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 {isLunas ? (
                   <span className="px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border-2 border-emerald-400 shadow-sm" title="Lunas (Tanda Bintang Hijau)">
                     <span className="text-emerald-600 text-base">⭐</span>
-                    <span>LUNAS</span>
+                    <span>Lunas</span>
                     <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold">Terverifikasi</span>
                   </span>
                 ) : isAngsuran ? (
-                  <span className="px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 bg-amber-50 text-amber-950 border-2 border-amber-400 shadow-sm" title="Angsuran / Cicilan (Tanda Jempol Kuning)">
+                  <span className="px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 bg-amber-50 text-amber-950 border-2 border-amber-400 shadow-sm" title="Diangsur / Cicilan (Tanda Jempol Kuning)">
                     <span className="text-amber-600 text-base">👍</span>
-                    <span>ANGSURAN / CICILAN</span>
+                    <span>Diangsur</span>
                     <span className="text-[10px] bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded font-bold">Tercatat Admin</span>
                   </span>
                 ) : studentData.initialPaymentStatus === 'pending' || !!studentData.initialPaymentProofUrl ? (
@@ -3928,7 +3910,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 ) : (
                   <span className="px-3 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-300">
                     <AlertCircle className="w-4 h-4 text-slate-500" />
-                    <span>BELUM BAYAR / UPLOAD</span>
+                    <span>Belum Bayar</span>
                   </span>
                 )}
               </div>
@@ -4016,7 +3998,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <span className="text-[10px] text-amber-900 font-semibold">Tercatat di Menu Admin</span>
                       </div>
                       <h3 className="text-lg sm:text-xl font-black text-amber-950 flex flex-wrap items-center gap-2 mt-0.5">
-                        <span>Keterangan: Angsuran / Cicilan</span>
+                        <span>Keterangan: Diangsur (Cicilan)</span>
                         <span className="inline-flex items-center gap-1 text-xs bg-amber-400 text-slate-950 px-2.5 py-0.5 rounded-full font-bold shadow-xs">
                           <ThumbsUp className="w-3.5 h-3.5 fill-slate-950 text-slate-950" />
                           <span>Tanda Jempol (Kuning)</span>
@@ -4027,7 +4009,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <div className="flex items-center gap-2 self-start sm:self-auto">
                     <span className="px-3 py-1.5 bg-amber-400 text-slate-950 text-xs font-black rounded-xl shadow-sm flex items-center gap-1.5">
                       <ThumbsUp className="w-4 h-4 fill-slate-950 text-slate-950" />
-                      <span>STATUS: ANGSURAN</span>
+                      <span>STATUS: DIANGSUR</span>
                     </span>
                   </div>
                 </div>
@@ -4171,7 +4153,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             Rp {(Number(p.amountPaid) || 0).toLocaleString('id-ID')}
                           </td>
                           <td className="px-3 py-2.5">
-                            {isLunas || p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas' ? (
+                            {isLunas || p.paymentStatus === 'Lunas' || p.paymentStatus === 'LUNAS' || p.installmentType === 'Lunas' ? (
                               <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-bold">
                                 <span>⭐</span>
                                 <span>Lunas (Bintang Hijau)</span>
@@ -4179,7 +4161,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             ) : (
                               <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 text-[10px] px-2 py-0.5 rounded-full font-bold">
                                 <span>👍</span>
-                                <span>Angsuran (Jempol Kuning)</span>
+                                <span>Diangsur (Jempol Kuning)</span>
                               </span>
                             )}
                           </td>

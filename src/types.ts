@@ -485,7 +485,7 @@ export interface BamItem {
   updated_at?: string;
 }
 
-export type BamPaymentStatus = 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS' | 'Lunas' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3' | 'Belum Bayar';
+export type BamPaymentStatus = 'Belum Bayar' | 'Diangsur' | 'Lunas' | 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS' | 'Cicilan 1' | 'Cicilan 2' | 'Cicilan 3';
 
 export interface BamPaymentRecord {
   id: string;
@@ -500,7 +500,7 @@ export interface BamPaymentRecord {
   totalBamCost: number; // Total nominal BAM sesuai gender dari Supabase
   amountPaid: number; // nominal bayar transaksi ini
   installmentType: BamInstallmentType;
-  paymentStatus?: 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS';
+  paymentStatus?: 'Belum Bayar' | 'Diangsur' | 'Lunas' | 'BELUM BAYAR' | 'SEBAGIAN' | 'LUNAS';
   paymentMethod?: string; // e.g. 'Transfer Bank Mandiri', 'Tunai/Kasir', 'BSI'
   itemName?: string; // Item BAM spesifik bila dicicil per item atau akumulasi
   itemAmount?: number;

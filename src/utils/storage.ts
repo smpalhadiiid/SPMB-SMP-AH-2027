@@ -279,6 +279,8 @@ export function getCurrentUser(): UserAccount | null {
     // Enforce super_admin role for superadmin email/username
     if (user.email?.toLowerCase() === 'superadmin@alhadiid.sch.id' || user.username?.toLowerCase() === 'superadmin' || user.id === 'usr_superadmin') {
       user.role = 'super_admin';
+    } else if (!['student', 'admin', 'kepsek', 'super_admin'].includes(user.role)) {
+      user.role = 'student';
     }
     // Sanitize: remove any password property from session
     if ('password' in user) {
